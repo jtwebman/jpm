@@ -1,0 +1,4 @@
+# One compiler for local builds and CI. Bump on purpose when a new stable is out.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
