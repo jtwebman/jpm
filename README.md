@@ -108,9 +108,44 @@ compiled.
 
 ## Benchmarks
 
-`bench/` holds the benchmark harness from upm, with a `jpm` runner added. It compares cold,
-warm and repeat installs across jpm, upm, npm, pnpm, yarn, bun, deno and others, with
-private caches for each and lifecycle scripts off everywhere.
+Medians of 3 runs per phase on Linux (WSL2, 4 cores), 2026-09-28, against the live npm
+registry. Every manager has private caches and lifecycle scripts off; all 297 runs succeeded.
+Fixtures: `nitro` (62 packages), `nuxt` (591), `next` (275).
+
+**Cold** (no cache, no lockfile):
+
+| manager | nitro | nuxt | next |
+| --- | ---: | ---: | ---: |
+| **jpm** | **616 ms** | 2.86 s | 4.97 s |
+| upm 1.2 | 873 ms | 2.94 s | 4.66 s |
+| aube 2.6 | 766 ms | **2.78 s** | **4.49 s** |
+| pnpm 12.8 | 707 ms | 3.18 s | 5.60 s |
+| bun 1.4 | 985 ms | 4.44 s | 7.00 s |
+| npm 12.1 | 1.36 s | 13.6 s | 7.80 s |
+
+**Warm** (cache and lockfile kept, `node_modules` deleted):
+
+| manager | nitro | nuxt | next |
+| --- | ---: | ---: | ---: |
+| **jpm** | 21 ms | 146 ms | 114 ms |
+| upm 1.2 | 66 ms | 278 ms | 123 ms |
+| aube 2.6 | **15 ms** | **111 ms** | **101 ms** |
+| pnpm 12.8 | 43 ms | 211 ms | 133 ms |
+| bun 1.4 | 31 ms | 218 ms | 114 ms |
+| npm 12.1 | 563 ms | 3.00 s | 4.24 s |
+
+**Repeat** (nothing changed): jpm 0–1 ms, bun 2–9 ms, pnpm 12 6–7 ms, upm 22–25 ms,
+npm 168–397 ms.
+
+jpm uses the least memory in most runs, for example 10.5 MB for a warm `nuxt` against 60 MB
+for pnpm 12 and 128 MB for upm, and the least CPU on cold installs. Its binary is 2.4 MB;
+bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
+
+Charts: [cold](bench/charts/cold.svg), [warm](bench/charts/warm.svg),
+[repeat](bench/charts/repeat.svg), [memory](bench/charts/cold.memory.svg),
+[size](bench/charts/size.svg).
+
+`bench/` holds the harness from upm with a `jpm` runner added. To run it:
 
 ```sh
 jpm install --dir bench          # the harness's own tools
