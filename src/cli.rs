@@ -1,0 +1,753 @@
+//! The command line: argv in, one command run, what it returns printed, an exit code out.
+//! npm's own commands (publish, login, …) go to npm through `exec`.
+
+use std::path::PathBuf;
+use std::time::Instant;
+
+use crate::commands::{self, ExecOpts, InstallResult, Opts, Select};
+use crate::config::Flags;
+use crate::error::Error;
+use crate::lock::{LOCKFILE, format_lockfile};
+use crate::manifest::parse_date;
+use crate::ui::{self, BOLD, CYAN, GRAY, GREEN, YELLOW, paint};
+
+const NPM_COMMANDS: &str = "access, config, create, deprecate, dist-tag, info, init, login, logout, org, owner,
+  pack, ping, pkg, profile, publish, search, show, stage, team, token, trust, undeprecate,
+  unpublish, version, view, whoami";
+
+fn usage_text() -> String {
+    format!(
+        "jpm — a fast, small package manager for the npm registry
+
+Usage
+  jpm install [--production] [--frozen-lockfile] [--verify]    (also i; ci is frozen)
+  jpm add <spec>... [--dev | --optional] [--exact] [-w <workspace>]
+  jpm remove <name>... [-w <workspace>]    (also uninstall, rm, r, un)
+  jpm dedupe
+  jpm resolve <spec>...
+  jpm fetch <spec>...
+  jpm fetch --lock [--production]
+  jpm lock
+  jpm prune
+  jpm run [-w <workspace>... | --workspaces] [--if-present] [<script> [args...]]
+                       (also run-script; t and tst are run test)
+  jpm <script> [args...]
+  jpm exec [-p <spec>...] <command> [args...]
+  jpm exec [-p <spec>...] -c '<command line>'    (also x, jpx)
+  jpm <npm command> [args...]
+
+Options
+  -c, --call <line>    exec: run a shell line with -p packages on PATH
+  -D, --dev            add: save to devDependencies
+  --before <date>      pick only versions published before this date
+  --dir <path>         project directory (default: nearest package.json or workspace root)
+  -E, --exact          add: save an exact version for names and tags
+  --min-release-age <days>
+                       pick only versions published at least this long ago (0: off)
+  --min-release-age-exclude <name|glob>
+                       exempt from the release age (repeatable)
+  --frozen-lockfile    install: fail if {LOCKFILE} is missing or stale
+  --if-present         run: skip a missing script, or workspaces missing it
+  --include-workspace-root
+                       run --workspaces: run the root first
+  --json               print JSON
+  --lock               fetch: use {LOCKFILE}
+  --offline            never use the network; fail if the registry or a download is needed
+  --prefer-offline     pick from kept registry documents without checking for newer ones
+  -O, --optional       add: save to optionalDependencies
+  -p, --package <spec> exec: install a package for the command (repeatable)
+  -y, --yes            exec: accepted for npx compatibility; no prompts
+  --production         skip dev-only packages
+  --registry <url>     override the registry
+  -s, --silent         no progress, run banner or install summary (also -q, --loglevel)
+  --store <dir>        package store directory (default: JPM_STORE or ~/.jpm/store)
+  --verify             install: check sizes, links, bins and peers, not file contents
+  -w, --workspace <name|path>
+                       add, remove, run: select workspaces (repeatable; parent paths work)
+  --workspaces         run: select all workspaces
+  -h, --help           show help
+  -v, --version        show the version
+
+Notes
+  lock saves all platforms and dev packages; install selects this platform.
+  add (also install <spec>...) and remove edit package.json, then install, keeping other locks.
+  add moves groups; remove clears all groups. Explicit ranges stay; names, * and tags
+  save ^version unless --exact. dedupe favors locked versions; delete {LOCKFILE} for a fresh resolve.
+  A url or a path to a .tgz is a tarball dependency, locked by where it is.
+  With no {LOCKFILE}, install reads upm.lock (same format), else package-lock.json, pnpm-lock.yaml
+  or bun.lock and writes nothing; add, remove, dedupe and a stale file are refused there.
+
+  prune removes unused project entries and incomplete store content, keeping anything
+  under an hour old.
+  Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
+  New picks skip versions under min-release-age days old (default 1; 0 turns it off).
+
+  run installs the tree first (a no-op when it is current), then runs the script in a shell
+  with local and parent bins on PATH; no pre/post scripts. jpm flags go before the script.
+  exec uses local bins, else installs into the root's node_modules/.jpm/.exec (or ~/.jpm/exec).
+
+  npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
+  (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:
+  -S, --save, -P, --save-prod, --ignore-scripts, --no-audit, --no-fund, --no-progress,
+  --legacy-peer-deps and --force.
+
+Npm
+  These commands run npm through exec. Only --dir goes before them.
+  {NPM_COMMANDS}"
+    )
+}
+
+#[derive(Debug, Default)]
+struct Cli {
+    command: Option<String>,
+    specs: Vec<String>,
+    json: bool,
+    registry: Option<String>,
+    min_release_age: Option<f64>,
+    store: Option<String>,
+    dir: Option<String>,
+    production: bool,
+    lock: bool,
+    frozen: bool,
+    verify: bool,
+    dev: bool,
+    optional: bool,
+    exact: bool,
+    help: bool,
+    version: bool,
+    implied: bool,
+    workspace: Option<Vec<String>>,
+    workspaces: bool,
+    include_root: bool,
+    if_present: bool,
+    yes: bool,
+    call: Option<String>,
+    packages: Option<Vec<String>>,
+    before: Option<String>,
+    exclude: Option<Vec<String>>,
+    quiet: bool,
+    offline: bool,
+    prefer_offline: bool,
+}
+
+const COMMANDS: [&str; 10] = ["install", "add", "remove", "dedupe", "resolve", "fetch", "lock", "prune", "run", "exec"];
+const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
+const NOOPS: [&str; 10] = [
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--no-progress",
+    "--legacy-peer-deps",
+    "--force",
+    "-S",
+    "--save",
+    "-P",
+    "--save-prod",
+];
+const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
+
+fn npm_command(name: &str) -> bool {
+    NPM_COMMANDS.split(',').any(|c| c.trim() == name)
+}
+
+fn alias(arg: &str) -> Option<&'static str> {
+    Some(match arg {
+        "i" | "ci" | "clean-install" => "install",
+        "uninstall" | "rm" | "r" | "un" => "remove",
+        "run-script" => "run",
+        "x" => "exec",
+        _ => return None,
+    })
+}
+
+fn parse(argv: &[String]) -> Result<Cli, String> {
+    let mut cli = Cli::default();
+    let mut rest = false;
+    let mut flags = true;
+    let mut include_dev = false;
+    let mut i = 0;
+    while i < argv.len() {
+        let arg = &argv[i];
+        i += 1;
+        let npm = cli.command.as_deref().is_some_and(npm_command);
+        if rest || npm {
+            cli.specs.push(arg.clone());
+            continue;
+        }
+        // Once `run` has its script and `exec` its command, the rest belongs to them.
+        if matches!(cli.command.as_deref(), Some("run" | "exec")) && cli.specs.len() == 1 {
+            rest = true;
+            if arg != "--" || cli.command.as_deref() == Some("exec") {
+                cli.specs.push(arg.clone());
+            }
+            continue;
+        }
+        if flags && arg == "--" {
+            flags = false;
+            continue;
+        }
+        if !flags || !arg.starts_with('-') || arg == "-" {
+            positional(&mut cli, arg);
+            continue;
+        }
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
+            _ => (arg.clone(), None),
+        };
+        let mut value = || -> Result<String, String> {
+            if let Some(v) = &inline {
+                return Ok(v.clone());
+            }
+            let v = argv.get(i).cloned().ok_or_else(|| format!("{flag} needs a value"))?;
+            i += 1;
+            Ok(v)
+        };
+        match flag.as_str() {
+            "--registry" => cli.registry = Some(value()?),
+            "--store" => cli.store = Some(value()?),
+            "--dir" | "--prefix" | "-C" => cli.dir = Some(value()?),
+            "-w" | "--workspace" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
+            "-c" | "--call" => cli.call = Some(value()?),
+            "-p" | "--package" => cli.packages.get_or_insert_with(Vec::new).push(value()?),
+            "--before" => {
+                let v = value().unwrap_or_default();
+                if parse_date(&v).is_none() {
+                    return Err(format!("{flag} takes a date"));
+                }
+                cli.before = Some(v);
+            }
+            "--min-release-age-exclude" => cli.exclude.get_or_insert_with(Vec::new).push(value()?),
+            "--min-release-age" => {
+                let v = value().unwrap_or_default();
+                let days: f64 = v.trim().parse().map_err(|_| format!("{flag} takes a number of days"))?;
+                if days.is_nan() || days < 0.0 {
+                    return Err(format!("{flag} takes a number of days"));
+                }
+                cli.min_release_age = Some(days);
+            }
+            "--omit" | "--include" => {
+                let v = value().unwrap_or_default();
+                match (flag.as_str(), v.as_str()) {
+                    ("--include", "dev") => include_dev = true,
+                    ("--include", "prod" | "optional" | "peer") => {}
+                    ("--omit", "dev") => cli.production = true,
+                    ("--omit", _) => return Err(format!("{flag} takes dev")),
+                    _ => return Err(format!("{flag} takes dev, prod, optional or peer")),
+                }
+            }
+            "--loglevel" => {
+                let v = value().unwrap_or_default();
+                let level = LOG_LEVELS
+                    .iter()
+                    .position(|l| *l == v)
+                    .ok_or_else(|| format!("{flag} takes {}", LOG_LEVELS.join(", ")))?;
+                if level < 3 {
+                    cli.quiet = true;
+                }
+            }
+            _ if NOOPS.contains(&arg.as_str()) => {}
+            "-s" | "--silent" | "-q" | "--quiet" => cli.quiet = true,
+            "-y" | "--yes" => cli.yes = true,
+            "--workspaces" => cli.workspaces = true,
+            "--include-workspace-root" => cli.include_root = true,
+            "--if-present" => cli.if_present = true,
+            "-h" | "--help" => cli.help = true,
+            "-v" | "--version" => cli.version = true,
+            "--json" => cli.json = true,
+            "--production" => cli.production = true,
+            "--lock" => cli.lock = true,
+            "--offline" => cli.offline = true,
+            "--prefer-offline" => cli.prefer_offline = true,
+            "--frozen-lockfile" => cli.frozen = true,
+            "--verify" => cli.verify = true,
+            "--dev" | "-D" | "--save-dev" => cli.dev = true,
+            "--optional" | "-O" | "--save-optional" => cli.optional = true,
+            "--exact" | "-E" | "--save-exact" => cli.exact = true,
+            _ => return Err(format!("unknown flag \"{arg}\"")),
+        }
+    }
+    if include_dev {
+        cli.production = false;
+    }
+    Ok(cli)
+}
+
+/// The first word is the command, or, as in pnpm, a script: `jpm test` is `run test`.
+fn positional(cli: &mut Cli, arg: &str) {
+    if cli.command.is_some() {
+        cli.specs.push(arg.to_string());
+    } else if let Some(cmd) = alias(arg) {
+        cli.command = Some(cmd.into());
+        if arg == "ci" || arg == "clean-install" {
+            cli.frozen = true;
+        }
+    } else if arg == "t" || arg == "tst" {
+        cli.command = Some("run".into());
+        cli.specs.push("test".into());
+    } else if COMMANDS.contains(&arg) || npm_command(arg) {
+        cli.command = Some(arg.into());
+    } else {
+        cli.command = Some("run".into());
+        cli.implied = true;
+        cli.specs.push(arg.to_string());
+    }
+}
+
+fn usage(message: &str) -> i32 {
+    ui::error(message);
+    eprintln!("\n{}", help(false));
+    2
+}
+
+fn help(stdout: bool) -> String {
+    usage_text()
+        .lines()
+        .map(|l| {
+            if !l.is_empty() && l.chars().next().is_some_and(char::is_uppercase) && !l.contains(' ') {
+                paint(BOLD, l, stdout)
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `jpx <cmd>` is `jpm exec <cmd>`.
+pub fn main(argv0: &str, args: Vec<String>) -> i32 {
+    let exec_bin = std::path::Path::new(argv0).file_stem().is_some_and(|s| s == "jpx" || s == "upx");
+    let args = if exec_bin { std::iter::once("exec".to_string()).chain(args).collect() } else { args };
+    let mut cli = match parse(&args) {
+        Ok(cli) => cli,
+        Err(e) => return usage(&e),
+    };
+    ui::set_quiet(cli.quiet);
+    if cli.version {
+        ui::out(&format!("{}\n", env!("CARGO_PKG_VERSION")));
+        return 0;
+    }
+    let Some(mut command) = cli.command.clone().filter(|_| !cli.help) else {
+        ui::out(&format!("{}\n", help(true)));
+        return 0;
+    };
+    if npm_command(&command) {
+        let own = cli.json
+            || cli.registry.is_some()
+            || cli.store.is_some()
+            || cli.production
+            || cli.quiet
+            || cli.workspace.is_some()
+            || cli.packages.is_some();
+        if own {
+            return usage(&format!("only --dir goes before {command}"));
+        }
+        // Or npm's version and init, run in a workspace, would install the tree their own way.
+        // SAFETY: single-threaded at this point; nothing else reads the environment yet.
+        unsafe { std::env::set_var("npm_config_workspaces_update", "false") };
+        cli.specs = ["npm".to_string(), command.clone()].into_iter().chain(cli.specs.clone()).collect();
+        command = "exec".into();
+    }
+    if command == "install" && !cli.specs.is_empty() {
+        command = "add".into();
+    }
+    let installs = INSTALLS.contains(&command.as_str());
+    let from_project = matches!(command.as_str(), "lock" | "install" | "dedupe" | "prune") || cli.lock;
+    if let Some(e) = check(&cli, &command, installs, from_project) {
+        return usage(&e);
+    }
+    let result = match command.as_str() {
+        "run" => run_command(&cli),
+        "exec" => exec_command(&cli),
+        _ => dispatch(&cli, &command, from_project).map(|out| {
+            let summary = !cli.json && (installs || command == "prune" || command == "fetch");
+            if !(out.is_empty() || ui::quiet() && summary) {
+                ui::out(&format!("{out}\n"));
+            }
+            0
+        }),
+    };
+    result.unwrap_or_else(|e| {
+        ui::error(&e.to_string());
+        1
+    })
+}
+
+fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option<String> {
+    let selects = cli.workspace.is_some() || cli.workspaces;
+    let rules: [(bool, String); 18] = [
+        (command == "exec" && cli.call.is_none() && cli.specs.is_empty(), "exec needs a command or --call".into()),
+        (
+            cli.call.is_some() && !cli.specs.is_empty(),
+            "--call is the whole command line: give no command or args with it".into(),
+        ),
+        (
+            (cli.packages.is_some() || cli.yes || cli.call.is_some()) && command != "exec",
+            "--package, --call and --yes only apply to exec".into(),
+        ),
+        (cli.json && command == "exec", "--json does not apply to exec".into()),
+        (
+            !from_project && command != "run" && command != "exec" && cli.specs.is_empty(),
+            format!("{command} needs at least one {}", if command == "remove" { "name" } else { "spec" }),
+        ),
+        (
+            from_project && !cli.lock && !cli.specs.is_empty(),
+            format!("{command} reads package.json and takes no package names"),
+        ),
+        (
+            cli.production && !installs && !(command == "fetch" && cli.lock),
+            "--production only applies to install and fetch --lock".into(),
+        ),
+        (cli.frozen && command != "install", "--frozen-lockfile only applies to install, without package names".into()),
+        (cli.verify && !installs, "--verify only applies to install".into()),
+        (
+            (cli.dev || cli.optional || cli.exact) && command != "add",
+            "--dev, --optional and --exact only apply to add".into(),
+        ),
+        (cli.dev && cli.optional, "--dev and --optional are exclusive".into()),
+        (cli.dev && cli.production, "--production skips what --dev adds".into()),
+        (cli.lock && command != "fetch", "--lock only applies to fetch".into()),
+        (
+            selects && !matches!(command, "add" | "remove" | "run"),
+            "-w and --workspaces only apply to add, remove and run: install is always the whole tree".into(),
+        ),
+        (cli.workspace.is_some() && cli.workspaces, "-w and --workspaces are exclusive".into()),
+        (cli.if_present && command != "run", "--if-present only applies to run".into()),
+        (
+            cli.include_root && !(command == "run" && selects),
+            "--include-workspace-root only applies to run -w or --workspaces".into(),
+        ),
+        (false, String::new()),
+    ];
+    rules.into_iter().find(|(bad, _)| *bad).map(|(_, why)| why)
+}
+
+fn opts(cli: &Cli) -> Opts {
+    Opts {
+        dir: cli.dir.as_ref().map(PathBuf::from),
+        flags: Flags {
+            registry: cli.registry.clone(),
+            min_release_age: cli.min_release_age,
+            before: cli.before.clone(),
+            min_release_age_exclude: cli.exclude.clone(),
+            offline: cli.offline.then_some(true),
+            prefer_offline: cli.prefer_offline.then_some(true),
+        },
+        store: cli.store.as_ref().map(PathBuf::from),
+        production: cli.production,
+        verify: cli.verify,
+        frozen: cli.frozen,
+        group: if cli.dev {
+            Some("devDependencies")
+        } else if cli.optional {
+            Some("optionalDependencies")
+        } else {
+            None
+        },
+        exact: cli.exact,
+        workspaces: if cli.workspaces { Some(Select::All) } else { cli.workspace.clone().map(Select::Some) },
+        if_present: cli.if_present,
+        include_root: cli.include_root,
+    }
+}
+
+fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Error> {
+    let o = opts(cli);
+    let started = Instant::now();
+    let json = |v: &serde_json::Value| serde_json::to_string_pretty(v).unwrap_or_default();
+    match command {
+        "install" => Ok(installed(cli, &commands::install(o)?, started, None)),
+        "dedupe" => Ok(installed(cli, &commands::dedupe(o)?, started, None)),
+        "add" => {
+            let r = commands::add(&cli.specs, o)?;
+            let added: Vec<serde_json::Value> = r
+                .added
+                .iter()
+                .map(|a| serde_json::json!({"name": a.name, "range": a.range, "group": a.group}))
+                .collect();
+            Ok(installed(cli, &r.install, started, Some(serde_json::json!({ "added": added }))))
+        }
+        "remove" => {
+            let (removed, r) = commands::remove(&cli.specs, o)?;
+            Ok(installed(cli, &r, started, Some(serde_json::json!({ "removed": removed }))))
+        }
+        "lock" => {
+            let l = commands::lock_command(o, !cli.json)?;
+            if cli.json { Ok(format_lockfile(&l)?.trim_end().to_string()) } else { Ok(String::new()) }
+        }
+        "prune" => {
+            let p = commands::prune(o)?;
+            if cli.json {
+                return Ok(json(&serde_json::to_value(&p).unwrap_or_default()));
+            }
+            let swept = match &p.entries {
+                Some(e) => format!("{} entries ({})", e.removed, mib(e.bytes)),
+                None => "no install state, kept every entry".into(),
+            };
+            Ok(format!("{swept}  {} store entries ({})", p.store.removed, mib(p.store.bytes)))
+        }
+        "fetch" if from_project => fetched(cli, &commands::fetch_lockfile(o)?, true),
+        "fetch" => fetched(cli, &commands::fetch_specs(&cli.specs, o)?, false),
+        "resolve" => {
+            let picked = commands::resolve_specs(&cli.specs, o)?;
+            if cli.json {
+                let list: Vec<serde_json::Value> = picked
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "name": m.name, "version": m.version,
+                            "dist": {"tarball": m.dist.tarball, "integrity": m.dist.integrity, "shasum": m.dist.shasum},
+                            "deprecated": m.deprecated,
+                        })
+                    })
+                    .collect();
+                return Ok(json(&serde_json::Value::Array(list)));
+            }
+            Ok(picked
+                .iter()
+                .map(|m| {
+                    let digest = m
+                        .dist
+                        .integrity
+                        .clone()
+                        .or_else(|| m.dist.shasum.as_ref().map(|s| format!("sha1-{s}")))
+                        .unwrap_or_default();
+                    let digest = if digest.len() > 24 { format!("{}…", &digest[..24]) } else { digest };
+                    let line =
+                        [format!("{}@{}", m.name, m.version), m.dist.tarball.clone().unwrap_or_default(), digest]
+                            .into_iter()
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                    if m.deprecated { format!("{line}\n  {}", paint(YELLOW, "! deprecated", true)) } else { line }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+        _ => Err(Error::new("EOPTION", format!("unknown command {command}"))),
+    }
+}
+
+fn mib(bytes: u64) -> String {
+    format!("{:.1} MiB", bytes as f64 / 1024.0 / 1024.0)
+}
+
+fn size(bytes: u64) -> String {
+    let kb = bytes as f64 / 1000.0;
+    if kb < 1000.0 { format!("{kb:.1} kB") } else { format!("{:.1} MB", kb / 1000.0) }
+}
+
+fn fetched(cli: &Cli, list: &[commands::Fetched], lock: bool) -> Result<String, Error> {
+    if cli.json {
+        return Ok(serde_json::to_string_pretty(list).unwrap_or_default());
+    }
+    if lock {
+        let cached = list.iter().filter(|f| f.cached).count();
+        let files: usize = list.iter().map(|f| f.files).sum();
+        let bytes: u64 = list.iter().map(|f| f.bytes).sum();
+        return Ok(format!(
+            "{} packages  {files} files  {}  {cached} cache hits, {} downloaded",
+            list.len(),
+            size(bytes),
+            list.len() - cached
+        ));
+    }
+    Ok(list
+        .iter()
+        .map(|f| {
+            format!(
+                "{}@{}  {} files  {}  {}",
+                f.name,
+                f.version,
+                f.files,
+                size(f.bytes),
+                if f.cached { "cache hit" } else { "downloaded" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// What an install did, as one line or as JSON with the package.json changes first.
+fn installed(cli: &Cli, r: &InstallResult, started: Instant, changes: Option<serde_json::Value>) -> String {
+    let ms = started.elapsed().as_millis();
+    let seconds = format!("{:.2}", ms as f64 / 1000.0);
+    if cli.json {
+        let mut out = changes.unwrap_or_else(|| serde_json::json!({}));
+        if let (Some(o), Ok(serde_json::Value::Object(r))) = (out.as_object_mut(), serde_json::to_value(r)) {
+            o.extend(r);
+            o.insert("seconds".into(), serde_json::Value::String(seconds));
+        }
+        return serde_json::to_string_pretty(&out).unwrap_or_default();
+    }
+    for id in &r.missing_optional {
+        ui::info(&format!("{id} is missing from the store and was not linked"));
+    }
+    let others = if r.other_platforms > 0 { format!(" (+{} skipped)", r.other_platforms) } else { String::new() };
+    let time = if ms < 1000 { format!(" in {ms}ms") } else { format!(" in {seconds}s") };
+    let ws = if r.workspaces > 0 {
+        format!(", {} workspace{}", r.workspaces, if r.workspaces == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
+    let count = format!("{} packages{ws}", r.packages);
+    if r.up_to_date {
+        return format!(
+            "{count}{} {}{}",
+            paint(GRAY, &others, true),
+            paint(GREEN, "up to date", true),
+            paint(GRAY, &time, true)
+        );
+    }
+    let s = &r.stats;
+    let mut detail = format!(
+        "{others}, {} entries ({} reused), {} linked, {} copied, {} bins",
+        s.entries,
+        s.reused,
+        s.linked + s.cloned,
+        s.copied,
+        s.bins
+    );
+    if s.removed > 0 {
+        detail.push_str(&format!(", {} removed", s.removed));
+    }
+    if s.repaired > 0 {
+        detail.push_str(&format!(", {} repaired", s.repaired));
+    }
+    format!("{} {count}{}", paint(GREEN, "Installed", true), paint(GRAY, &format!("{detail}{time}"), true))
+}
+
+fn run_command(cli: &Cli) -> Result<i32, Error> {
+    let o = opts(cli);
+    let selects = o.workspaces.is_some();
+    let Some((name, args)) = cli.specs.split_first() else {
+        let lists = commands::packages(&o)?;
+        let render = |scripts: &serde_json::Map<String, serde_json::Value>, indent: &str| -> String {
+            scripts
+                .iter()
+                .map(|(n, c)| {
+                    format!(
+                        "{indent}{}\n{indent}  {}\n",
+                        paint(CYAN, n, true),
+                        paint(GRAY, c.as_str().unwrap_or(""), true)
+                    )
+                })
+                .collect()
+        };
+        if !selects {
+            let top = &lists[0];
+            let scripts = top.manifest.scripts(&top.file)?;
+            if cli.json {
+                ui::out(&format!("{}\n", serde_json::to_string_pretty(&scripts).unwrap_or_default()));
+            } else if scripts.is_empty() {
+                ui::info(&format!("no scripts in {}", top.file.display()));
+            } else {
+                ui::out(&render(&scripts, ""));
+            }
+        } else if cli.json {
+            let mut all = serde_json::Map::new();
+            for top in &lists {
+                all.insert(top.name.clone(), serde_json::Value::Object(top.manifest.scripts(&top.file)?));
+            }
+            ui::out(&format!("{}\n", serde_json::to_string_pretty(&all).unwrap_or_default()));
+        } else {
+            for top in &lists {
+                ui::out(&format!("{}\n{}", top.name, render(&top.manifest.scripts(&top.file)?, "  ")));
+            }
+        }
+        return Ok(0);
+    };
+    let (code, results) = match commands::run_script(name, args, &o, true) {
+        Ok(r) => r,
+        // No package.json to find a script in, so `jpm nope` is a typo in the command.
+        Err(e) if cli.implied && !selects && cli.dir.is_none() && e.code == "ENOENT" => {
+            return installed_bin(cli, name, args).unwrap_or_else(|| Ok(usage(&format!("unknown command \"{name}\""))));
+        }
+        Err(e) => return Err(e),
+    };
+    let own = results.first();
+    if selects || cli.if_present || !own.is_some_and(|r| r.missing) {
+        return Ok(code);
+    }
+    let file = own.map(|r| r.file.display().to_string()).unwrap_or_default();
+    let names: Vec<String> = commands::packages(&Opts { dir: o.dir.clone(), ..Opts::default() })?
+        .first()
+        .and_then(|t| t.manifest.scripts(&t.file).ok())
+        .map(|s| s.keys().cloned().collect())
+        .unwrap_or_default();
+    let have = if names.is_empty() { String::new() } else { format!(" — the scripts are {}", names.join(", ")) };
+    if cli.implied {
+        if let Some(r) = installed_bin(cli, name, args) {
+            return r;
+        }
+        return Ok(usage(&format!("unknown command \"{name}\", and no such script in {file}{have}")));
+    }
+    ui::error(&format!("missing script \"{name}\" in {file}{have} (ENOSCRIPT)"));
+    Ok(1)
+}
+
+/// `jpm vitest` with no such script: a bin already installed above, never the registry.
+fn installed_bin(cli: &Cli, name: &str, args: &[String]) -> Option<Result<i32, Error>> {
+    let dir = cli.dir.as_ref().map_or_else(|| std::env::current_dir().unwrap_or_default(), PathBuf::from);
+    if !commands::installed_bin(&dir, name) {
+        return None;
+    }
+    let mut specs = vec![name.to_string()];
+    specs.extend_from_slice(args);
+    Some(exec_with(cli, &specs))
+}
+
+fn exec_command(cli: &Cli) -> Result<i32, Error> {
+    exec_with(cli, &cli.specs)
+}
+
+fn exec_with(cli: &Cli, specs: &[String]) -> Result<i32, Error> {
+    let (command, args) = match specs.split_first() {
+        Some((c, a)) => (c.clone(), a.to_vec()),
+        None => (cli.call.clone().unwrap_or_default(), Vec::new()),
+    };
+    commands::exec(
+        &command,
+        ExecOpts { opts: opts(cli), args, packages: cli.packages.clone(), call: cli.call.is_some() },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(args: &[&str]) -> Cli {
+        parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()
+    }
+
+    #[test]
+    fn parses_npm_spellings() {
+        let c = p(&["i", "--save-dev", "--omit=dev", "--include", "dev"]);
+        assert_eq!(c.command.as_deref(), Some("install"));
+        assert!(c.dev && !c.production);
+        let c = p(&["ci"]);
+        assert!(c.frozen);
+        let c = p(&["test", "--watch"]);
+        assert_eq!(
+            (c.command.as_deref(), c.implied, c.specs.as_slice()),
+            (Some("run"), true, ["test".to_string(), "--watch".to_string()].as_slice())
+        );
+        let c = p(&["run", "build", "--", "-x"]);
+        assert_eq!(c.specs, ["build", "-x"]);
+        let c = p(&["exec", "eslint", "--", "."]);
+        assert_eq!(c.specs, ["eslint", "--", "."]);
+        let c = p(&["--dir", "x", "publish", "--tag", "next"]);
+        assert_eq!((c.command.as_deref(), c.specs.len()), (Some("publish"), 2));
+        assert!(parse(&["--nope".to_string()]).is_err());
+        assert!(parse(&["--before".to_string(), "soon".to_string()]).is_err());
+    }
+
+    #[test]
+    fn checks_combinations() {
+        let c = p(&["add", "--frozen-lockfile", "x"]);
+        assert!(check(&c, "add", true, false).is_some());
+        let c = p(&["install", "-w", "a"]);
+        assert!(check(&c, "install", true, true).is_some());
+        let c = p(&["add", "x"]);
+        assert!(check(&c, "add", true, false).is_none());
+    }
+}
