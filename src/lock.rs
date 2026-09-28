@@ -18,7 +18,11 @@ use crate::util::write_atomic;
 pub const LOCKFILE: &str = "jpm.lock";
 /// upm's lockfile has the same format, and is read when there is no `jpm.lock`.
 pub const UPM_LOCKFILE: &str = "upm.lock";
+/// upm's format, which jpm still reads.
 const VERSION: u32 = 1;
+/// jpm's own text format.
+const TEXT_VERSION: u32 = 2;
+const TEXT_VERSION_TEXT: &str = "2";
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LockEntry {
@@ -35,6 +39,9 @@ pub struct LockEntry {
     pub os: Vec<String>,
     pub cpu: Vec<String>,
     pub libc: Vec<String>,
+    /// The digest of the store entry's name, `<name>@<version>-<subgraph>`: a hash of everything
+    /// the package reaches, written down so an install need not hash the graph again.
+    pub subgraph: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -64,6 +71,9 @@ pub struct Lockfile {
     pub root: LockRoot,
     pub workspaces: BTreeMap<String, WorkspaceEntry>,
     pub packages: BTreeMap<String, LockEntry>,
+    /// A hash of the file's content, when it is known to match: read from a file whose content
+    /// still has it, or computed when the file was written. The subgraphs are trusted only then.
+    pub hash: Option<String>,
 }
 
 // --- the file's shape: fixed field order, empty fields left out -------------------------------
@@ -127,6 +137,7 @@ impl LockEntry {
             os: list(o, "os", at)?,
             cpu: list(o, "cpu", at)?,
             libc: list(o, "libc", at)?,
+            subgraph: None,
         })
     }
 }
@@ -178,7 +189,8 @@ impl Lockfile {
             root.insert("workspaces", Value::from(w.clone()));
         }
         let mut o = Object::new();
-        o.insert("lockfileVersion", u64::from(self.lockfile_version).into());
+        // The JSON view is upm's format, whatever format the lockfile was read from.
+        o.insert("lockfileVersion", u64::from(VERSION).into());
         o.insert("root", root.into());
         if !self.workspaces.is_empty() {
             o.insert(
@@ -219,7 +231,7 @@ impl Lockfile {
         for (key, entry) in object(p, "packages")?.iter() {
             packages.insert(key.clone(), LockEntry::from_value(entry, &format!("packages[{key:?}]"))?);
         }
-        Ok(Self { lockfile_version: VERSION, root, workspaces, packages })
+        Ok(Self { lockfile_version: VERSION, root, workspaces, packages, hash: None })
     }
 }
 
@@ -279,10 +291,6 @@ fn fail(message: impl Into<String>) -> Error {
     Error::new("ELOCK", message)
 }
 
-fn opt_map(m: &Deps) -> Option<Deps> {
-    (!m.is_empty()).then(|| m.clone())
-}
-
 fn root_of(root: &Root) -> LockRoot {
     LockRoot {
         name: root.name.clone(),
@@ -295,6 +303,7 @@ fn root_of(root: &Root) -> LockRoot {
 
 /// `base_for` gives each name's registry, to tell a derivable tarball url from one to keep.
 pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockfile {
+    let keys = crate::keys::store_keys(&res.packages);
     let mut packages = BTreeMap::new();
     let mut workspaces = BTreeMap::new();
     for (key, p) in &res.packages {
@@ -334,73 +343,79 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
                 os: p.os.clone().unwrap_or_default(),
                 cpu: p.cpu.clone().unwrap_or_default(),
                 libc: p.libc.clone().unwrap_or_default(),
+                // The digest is the key's last 22 characters: base64url, which may hold a `-`.
+                subgraph: keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string),
             },
         );
     }
-    Lockfile { lockfile_version: VERSION, root: root_of(&res.root), workspaces, packages }
+    Lockfile { lockfile_version: TEXT_VERSION, root: root_of(&res.root), workspaces, packages, hash: None }
 }
 
 /// No packument, no version pick, no semver: the whole point of a lockfile. `lock` must have
 /// passed `validate`.
 pub fn from_lockfile(lock: &Lockfile, base_for: &dyn Fn(&str) -> String) -> Resolution {
-    let shipped = reach(lock, &|top, name| top.prod.contains(name), true);
+    into_resolution(lock.clone(), base_for)
+}
+
+/// `from_lockfile`, taking the lockfile apart instead of copying it.
+pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Resolution {
+    let shipped = reach(&lock, &|top, name| top.prod.contains(name), true);
     let required =
-        reach(lock, &|top, name| !top.specs.as_ref().is_some_and(|s| s.optional().contains_key(name)), false);
+        reach(&lock, &|top, name| !top.specs.as_ref().is_some_and(|s| s.optional().contains_key(name)), false);
     let mut packages = BTreeMap::new();
-    for (path, ws) in &lock.workspaces {
+    for (path, ws) in lock.workspaces {
         packages.insert(
             format!("{}@link:{path}", ws.name),
             Package {
-                name: ws.name.clone(),
-                version: ws.version.clone(),
-                local: Some(path.clone()),
-                specs: ws.specs.clone(),
-                dependencies: ws.dependencies.clone(),
-                optional_dependencies: ws.optional_dependencies.clone(),
+                name: ws.name,
+                version: ws.version,
+                local: Some(path),
+                specs: ws.specs,
+                dependencies: ws.dependencies,
+                optional_dependencies: ws.optional_dependencies,
                 bin: bin::clean_map(&ws.bin),
-                peer_dependencies: opt_map(&ws.peer_dependencies),
-                peers: (!ws.peers.is_empty()).then(|| ws.peers.clone()),
+                peer_dependencies: (!ws.peer_dependencies.is_empty()).then_some(ws.peer_dependencies),
+                peers: (!ws.peers.is_empty()).then_some(ws.peers),
                 ..Package::default()
             },
         );
     }
-    for (key, e) in &lock.packages {
-        let Some((name, tail)) = split_key(key) else { continue };
+    for (key, e) in lock.packages {
+        let Some((name, tail)) = split_key(&key) else { continue };
         let source = e.version.as_ref().map(|_| tail.to_string());
-        let version = e.version.clone().unwrap_or_else(|| tail.to_string());
-        let resolved = source
-            .clone()
-            .or_else(|| e.resolved.clone())
-            .unwrap_or_else(|| tarball_url(&base_for(name), name, &version));
-        let list = |l: &Vec<String>| (!l.is_empty()).then(|| l.clone());
-        packages.insert(
-            key.clone(),
-            Package {
-                name: name.to_string(),
-                version,
-                resolved,
-                integrity: e.integrity.clone(),
-                source,
-                dependencies: e.dependencies.clone(),
-                optional_dependencies: e.optional_dependencies.clone(),
-                optional: !required.contains(key),
-                dev: !shipped.contains(key),
-                bin: bin::clean_map(&e.bin),
-                os: list(&e.os),
-                cpu: list(&e.cpu),
-                libc: list(&e.libc),
-                peer_dependencies: opt_map(&e.peer_dependencies),
-                peers: (!e.peers.is_empty()).then(|| e.peers.clone()),
-                ..Package::default()
-            },
-        );
+        let version = e.version.unwrap_or_else(|| tail.to_string());
+        let resolved = match (&source, e.resolved) {
+            (Some(s), _) => s.clone(),
+            (None, Some(r)) => r,
+            (None, None) => tarball_url(&base_for(name), name, &version),
+        };
+        let list = |l: Vec<String>| (!l.is_empty()).then_some(l);
+        let package = Package {
+            name: name.to_string(),
+            version,
+            resolved,
+            integrity: e.integrity,
+            source,
+            dependencies: e.dependencies,
+            optional_dependencies: e.optional_dependencies,
+            optional: !required.contains(&key),
+            dev: !shipped.contains(&key),
+            bin: bin::clean_map(&e.bin),
+            os: list(e.os),
+            cpu: list(e.cpu),
+            libc: list(e.libc),
+            peer_dependencies: (!e.peer_dependencies.is_empty()).then_some(e.peer_dependencies),
+            peers: (!e.peers.is_empty()).then_some(e.peers),
+            ..Package::default()
+        };
+        packages.insert(key, package);
     }
     let root = Root {
-        name: lock.root.name.clone(),
-        version: lock.root.version.clone(),
-        specs: lock.root.specs.clone(),
-        dependencies: lock.root.dependencies.clone(),
-        workspaces: lock.root.workspaces.clone(),
+        name: lock.root.name,
+        version: lock.root.version,
+        specs: lock.root.specs,
+        dependencies: lock.root.dependencies,
+        workspaces: lock.root.workspaces,
     };
     Resolution { root, packages, warnings: Vec::new() }
 }
@@ -455,16 +470,373 @@ fn reach(lock: &Lockfile, seed: &dyn Fn(&Top, &str) -> bool, optional: bool) -> 
     seen
 }
 
+/// jpm's text format: sorted, one fact a line, so it diffs cleanly and reads without building a
+/// tree. The hash covers everything after its own line.
 pub fn format_lockfile(lock: &Lockfile) -> Result<String> {
     validate(lock)?; // a lockfile our own reader would reject must never reach disk
+    let body = text_body(lock);
+    Ok(format!("{HEADER}jpm-lock {TEXT_VERSION}\nhash {}\n{body}", content_digest(&body)))
+}
+
+/// The lockfile as upm writes it, which `jpm lock --json` prints.
+pub fn format_json(lock: &Lockfile) -> Result<String> {
+    validate(lock)?;
     Ok(json::to_pretty(&lock.to_value(), "  "))
 }
 
+/// jpm's text format or upm's JSON, by the first character.
 pub fn parse_lockfile(text: &str, file: &str) -> Result<Lockfile> {
-    let value = json::parse(text).map_err(|e| fail(format!("{file} is not valid JSON: {}", e.message)))?;
-    let lock = Lockfile::from_value(&value)?;
+    let lock = if text.trim_start().starts_with('{') {
+        let value = json::parse(text).map_err(|e| fail(format!("{file} is not valid JSON: {}", e.message)))?;
+        Lockfile::from_value(&value)?
+    } else {
+        parse_text(text).map_err(|e| e.context(file))?
+    };
     validate(&lock)?;
     Ok(lock)
+}
+
+const HEADER: &str = "# jpm lockfile: written by jpm. A hand edit is fine; the hash below tells jpm to check it.\n";
+
+/// A token, quoted as a JSON string when it holds anything that would split it.
+fn token(out: &mut String, t: &str) {
+    out.push(' ');
+    let plain = !t.is_empty() && !t.bytes().any(|b| b <= b' ' || b == b'"' || b == b'#' || b == 0x7f);
+    if plain {
+        out.push_str(t);
+    } else {
+        json::quote(out, t);
+    }
+}
+
+fn line(out: &mut String, indent: bool, word: &str, tokens: &[&str]) {
+    if indent {
+        out.push_str("  ");
+    }
+    out.push_str(word);
+    for t in tokens {
+        token(out, t);
+    }
+    out.push('\n');
+}
+
+fn text_edges(out: &mut String, deps: &Deps, optional: &Deps, bins: &Deps, ranges: &Deps, peers: &Peers) {
+    for (n, v) in deps {
+        line(out, true, "dep", &[n, v]);
+    }
+    for (n, v) in optional {
+        line(out, true, "optional", &[n, v]);
+    }
+    for (n, t) in bins {
+        line(out, true, "bin", &[n, t]);
+    }
+    for (n, r) in ranges {
+        line(out, true, "peer", &[n, r]);
+    }
+    for (n, k) in peers {
+        line(out, true, "settled", &[n, k.as_str()]);
+    }
+}
+
+fn text_specs(out: &mut String, specs: Option<&Specs>) {
+    if let Some(specs) = Specs::canonical(specs) {
+        for (group, map) in specs.groups() {
+            for (n, r) in map.into_iter().flatten() {
+                line(out, true, "spec", &[group, n, r]);
+            }
+        }
+    }
+}
+
+fn text_body(lock: &Lockfile) -> String {
+    let mut out = String::with_capacity(lock.packages.len() * 256);
+    out.push_str("root\n");
+    if let Some(n) = &lock.root.name {
+        line(&mut out, true, "name", &[n]);
+    }
+    if let Some(v) = &lock.root.version {
+        line(&mut out, true, "version", &[v]);
+    }
+    for p in lock.root.workspaces.iter().flatten() {
+        line(&mut out, true, "workspace", &[p]);
+    }
+    text_specs(&mut out, lock.root.specs.as_ref());
+    for (n, v) in &lock.root.dependencies {
+        line(&mut out, true, "dep", &[n, v]);
+    }
+    for (path, ws) in &lock.workspaces {
+        line(&mut out, false, "workspace", &[path]);
+        line(&mut out, true, "name", &[&ws.name]);
+        line(&mut out, true, "version", &[&ws.version]);
+        text_specs(&mut out, ws.specs.as_ref());
+        text_edges(&mut out, &ws.dependencies, &ws.optional_dependencies, &ws.bin, &ws.peer_dependencies, &ws.peers);
+    }
+    for (key, e) in &lock.packages {
+        line(&mut out, false, "package", &[key]);
+        if let Some(v) = &e.version {
+            line(&mut out, true, "version", &[v]);
+        }
+        if let Some(r) = &e.resolved {
+            line(&mut out, true, "resolved", &[r]);
+        }
+        line(&mut out, true, "integrity", &[&e.integrity]);
+        if let Some(g) = &e.subgraph {
+            line(&mut out, true, "subgraph", &[g]);
+        }
+        text_edges(&mut out, &e.dependencies, &e.optional_dependencies, &e.bin, &e.peer_dependencies, &e.peers);
+        for (word, list) in [("os", &e.os), ("cpu", &e.cpu), ("libc", &e.libc)] {
+            if !list.is_empty() {
+                let items: Vec<&str> = list.iter().map(String::as_str).collect();
+                line(&mut out, true, word, &items);
+            }
+        }
+    }
+    out
+}
+
+/// A 64-bit hash of the file's body, eight bytes at a time: it only has to notice an edit, not
+/// withstand one (every fact is validated whatever the hash says), so no cryptographic hash.
+fn content_digest(body: &str) -> String {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    let bytes = body.as_bytes();
+    let (mut a, mut b) = (0x243F_6A88_85A3_08D3_u64 ^ bytes.len() as u64, 0x1319_8A2E_0370_7344_u64);
+    let (blocks, rest) = bytes.as_chunks::<16>();
+    for c in blocks {
+        let x = u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
+        let y = u64::from_le_bytes([c[8], c[9], c[10], c[11], c[12], c[13], c[14], c[15]]);
+        a = (a ^ x).wrapping_mul(K).rotate_left(29);
+        b = (b ^ y).wrapping_mul(K).rotate_left(31);
+    }
+    for (i, &byte) in rest.iter().enumerate() {
+        a = (a ^ (u64::from(byte) << ((i % 8) * 8))).wrapping_mul(K).rotate_left(29);
+    }
+    let mix = |mut h: u64| {
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+        h ^ (h >> 33)
+    };
+    format!("{:016x}{:016x}", mix(a ^ b.rotate_left(17)), mix(b ^ a.rotate_left(43)))
+}
+
+/// The tokens of one line, a quoted one read as a JSON string. A plain loop over bytes: under
+/// the size-first build an iterator chain here is not inlined, and this runs once per line.
+fn tokens(text: &str) -> Result<Vec<std::borrow::Cow<'_, str>>> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(4);
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b' ' {
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            let mut scan = json::Scan::new(&text[i..]);
+            out.push(scan.string()?);
+            i += scan.pos;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i] != b' ' {
+            i += 1;
+        }
+        out.push(std::borrow::Cow::Borrowed(&text[start..i]));
+    }
+    Ok(out)
+}
+
+/// The section being read: its entry is built here and filed when the next section starts.
+enum Section {
+    None,
+    Root,
+    Workspace(String, WorkspaceEntry),
+    Package(String, LockEntry),
+}
+
+fn file_section(lock: &mut Lockfile, section: Section) {
+    match section {
+        Section::Workspace(path, ws) => {
+            lock.workspaces.insert(path, ws);
+        }
+        Section::Package(key, e) => {
+            lock.packages.insert(key, e);
+        }
+        Section::None | Section::Root => {}
+    }
+}
+
+fn parse_text(text: &str) -> Result<Lockfile> {
+    let mut lines = text.lines().enumerate().filter(|(_, l)| !l.starts_with('#') && !l.trim().is_empty());
+    let bad = |n: usize, why: &str| fail(format!("line {}: {why}", n + 1));
+    match lines.next() {
+        Some((_, l)) if l.trim_end().strip_prefix("jpm-lock ") == Some(TEXT_VERSION_TEXT) => {}
+        Some((n, l)) => return Err(bad(n, &format!("unsupported lockfile header {:?}", l.trim_end()))),
+        None => return Err(fail("the lockfile is empty")),
+    }
+    let (n, hash_line) = lines.next().ok_or_else(|| fail("no hash line"))?;
+    let stored = hash_line.strip_prefix("hash ").ok_or_else(|| bad(n, "expected the hash line"))?.trim();
+    // Everything after the hash line, exactly as written.
+    let at = text.find(hash_line).map_or(text.len(), |i| i + hash_line.len());
+    let body = text[at..].strip_prefix("\r\n").or_else(|| text[at..].strip_prefix('\n')).unwrap_or(&text[at..]);
+    let mut lock = Lockfile { lockfile_version: TEXT_VERSION, ..Lockfile::default() };
+    let mut section = Section::None;
+    let mut root_seen = false;
+    for (n, raw) in lines {
+        let raw = raw.trim_end_matches('\r');
+        let indented = raw.starts_with("  ");
+        let t = tokens(raw.trim_start()).map_err(|e| bad(n, &e.message))?;
+        let word = t.first().map_or("", |w| w.as_ref());
+        let arg =
+            |i: usize| t.get(i).map(|v| v.to_string()).ok_or_else(|| bad(n, &format!("{word} is missing a value")));
+        if !indented {
+            let next = match (word, t.len()) {
+                ("root", 1) if !root_seen => {
+                    root_seen = true;
+                    Section::Root
+                }
+                ("workspace", 2) => Section::Workspace(arg(1)?, WorkspaceEntry::default()),
+                ("package", 2) => Section::Package(arg(1)?, LockEntry::default()),
+                _ => return Err(bad(n, &format!("unexpected line {raw:?}"))),
+            };
+            file_section(&mut lock, std::mem::replace(&mut section, next));
+            continue;
+        }
+        let pair = || Ok::<_, Error>((arg(1)?, arg(2)?));
+        match &mut section {
+            Section::None => return Err(bad(n, "a field outside any section")),
+            Section::Root => {
+                let r = &mut lock.root;
+                match word {
+                    "name" => r.name = Some(arg(1)?),
+                    "version" => r.version = Some(arg(1)?),
+                    "workspace" => r.workspaces.get_or_insert_with(Vec::new).push(arg(1)?),
+                    "spec" => add_spec(&mut r.specs, &arg(1)?, arg(2)?, arg(3)?).map_err(|e| bad(n, &e))?,
+                    "dep" => {
+                        let (k, v) = pair()?;
+                        r.dependencies.insert(k, v);
+                    }
+                    _ => return Err(bad(n, &format!("unknown root field {word:?}"))),
+                }
+            }
+            Section::Workspace(_, ws) => match word {
+                "name" => ws.name = arg(1)?,
+                "version" => ws.version = arg(1)?,
+                "spec" => add_spec(&mut ws.specs, &arg(1)?, arg(2)?, arg(3)?).map_err(|e| bad(n, &e))?,
+                _ => edge(
+                    word,
+                    &t,
+                    &mut ws.dependencies,
+                    &mut ws.optional_dependencies,
+                    &mut ws.bin,
+                    &mut ws.peer_dependencies,
+                    &mut ws.peers,
+                )
+                .map_err(|e| bad(n, &e))?,
+            },
+            Section::Package(_, e) => match word {
+                "version" => e.version = Some(arg(1)?),
+                "resolved" => e.resolved = Some(arg(1)?),
+                "integrity" => e.integrity = arg(1)?,
+                "subgraph" => e.subgraph = Some(arg(1)?),
+                "os" => e.os = t[1..].iter().map(|v| v.to_string()).collect(),
+                "cpu" => e.cpu = t[1..].iter().map(|v| v.to_string()).collect(),
+                "libc" => e.libc = t[1..].iter().map(|v| v.to_string()).collect(),
+                _ => edge(
+                    word,
+                    &t,
+                    &mut e.dependencies,
+                    &mut e.optional_dependencies,
+                    &mut e.bin,
+                    &mut e.peer_dependencies,
+                    &mut e.peers,
+                )
+                .map_err(|e| bad(n, &e))?,
+            },
+        }
+    }
+    file_section(&mut lock, section);
+    if !root_seen {
+        return Err(fail("no root section"));
+    }
+    if content_digest(body) == stored {
+        lock.hash = Some(stored.to_string());
+    } else {
+        // Edited by hand, or merged: every fact is still checked, but nothing derived is trusted.
+        for e in lock.packages.values_mut() {
+            e.subgraph = None;
+        }
+    }
+    Ok(lock)
+}
+
+fn add_spec(specs: &mut Option<Specs>, group: &str, name: String, range: String) -> std::result::Result<(), String> {
+    let s = specs.get_or_insert_with(Specs::default);
+    let map = match group {
+        "dependencies" => &mut s.dependencies,
+        "devDependencies" => &mut s.dev_dependencies,
+        "optionalDependencies" => &mut s.optional_dependencies,
+        _ => return Err(format!("unknown dependency group {group:?}")),
+    };
+    map.get_or_insert_with(Deps::new).insert(name, range);
+    Ok(())
+}
+
+/// One of the edge lines a workspace and a package share.
+fn edge(
+    word: &str,
+    t: &[std::borrow::Cow<'_, str>],
+    deps: &mut Deps,
+    optional: &mut Deps,
+    bins: &mut Deps,
+    ranges: &mut Deps,
+    peers: &mut Peers,
+) -> std::result::Result<(), String> {
+    let (Some(a), Some(b), 3) = (t.get(1), t.get(2), t.len()) else {
+        return Err(format!("{word} takes two values"));
+    };
+    let (a, b) = (a.to_string(), b.to_string());
+    match word {
+        "dep" => deps.insert(a, b),
+        "optional" => optional.insert(a, b),
+        "bin" => bins.insert(a, b),
+        "peer" => ranges.insert(a, b),
+        "settled" => {
+            let kind = PeerKind::parse(&b).ok_or_else(|| format!("settled {a} must be required or optional"))?;
+            peers.insert(a, kind);
+            return Ok(());
+        }
+        _ => return Err(format!("unknown field {word:?}")),
+    };
+    Ok(())
+}
+
+/// Whether the file at `path` is in jpm's current format, from its first bytes alone.
+pub fn is_current(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 128];
+    let n = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)).unwrap_or(0);
+    let head = String::from_utf8_lossy(&head[..n]);
+    head.lines().find(|l| !l.starts_with('#')).is_some_and(|l| l.trim_end() == format!("jpm-lock {TEXT_VERSION}"))
+}
+
+/// The hash of the lockfile's content: the one stored when it still matches, else computed.
+pub fn content_hash(lock: &Lockfile) -> String {
+    lock.hash.clone().unwrap_or_else(|| content_digest(&text_body(lock)))
+}
+
+/// Each package's store entry name, by key, when the lockfile's hash says the subgraphs it
+/// records are its own; `None` means hashing the graph (`keys::store_keys`).
+pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String, String>> {
+    lock.hash.as_ref()?;
+    lock.packages
+        .iter()
+        .map(|(key, e)| {
+            let (name, tail) = split_key(key)?;
+            let version = e.version.as_deref().unwrap_or(tail);
+            Some((key.clone(), format!("{}@{version}-{}", name.replace('/', "+"), e.subgraph.as_ref()?)))
+        })
+        .collect()
 }
 
 /// The lockfile in `dir`: `jpm.lock`, else upm's. `None` when there is neither.
@@ -480,8 +852,20 @@ pub fn read_lockfile(dir: &Path) -> Result<Option<(Lockfile, &'static str)>> {
     Ok(None)
 }
 
-pub fn write_lockfile(dir: &Path, lock: &Lockfile) -> Result<()> {
-    write_atomic(&dir.join(LOCKFILE), format_lockfile(lock)?.as_bytes())
+/// Write `jpm.lock`; the lock then carries the hash of what was written.
+pub fn write_lockfile(dir: &Path, lock: &mut Lockfile) -> Result<()> {
+    lock.lockfile_version = TEXT_VERSION;
+    // Brought over from a format without them: the subgraphs are hashed once, here.
+    if lock.packages.values().any(|e| e.subgraph.is_none()) {
+        let keys = crate::keys::store_keys(&from_lockfile(lock, &|_| String::new()).packages);
+        for (key, e) in &mut lock.packages {
+            e.subgraph = keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string);
+        }
+    }
+    let text = format_lockfile(lock)?;
+    write_atomic(&dir.join(LOCKFILE), text.as_bytes())?;
+    lock.hash = parse_text(&text)?.hash;
+    Ok(())
 }
 
 /// Whether the lockfile was made from this tree: the same workspace patterns, workspaces and
@@ -512,8 +896,8 @@ pub fn same_tree(lock: &Lockfile, manifest: &RootManifest, workspaces: &[Workspa
 
 /// What `read_lockfile` checks: every edge closed, every key and path safe to become a path.
 pub fn validate(lock: &Lockfile) -> Result<()> {
-    if lock.lockfile_version != VERSION {
-        return Err(fail(format!("unsupported lockfileVersion {}, expected {VERSION}", lock.lockfile_version)));
+    if lock.lockfile_version != VERSION && lock.lockfile_version != TEXT_VERSION {
+        return Err(fail(format!("unsupported lockfileVersion {}", lock.lockfile_version)));
     }
     let mut known: HashSet<String> = lock.packages.keys().cloned().collect();
     let mut named: BTreeMap<&str, &str> = BTreeMap::new();
@@ -636,6 +1020,11 @@ fn escapes(value: &str) -> bool {
 fn check_key(key: &str) -> Result<Option<String>> {
     let bad = || fail(format!("package key {key:?} is not name@version"));
     let (name, version) = split_key(key).filter(|(_, v)| !v.is_empty()).ok_or_else(bad)?;
+    // Almost every key is `name@1.2.3`: checked directly, without building a spec.
+    if version.as_bytes()[0].is_ascii_digit() && semver::is_exact(version) {
+        spec::check_name(name, key).map_err(|_| fail(format!("package key {key:?} is not a valid package name")))?;
+        return Ok(None);
+    }
     let spec =
         spec::parse_dep(name, version).map_err(|_| fail(format!("package key {key:?} is not a valid package name")))?;
     if spec.kind == Kind::Tarball {
@@ -686,8 +1075,31 @@ mod tests {
         assert!(res.packages["c@1.0.0"].optional);
         assert!(!res.packages["b@1.0.0"].optional);
         assert_eq!(res.packages["a@1.0.0"].resolved, "https://registry.npmjs.org/a/-/a-1.0.0.tgz");
-        let again = to_lockfile(&res, &base);
-        assert_eq!(format_lockfile(&again).unwrap(), format_lockfile(&lock).unwrap());
+        // upm's JSON in, jpm's text out, and the text reads back to the same text.
+        let text = format_lockfile(&to_lockfile(&res, &base)).unwrap();
+        let again = parse_lockfile(&text, LOCKFILE).unwrap();
+        assert!(again.hash.is_some(), "an untouched file keeps its hash");
+        assert_eq!(format_lockfile(&to_lockfile(&from_lockfile(&again, &base), &base)).unwrap(), text);
+        // And the JSON view is upm's shape.
+        assert_eq!(format_json(&again).unwrap(), format_json(&lock).unwrap());
+        // The stored subgraphs are the ones hashing the graph gives.
+        assert_eq!(recorded_keys(&again).unwrap(), crate::keys::store_keys(&res.packages));
+    }
+
+    #[test]
+    fn distrusts_an_edited_file() {
+        let base = |_: &str| "https://registry.npmjs.org".to_string();
+        let text = format_lockfile(&to_lockfile(&from_lockfile(&sample(), &base), &base)).unwrap();
+        let edited = text.replace("integrity sha512-b", "integrity sha512-B");
+        let lock = parse_lockfile(&edited, LOCKFILE).unwrap();
+        assert!(lock.hash.is_none());
+        assert!(lock.packages.values().all(|e| e.subgraph.is_none()));
+        assert!(parse_lockfile(&text.replace("jpm-lock 2", "jpm-lock 9"), LOCKFILE).is_err());
+        assert!(parse_lockfile(&text.replace("  dep b 1.0.0\n", "  dep b\n"), LOCKFILE).is_err());
+        let quoted = text.replace("bin b cli.js", "bin \"my tool\" \"a b.js\"");
+        let lock = parse_lockfile(&quoted, LOCKFILE).unwrap();
+        assert_eq!(lock.packages["b@1.0.0"].bin["my tool"], "a b.js");
+        assert!(format_lockfile(&lock).unwrap().contains("bin \"my tool\" \"a b.js\""));
     }
 
     #[test]
@@ -711,5 +1123,60 @@ mod tests {
                 .message
                 .contains("unsupported")
         );
+    }
+}
+
+/// `JPM_LOCK_BENCH=<jpm.lock> cargo test --release lock_bench -- --ignored --nocapture`
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore]
+    fn lock_bench() {
+        let file = std::env::var("JPM_LOCK_BENCH").expect("set JPM_LOCK_BENCH");
+        for _ in 0..3 {
+            let t = Instant::now();
+            let text = std::fs::read_to_string(&file).unwrap();
+            let read = t.elapsed();
+            let t = Instant::now();
+            let t0 = Instant::now();
+            let mut n = 0usize;
+            for l in text.lines() {
+                n += tokens(l.trim_start()).map(|t| t.len()).unwrap_or(0);
+            }
+            let tokenize = t0.elapsed();
+            let t0 = Instant::now();
+            let _ = content_digest(&text);
+            let digest = t0.elapsed();
+            println!("tokenize {tokenize:?} ({n} tokens) digest {digest:?}");
+            let lock = if text.starts_with('{') {
+                Lockfile::from_value(&json::parse(&text).unwrap()).unwrap()
+            } else {
+                parse_text(&text).unwrap()
+            };
+            let parse = t.elapsed();
+            let t = Instant::now();
+            validate(&lock).unwrap();
+            let check = t.elapsed();
+            let t = Instant::now();
+            let res = into_resolution(lock.clone(), &|_| "https://registry.npmjs.org".to_string());
+            let convert = t.elapsed();
+            let platform = crate::sys::Platform::current();
+            let keys_at = Instant::now();
+            let _ = recorded_keys(&lock).unwrap_or_else(|| crate::keys::store_keys(&res.packages));
+            let keys = keys_at.elapsed();
+            let t = Instant::now();
+            let _filtered = crate::graph::filter_platform(res, &platform).unwrap();
+            let filter = t.elapsed();
+            let t = Instant::now();
+            let _ = crate::state::state_hash(&content_hash(&lock), false, std::path::Path::new("/s"), &platform);
+            let hash = t.elapsed();
+            println!(
+                "{} bytes: read {read:?} parse {parse:?} validate {check:?} to-graph {convert:?} platform {filter:?} state-hash {hash:?} store-keys {keys:?}",
+                text.len()
+            );
+        }
     }
 }

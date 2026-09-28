@@ -233,30 +233,48 @@ pub fn runs_on(os: Option<&Vec<String>>, cpu: Option<&Vec<String>>, libc: Option
 
 /// Everything `keep` accepts that the tops reach, over both edge maps. A workspace is always in;
 /// `from` filters the edges out of a top, so a devDependency of one does not ship through it.
-fn reach(res: &Resolution, keep: &dyn Fn(&str) -> bool, from: &dyn Fn(&str) -> bool) -> HashSet<String> {
-    let mut seen = HashSet::new();
-    let mut queue = Vec::new();
-    let push = |key: String, top: bool, seen: &mut HashSet<String>, queue: &mut Vec<String>| {
-        if seen.contains(&key) || !res.packages.contains_key(&key) || !keep(&key) || (top && !from(&key)) {
+/// Each package's key by the `(name, version)` an edge to it carries, so a walk over edges
+/// looks keys up instead of spelling `name@version` for each one.
+fn edge_index(res: &Resolution) -> HashMap<(&str, &str), &str> {
+    let mut index = HashMap::with_capacity(res.packages.len());
+    for key in res.packages.keys() {
+        if let Some((name, tail)) = split_key(key) {
+            index.insert((name, tail), key.as_str());
+        }
+    }
+    index
+}
+
+fn reach<'a>(
+    res: &'a Resolution,
+    index: &HashMap<(&'a str, &'a str), &'a str>,
+    keep: &dyn Fn(&str) -> bool,
+    from: &dyn Fn(&str) -> bool,
+) -> HashSet<&'a str> {
+    let mut seen: HashSet<&str> = HashSet::with_capacity(res.packages.len());
+    let mut queue: Vec<&str> = Vec::new();
+    let mut push = |key: Option<&&'a str>, top: bool, queue: &mut Vec<&'a str>| {
+        let Some(&key) = key else { return };
+        if seen.contains(key) || !keep(key) || (top && !from(key)) {
             return;
         }
-        seen.insert(key.clone());
+        seen.insert(key);
         queue.push(key);
     };
     for (name, version) in &res.root.dependencies {
-        push(format!("{name}@{version}"), true, &mut seen, &mut queue);
+        push(index.get(&(name.as_str(), version.as_str())), true, &mut queue);
     }
     for (key, p) in &res.packages {
         if p.local.is_some() {
-            push(key.clone(), false, &mut seen, &mut queue);
+            push(Some(&key.as_str()), false, &mut queue);
         }
     }
     let mut i = 0;
     while i < queue.len() {
-        let p = &res.packages[&queue[i]];
+        let p = &res.packages[queue[i]];
         let top = p.local.is_some();
         for (name, version) in p.dependencies.iter().chain(&p.optional_dependencies) {
-            push(format!("{name}@{version}"), top, &mut seen, &mut queue);
+            push(index.get(&(name.as_str(), version.as_str())), top, &mut queue);
         }
         i += 1;
     }
@@ -267,8 +285,8 @@ fn reach(res: &Resolution, keep: &dyn Fn(&str) -> bool, from: &dyn Fn(&str) -> b
 /// builds; this needs no network, since `os`, `cpu` and `libc` were written down. A package
 /// with a required edge to something that cannot run here goes too, and a required package that
 /// cannot run here is an error.
-pub fn filter_platform(res: &Resolution, platform: &Platform) -> Result<Resolution> {
-    let mut warnings: BTreeSet<String> = res.warnings.iter().cloned().collect();
+pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resolution> {
+    let mut warnings: BTreeSet<String> = std::mem::take(&mut res.warnings).into_iter().collect();
     let mut gone: HashMap<String, String> = HashMap::new();
     let drop = |key: &str, why: String, gone: &mut HashMap<String, String>| -> Result<()> {
         if res.packages.get(key).is_some_and(|p| !p.optional) {
@@ -282,7 +300,8 @@ pub fn filter_platform(res: &Resolution, platform: &Platform) -> Result<Resoluti
             drop(key, format!("does not run on {platform}"), &mut gone)?;
         }
     }
-    let mut changed = true;
+    // A required edge to a dropped package takes its owner with it, until nothing changes.
+    let mut changed = !gone.is_empty();
     while changed {
         changed = false;
         for (key, p) in &res.packages {
@@ -300,24 +319,31 @@ pub fn filter_platform(res: &Resolution, platform: &Platform) -> Result<Resoluti
             }
         }
     }
-    let keep = reach(res, &|k| !gone.contains_key(k), &|_| true);
-    // Recomputed: a package the root shipped only through a build that just went is dev now.
-    let shipped = reach(res, &|k| keep.contains(k), &|k| res.packages.get(k).is_some_and(|p| !p.dev));
-    let present = |deps: &Deps| -> Deps {
-        deps.iter().filter(|(n, v)| keep.contains(&format!("{n}@{v}"))).map(|(n, v)| (n.clone(), v.clone())).collect()
-    };
-    let mut packages = BTreeMap::new();
-    for key in &keep {
-        let p = &res.packages[key];
-        let mut q = p.clone();
-        q.dependencies = present(&p.dependencies);
-        q.optional_dependencies = present(&p.optional_dependencies);
-        q.dev = !shipped.contains(key);
-        packages.insert(key.clone(), q);
+    if gone.is_empty() {
+        res.warnings = warnings.into_iter().collect();
+        return Ok(res);
     }
-    let mut root = res.root.clone();
-    root.dependencies = present(&res.root.dependencies);
-    Ok(Resolution { root, packages, warnings: warnings.into_iter().collect() })
+    let gone_names: HashSet<String> = gone.keys().filter_map(|k| split_key(k).map(|(n, _)| n.to_string())).collect();
+    let index = edge_index(&res);
+    let keep = reach(&res, &index, &|k| !gone.contains_key(k), &|_| true);
+    // Recomputed: a package the root shipped only through a build that just went is dev now.
+    let shipped = reach(&res, &index, &|k| keep.contains(k), &|k| res.packages.get(k).is_some_and(|p| !p.dev));
+    let keep: HashSet<String> = keep.into_iter().map(str::to_string).collect();
+    let shipped: HashSet<String> = shipped.into_iter().map(str::to_string).collect();
+    std::mem::drop(index);
+    let present = |deps: &mut Deps| deps.retain(|n, v| keep.contains(&format!("{n}@{v}")));
+    res.packages.retain(|k, _| keep.contains(k));
+    for (key, p) in &mut res.packages {
+        // Only the edges to what went need a look: most packages lost nothing.
+        if p.dependencies.keys().chain(p.optional_dependencies.keys()).any(|n| gone_names.contains(n.as_str())) {
+            present(&mut p.dependencies);
+            present(&mut p.optional_dependencies);
+        }
+        p.dev = !shipped.contains(key);
+    }
+    present(&mut res.root.dependencies);
+    res.warnings = warnings.into_iter().collect();
+    Ok(res)
 }
 
 /// Consumers whose declared peer range is not what the tree installed.
@@ -383,12 +409,12 @@ mod tests {
         res.packages.insert("a@1.0.0".into(), a);
         res.packages.insert("bind@1.0.0".into(), pkg("bind", true, v(&["darwin"]), &[]));
         res.packages.insert("wrap@1.0.0".into(), pkg("wrap", true, None, &[("bind", "1.0.0")]));
-        let out = filter_platform(&res, &platform()).unwrap();
+        let out = filter_platform(res.clone(), &platform()).unwrap();
         assert_eq!(out.packages.keys().collect::<Vec<_>>(), ["a@1.0.0"]);
         assert!(out.packages["a@1.0.0"].optional_dependencies.is_empty());
         assert_eq!(out.warnings.len(), 1);
 
         res.packages.get_mut("bind@1.0.0").unwrap().optional = false;
-        assert_eq!(filter_platform(&res, &platform()).unwrap_err().code, "EBADPLATFORM");
+        assert_eq!(filter_platform(res, &platform()).unwrap_err().code, "EBADPLATFORM");
     }
 }

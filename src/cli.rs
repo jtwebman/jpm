@@ -8,7 +8,7 @@ use crate::commands::{self, ExecOpts, InstallResult, Opts, Select};
 use crate::config::Flags;
 use crate::error::Error;
 use crate::json::{self, Object, Value};
-use crate::lock::{LOCKFILE, format_lockfile};
+use crate::lock::{LOCKFILE, format_json};
 use crate::manifest::parse_date;
 use crate::ui::{self, BOLD, CYAN, GRAY, GREEN, YELLOW, paint};
 
@@ -478,7 +478,7 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
         }
         "lock" => {
             let l = commands::lock_command(o, !cli.json)?;
-            if cli.json { Ok(format_lockfile(&l)?.trim_end().to_string()) } else { Ok(String::new()) }
+            if cli.json { Ok(format_json(&l)?.trim_end().to_string()) } else { Ok(String::new()) }
         }
         "prune" => {
             let p = commands::prune(o)?;

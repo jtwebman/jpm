@@ -3,9 +3,8 @@
 A fast, small package manager for the npm registry, written in Rust.
 
 jpm is a port of [upm](https://github.com/unjs/upm) to Rust. It installs the same
-isolated `node_modules` layout, reads and writes the same lockfile format (`jpm.lock`,
-and it reads `upm.lock`), and takes the same commands and flags. It needs no Node.js to
-install packages; Node is only needed to run them.
+isolated `node_modules` layout and takes the same commands and flags. It needs no Node.js
+to install packages; Node is only needed to run them.
 
 ## Install
 
@@ -63,10 +62,45 @@ jpm prune                            # remove unused entries
 
 Commit `jpm.lock` with `package.json`. `jpm --help` lists every option.
 
-With no `jpm.lock`, jpm installs from `upm.lock` if there is one, since the format is the
-same. Otherwise it reads `package-lock.json`, `pnpm-lock.yaml` or `bun.lock` and writes
-nothing beside it; commands that would change the tree are refused there. Delete the other
-lockfile to switch to jpm.
+## Coming from another package manager
+
+Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and writes
+`jpm.lock` from it:
+
+- `package-lock.json` and `npm-shrinkwrap.json` (npm 7 and later), `pnpm-lock.yaml`
+  (pnpm 9 and later) and `bun.lock` are carried over as they are: the same versions and the
+  same tree, with no registry lookups.
+- When that is not possible (the file is out of date with `package.json`, has workspaces, or
+  is an older format such as npm 6's or pnpm 8's), jpm resolves the tree with the file's
+  versions preferred wherever the ranges in `package.json` allow them.
+- `upm.lock` is read the same way.
+
+The old lockfile is left in place and no longer read; delete it when you are ready.
+`jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
+old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committed.
+
+## The lockfile
+
+`jpm.lock` is a text file: one fact per line, sorted, so a change is a small diff.
+
+```
+jpm-lock 2
+hash 0c1f…
+root
+  spec dependencies nuxt ^4.5.2
+  dep nuxt 4.5.2
+package @babel/core@7.29.7
+  integrity sha512-…
+  subgraph Kc9…
+  dep @babel/generator 7.29.8
+  bin babel bin/babel.js
+```
+
+Each package records the hash of everything it depends on (`subgraph`), which names its
+directory under `node_modules/.jpm`. The `hash` line covers the rest of the file: while it
+matches, jpm uses the recorded subgraphs instead of hashing the graph again. A hand edit or a
+merge is fine; the hash no longer matches, so jpm checks everything and writes the file again.
+`jpm lock --json` prints the lockfile as JSON, in upm's format.
 
 ## How it works
 

@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::graph::{Deps, Package, Resolution};
+use crate::graph::{Deps, Package};
 use crate::util::short_hash;
 
 /// Every registry or tarball package's entry directory name, `<name>@<version>-<hash>`, one path
@@ -16,19 +16,6 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
         .filter(|(_, p)| p.local.is_none())
         .map(|(k, p)| (k.clone(), format!("{}@{}-{}", p.name.replace('/', "+"), p.version, digests[k])))
         .collect()
-}
-
-/// One hash over the resolution. The root's own name and version are left out: bumping them must
-/// not invalidate an installed tree.
-pub fn graph_hash(res: &Resolution) -> String {
-    let mut lines: Vec<String> = res.packages.values().map(line_of).collect();
-    lines.push(format!("::root::{}", edges(&res.root.dependencies)));
-    for p in res.packages.values() {
-        if let Some(path) = &p.local {
-            lines.push(format!("::top:{path}::{}", edges(&p.all_deps())));
-        }
-    }
-    hash(lines)
 }
 
 /// Identity, content and what it resolves its deps to. Integrity, not the url: a republished
