@@ -1,18 +1,21 @@
 # Install benchmark
 
+This harness comes from [upm](https://github.com/unjs/upm)'s `bench/`, with a `jpm` runner added
+and upm measured as published on npm.
+
 Times cold, warm and repeat installs of one entry package with every supported package
 manager, and records time, peak memory and CPU for each run.
 
 ```sh
 ./bench.sh                         # every runner and fixture, then the charts
-./bench.sh -r upm,pnpm12 -f nuxt   # a subset
+./bench.sh -r jpm,pnpm12 -f nuxt   # a subset
 ./bench.sh --cold 5 --warm 5       # more samples
 node report.ts results/<stamp>.jsonl  # markdown tables (bench.sh does not print them)
 node chart.ts                      # re-render the charts for the newest run
 ```
 
 **Needs:** Linux, Node 24 (the `.ts` tools run with type stripping, no build), Perl for
-`measure.pl`, and `jup` in `node_modules` (`node ../upm install --frozen-lockfile`).
+`measure.pl`, cargo, and the tools in `bench/package.json` (`jpm install --dir bench`).
 `zstd` is optional: without it the size chart has no CI restore estimate.
 
 | option                       | default                 | meaning                                       |
@@ -26,12 +29,12 @@ node chart.ts                      # re-render the charts for the newest run
 | `--no-chart`                 | off                     | skip the SVG charts                           |
 | `--dry-run`                  | off                     | print the plan and exit                       |
 
-`BENCH_WORK` moves the work directory (default `~/.cache/upm-bench`, or under
+`BENCH_WORK` moves the work directory (default `~/.cache/jpm-bench`, or under
 `XDG_CACHE_HOME`). Each runner's output goes to `<work>/logs/<runner>-<fixture>.log`.
 
 ## What a run does
 
-1. Rebuilds `../dist` so upm is always this working tree.
+1. Builds `target/release/jpm` so jpm is always this working tree.
 2. Downloads every manager with jup and runs its `--version` once, so no download lands in a
    timed run.
 3. For each fixture, runs the three phases below in order, in rounds: each round runs every
@@ -78,9 +81,9 @@ hook pays when install had nothing to do.
 
 ## Runners
 
-upm runs `../dist/upm.mjs`, the same file as the published `bin`. Its version is
-`dist-<sha>`, with `-dirty` when `src/` has uncommitted changes. Set `UPM_CLI=../upm` to
-measure the source entry instead (`src-<sha>`, slower to start, not what users run).
+jpm runs `target/release/jpm`, the release build. Its version is the git commit, with
+`-dirty` when `src/` has uncommitted changes; `JPM_BIN` points it at another binary. upm runs
+`bench/node_modules/upm/dist/upm.mjs` on the `node` on PATH (`UPM_CLI` moves it).
 
 Other managers come from jup (a dev dependency, so versions do not depend on the machine).
 They are **not** run through jup: `runners.sh` finds each manager's own entry in the jup
@@ -89,7 +92,8 @@ store and starts it directly, a native binary as is and a JavaScript entry on th
 
 | runner   | command (lifecycle scripts off in all)          |
 | -------- | ----------------------------------------------- |
-| `upm`    | `node ../dist/upm.mjs install --store <cache>`  |
+| `jpm`    | `target/release/jpm install --store <cache>`    |
+| `upm`    | `node <upm> install --store <cache>`            |
 | `npm`    | `node <npm> install`                            |
 | `pnpm11` | `node <pnpm@11> install --store-dir <cache>`    |
 | `pnpm12` | `<pnpm@12> install --store-dir <cache>`         |
@@ -118,10 +122,10 @@ store and starts it directly, a native binary as is and a JavaScript entry on th
   directories. Each cold row records the cache size; a successful cold run with a cache
   under 1 MB gets a warning, as the manager may have used a shared cache, and so does any
   successful run that leaves no packages in the project.
-- **Lifecycle scripts are off everywhere**, because upm cannot run them.
+- **Lifecycle scripts are off everywhere**, because jpm and upm cannot run them.
 - **A 1-day release-age gate for all**, set by the harness and not left to the machine's npmrc,
   yarnrc or environment, so every machine resolves the same versions (`BENCH_MIN_AGE_DAYS`
-  changes it). Each manager gets its own key: npm's `min-release-age` (upm, npm, deno), pnpm's
+  changes it). Each manager gets its own key: npm's `min-release-age` (jpm, upm, npm, deno), pnpm's
   `minimum-release-age` (pnpm, aube, nub), yarn 4's `npmMinimalAgeGate` and bun's
   `--minimum-release-age`. `runners.sh` has the details.
 - **`CI` is unset**, since pnpm turns on `--frozen-lockfile` under CI and a cold run fails.
@@ -195,7 +199,7 @@ process's last 10 ms.
 ```
 
 `bytes` and `packages` describe `node_modules`. `runner_bytes` is the manager's own size on
-disk: its directory in the jup store, or `dist/` (`src/` with `UPM_CLI`) for upm.
+disk: its directory in the jup store, the binary for jpm, or `dist/` for upm.
 `runner_packed_bytes` is the same files as a POSIX tar through `zstd -T0`, the
 way `actions/cache` packs them. The size chart turns it into an estimated restore time,
 fitted to measured `actions/cache` restores on `ubuntu-latest` (`RESTORE` in `chart.ts`).
@@ -238,7 +242,7 @@ writes. "Newest" means most recently modified, not last by name.
   is divided by the best time there; the score is the geometric mean of those ratios. Only
   managers with a clean result in every fixture are ranked; the rest follow with a reason.
 - **Shapes are fixtures** (circle nitro, square nuxt, diamond next) and **colors are
-  phases** (blue cold, orange warm, purple repeat). A light band marks upm. Each row ends
+  phases** (blue cold, orange warm, purple repeat). A light band marks jpm. Each row ends
   with its fastest–slowest range.
 - **A logo shows what each manager runs on**: Node.js, Rust (Ferris), Bun or Deno. See
   `RUNTIME` in `chart.ts` and the artwork in `icons.ts`.
@@ -247,7 +251,7 @@ writes. "Newest" means most recently modified, not last by name.
   failure, partial failures get a red outline. Small cold caches and empty projects get a footnote.
 - **Memory and CPU charts** use the same layout and rules, scored on their own values.
 - **`--size`** draws bars of each manager's size on disk, smallest first, with the ratio to
-  upm and, when recorded, its packed size and estimated CI restore.
+  jpm and, when recorded, its packed size and estimated CI restore.
 - **Every chart has one canvas size** (`WIDTH` × `HEIGHT` in `chart.ts`), so they line up
   in a README grid. Rows stretch to fill spare height; only a chart too tall for it grows.
 - **The chart follows the viewer's color scheme**: colors are drawn light, and a
@@ -257,23 +261,3 @@ writes. "Newest" means most recently modified, not last by name.
 
 For a PNG (light): `rsvg-convert --zoom 2 results/<stamp>.cold.svg -o cold.png`. After a layout
 change, regenerate a chart and look at it at its embedded size.
-
-## A/B of upm builds: `ab.sh`
-
-```sh
-bench/ab.sh <mode> <pairs> <label:dist> <label:dist>... -- <fixture>...
-bench/ab.sh warm 10 base:/tmp/base/dist new:dist -- nuxt next
-```
-
-Compares two or more upm builds (each a directory with `upm.mjs`), alternating their order
-each pair. Every run goes through `measure.pl` into a rows file under `.work/ab/`, then
-`summ.mjs` prints medians and paired differences against the first build, with how many
-pairs the new build won.
-
-- Modes: `cold`, `warm` and `repeat` as above, with a private store per build, and `lock`,
-  which times `upm lock` alone in a fresh project and fails if the builds' `upm.lock`
-  differ.
-- Env: `AB_ENV` / `AB_ENV_<label>` add environment for all builds or one, `AB_OUT` names
-  the rows file, `AB_KEEP=1` keeps the work directories. `min-release-age` is cleared.
-- It holds `.work/ab/.lock` (via `flock`), so two runs on one machine wait for each other.
-- Use ten or more pairs before claiming a result: [../.agents/perf.md](../.agents/perf.md).
