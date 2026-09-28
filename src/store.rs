@@ -380,7 +380,8 @@ pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
     }
     // A declared bin must run, whatever mode the tarball gave it.
     let declared = manifest
-        .and_then(|m| serde_json::from_slice::<serde_json::Value>(&m).ok())
+        .and_then(|m| String::from_utf8(m).ok())
+        .and_then(|m| crate::json::parse(&m).ok())
         .map(|v| bin::normalize(v.get("name").and_then(|n| n.as_str()), v.get("bin")))
         .unwrap_or_default();
     for target in declared.values() {

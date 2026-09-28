@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use serde_json::Value;
+use crate::json::{self, Object, Value};
 
 use crate::config::{Config, Flags, read_config};
 use crate::error::{Error, Result};
@@ -45,18 +45,29 @@ pub struct Opts {
     pub include_root: bool,
 }
 
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Debug, Default)]
 pub struct InstallResult {
     pub packages: usize,
     pub workspaces: usize,
-    #[serde(rename = "otherPlatforms")]
     pub other_platforms: usize,
-    #[serde(rename = "upToDate")]
     pub up_to_date: bool,
-    #[serde(rename = "dropped")]
     pub missing_optional: Vec<String>,
-    #[serde(flatten)]
     pub stats: link::Stats,
+}
+
+impl InstallResult {
+    /// What `--json` prints, after any `changes` to package.json.
+    pub fn to_object(&self, mut out: Object) -> Object {
+        out.insert("packages", self.packages.into());
+        out.insert("workspaces", self.workspaces.into());
+        out.insert("otherPlatforms", self.other_platforms.into());
+        for (k, v) in self.stats.to_object().iter() {
+            out.insert(k.clone(), v.clone());
+        }
+        out.insert("dropped", Value::from(self.missing_optional.clone()));
+        out.insert("upToDate", self.up_to_date.into());
+        out
+    }
 }
 
 /// One command's options, and what it found out about the project on the way.
@@ -86,7 +97,7 @@ struct Project {
 struct Edit {
     file: PathBuf,
     raw: String,
-    doc: serde_json::Map<String, Value>,
+    doc: Object,
     project: Project,
 }
 
@@ -219,8 +230,15 @@ impl Ctx {
     fn settings(&self) -> String {
         let c = self.config();
         let store = store_dir(self.opts.store.as_deref());
-        serde_json::to_string(&(self.opts.production, store, (&c.registry, &c.scopes), Platform::current()))
-            .unwrap_or_default()
+        let scopes = json::str_map(&c.scopes);
+        let hosts = Value::Array(vec![c.registry.as_str().into(), scopes]);
+        let platform = Platform::current().to_value();
+        json::to_string(&Value::Array(vec![
+            self.opts.production.into(),
+            store.display().to_string().into(),
+            hosts,
+            platform,
+        ]))
     }
 
     fn stamps(&mut self, dir: &Path) -> Option<Stamps> {
@@ -889,7 +907,7 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
     resolve_lock(&ctx, &project, existing, &registry, &reader, None, &moved, write)
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug)]
 pub struct Fetched {
     pub name: String,
     pub version: String,
@@ -930,6 +948,27 @@ pub fn fetch_lockfile(opts: Opts) -> Result<Vec<Fetched>> {
         }
     }
     Ok(out)
+}
+
+impl Fetched {
+    pub fn to_value(&self) -> Value {
+        json::obj([
+            ("name", (&self.name).into()),
+            ("version", (&self.version).into()),
+            ("cached", self.cached.into()),
+            ("files", self.files.into()),
+            ("bytes", self.bytes.into()),
+        ])
+    }
+}
+
+impl Pruned {
+    pub fn to_value(&self) -> Value {
+        json::obj([
+            ("entries", self.entries.as_ref().map_or(Value::Null, gc::Swept::to_value)),
+            ("store", self.store.to_value()),
+        ])
+    }
 }
 
 fn fetched(name: &str, version: &str, cached: bool, index: &Index) -> Fetched {
@@ -973,7 +1012,7 @@ pub fn fetch_specs(specs: &[String], opts: Opts) -> Result<Vec<Fetched>> {
         .collect()
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug)]
 pub struct Pruned {
     pub entries: Option<gc::Swept>,
     pub store: gc::Swept,
@@ -1300,8 +1339,7 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     let bin = match &own {
         Some(s) => {
             let file = dir.join("node_modules").join(&s.name).join("package.json");
-            let doc: Value =
-                serde_json::from_str(&std::fs::read_to_string(&file).unwrap_or_default()).unwrap_or(Value::Null);
+            let doc = json::parse(&std::fs::read_to_string(&file).unwrap_or_default()).unwrap_or(Value::Null);
             pick_bin(&doc, &s.fetch_name)?
         }
         None => command.to_string(),
@@ -1333,9 +1371,13 @@ fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>
         let range = if s.name == s.fetch_name { version } else { format!("npm:{}@{version}", s.fetch_name) };
         deps.insert(s.name.clone(), range);
     }
-    let text = crate::util::pretty(&serde_json::json!({ "private": true, "dependencies": deps }));
+    let text = json::to_pretty(&json::obj([("private", true.into()), ("dependencies", json::str_map(&deps))]), "  ");
     let c = ctx.config();
-    let key = crate::util::short_hash(&serde_json::to_string(&(&c.registry, &c.scopes, &text)).unwrap_or_default());
+    let key = crate::util::short_hash(&json::to_string(&Value::Array(vec![
+        c.registry.as_str().into(),
+        json::str_map(&c.scopes),
+        text.as_str().into(),
+    ])));
     let root = ctx.project_dir();
     let dir = exec_home(&root).join(key);
     let file = dir.join("package.json");
@@ -1365,7 +1407,7 @@ fn self_bin(dir: &Path, command: &str) -> Option<Vec<String>> {
         if !file.is_file() {
             continue;
         }
-        let doc: Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
+        let doc = json::parse(&std::fs::read_to_string(&file).ok()?).ok()?;
         let bins = crate::bin::normalize(doc.get("name").and_then(Value::as_str), doc.get("bin"));
         let target = at.join(bins.get(command)?);
         let runs = !cfg!(windows) && is_exec(&target);
@@ -1401,8 +1443,7 @@ fn local_bin(dir: &Path, command: &str) -> Option<Vec<String>> {
         }
         let Some(s) = &spec else { continue };
         let pkg_file = bins.parent()?.join(&s.name).join("package.json");
-        let Some(doc) = std::fs::read_to_string(&pkg_file).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        else {
+        let Some(doc) = std::fs::read_to_string(&pkg_file).ok().and_then(|t| json::parse(&t).ok()) else {
             continue;
         };
         let version = doc.get("version").and_then(Value::as_str);

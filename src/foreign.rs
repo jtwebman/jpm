@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use serde_json::{Map, Value};
+use crate::json::{self, Object as Map, Value};
 
 use crate::bin::{self, Bins};
 use crate::error::{Error, Result};
@@ -143,8 +143,8 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
     if let Some(overrides) = &source.overrides {
         let given = [doc.get("overrides"), doc.get("resolutions")].into_iter().flatten().find(|v| !v.is_null());
         let empty = Value::Object(Map::new());
-        // Map equality ignores key order: the same overrides written in another order are the same.
-        if overrides != given.unwrap_or(&empty) {
+        // The same overrides written in another order are the same.
+        if !overrides.same_as(given.unwrap_or(&empty)) {
             return Err(stale());
         }
     }
@@ -168,13 +168,14 @@ fn flat(specs: Option<&Specs>) -> Deps {
 const NM: &str = "node_modules/";
 
 fn read_npm(text: &str) -> Result<Source> {
-    let doc: Value = serde_json::from_str(text).map_err(|e| fail(format!("package-lock.json cannot be read: {e}")))?;
-    let Some(paths) = doc.get("packages").and_then(Value::as_object) else {
+    let doc = json::parse(text).map_err(|e| fail(format!("package-lock.json cannot be read: {}", e.message)))?;
+    let Some(listed) = doc.get("packages").and_then(Value::as_object) else {
         let v = doc.get("lockfileVersion").filter(|v| !v.is_null()).map_or_else(|| "1".to_string(), string_of);
         return Err(fail(format!("package-lock.json v{v} has no packages map; npm 7 and later write one")));
     };
     let mut nodes = Vec::new();
-    for (path, entry) in paths {
+    let paths = listed.index();
+    for (path, entry) in listed {
         // A bundled copy is inside its parent's tarball; a workspace path was refused before this.
         if !path.starts_with(NM) || truthy(entry.get("inBundle")) {
             continue;
@@ -196,22 +197,23 @@ fn read_npm(text: &str) -> Result<Source> {
             libc: list(entry.get("libc")),
             ..Node::default()
         };
-        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match npm_find(paths, &from, dep) {
+        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match npm_find(&paths, &from, dep) {
             Some(hit) if truthy(hit.get("inBundle")) => Target::Bundled,
             hit => hit.and_then(npm_version).map_or(Target::Missing, |v| Target::Version(v.to_string())),
         }));
     }
-    let (specs, root) =
-        root_of(groups_of(paths.get("")), &|name| npm_find(paths, "", name).and_then(npm_version).map(str::to_string));
+    let (specs, root) = root_of(groups_of(paths.get("").copied()), &|name| {
+        npm_find(&paths, "", name).and_then(npm_version).map(str::to_string)
+    });
     Ok(Source { nodes, specs, root, overrides: None })
 }
 
 /// The `node_modules/<name>` a walk up from `from` finds, as Node's resolution does.
-fn npm_find<'a>(paths: &'a Map<String, Value>, from: &str, name: &str) -> Option<&'a Value> {
+fn npm_find<'a>(paths: &HashMap<&str, &'a Value>, from: &str, name: &str) -> Option<&'a Value> {
     let mut dir = from;
     loop {
-        if let Some(hit) = paths.get(&format!("{dir}{NM}{name}")).filter(|v| truthy(Some(v))) {
-            return Some(hit);
+        if let Some(hit) = paths.get(format!("{dir}{NM}{name}").as_str()).filter(|v| truthy(Some(v))) {
+            return Some(*hit);
         }
         if dir.is_empty() {
             return None;
@@ -356,11 +358,12 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let empty = Map::new();
     let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
     let snapshots = doc.get("snapshots").and_then(Value::as_object).unwrap_or(&empty);
+    let package_index = packages.index();
     let mut aliases = BTreeMap::new(); // alias@version -> real name
     let mut nodes = Vec::new();
     for (key, snap) in snapshots {
         let id = strip_peers(key);
-        let Some(pkg) = packages.get(id).filter(|p| !p.is_null()) else { continue };
+        let Some(pkg) = package_index.get(id).copied().filter(|p| !p.is_null()) else { continue };
         let resolution = pkg.get("resolution");
         let field = |f: &str| resolution.and_then(|r| r.get(f)).and_then(Value::as_str).filter(|s| !s.is_empty());
         let Some(integrity) = field("integrity") else { continue }; // a git, file or tarball-url package
@@ -401,7 +404,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let mut groups: [Deps; 3] = Default::default();
     let mut versions = Deps::new();
     for (group, specs) in GROUPS.iter().zip(&mut groups) {
-        let Some(map) = top.and_then(|t| t.get(*group)).and_then(Value::as_object) else { continue };
+        let Some(map) = top.and_then(|t| t.get(group)).and_then(Value::as_object) else { continue };
         for (name, dep) in map {
             specs.insert(name.clone(), dep.get("specifier").map(string_of).unwrap_or_default());
             let r = dep.get("version").map(string_of).unwrap_or_default();
@@ -459,8 +462,8 @@ fn strip_peers(key: &str) -> &str {
 // walking up the path like npm. bun records no libc.
 
 fn read_bun(text: &str) -> Result<Source> {
-    let doc: Value = serde_json::from_str(&strip_trailing_commas(text))
-        .map_err(|e| fail(format!("bun.lock cannot be read: {e}")))?;
+    let doc = json::parse(&strip_trailing_commas(text))
+        .map_err(|e| fail(format!("bun.lock cannot be read: {}", e.message)))?;
     let workspaces = doc.get("workspaces").and_then(Value::as_object);
     if workspaces.is_some_and(|w| w.keys().any(|path| !path.is_empty())) {
         return Err(fail("jpm does not read workspaces from bun.lock"));
@@ -469,9 +472,10 @@ fn read_bun(text: &str) -> Result<Source> {
         return Err(fail("jpm does not apply the patches bun.lock names"));
     }
     let empty = Map::new();
-    let paths = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
+    let listed = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
+    let paths = listed.index();
     let mut nodes = Vec::new();
-    for (path, tuple) in paths {
+    for (path, tuple) in listed {
         let Some(t) = bun_tuple(tuple).filter(|t| !t.bundled) else { continue };
         let (real, version) = split_id(t.id);
         let chain = names(path);
@@ -492,10 +496,10 @@ fn read_bun(text: &str) -> Result<Source> {
         };
         let mut declared = Declared::of(t.meta);
         declared.optional_peers = list(t.meta.get("optionalPeers")).into_iter().collect();
-        nodes.push(with_edges(node, &declared, &|dep| bun_find(paths, &chain, dep)));
+        nodes.push(with_edges(node, &declared, &|dep| bun_find(&paths, &chain, dep)));
     }
     let (specs, root) =
-        root_of(groups_of(workspaces.and_then(|w| w.get(""))), &|name| match bun_find(paths, &[], name) {
+        root_of(groups_of(workspaces.and_then(|w| w.get(""))), &|name| match bun_find(&paths, &[], name) {
             Target::Version(v) => Some(v),
             _ => None,
         });
@@ -525,14 +529,14 @@ fn bun_tuple(value: &Value) -> Option<BunTuple<'_>> {
 }
 
 /// The nearest `name` up the hoisted path `from`.
-fn bun_find(paths: &Map<String, Value>, from: &[String], name: &str) -> Target {
+fn bun_find(paths: &HashMap<&str, &Value>, from: &[String], name: &str) -> Target {
     for depth in (0..=from.len()).rev() {
         let mut key = from[..depth].join("/");
         if !key.is_empty() {
             key.push('/');
         }
         key.push_str(name);
-        let Some(hit) = paths.get(&key).filter(|v| truthy(Some(v))) else { continue };
+        let Some(hit) = paths.get(key.as_str()).copied().filter(|v| truthy(Some(v))) else { continue };
         return match bun_tuple(hit) {
             None => Target::Missing,
             Some(t) if t.bundled => Target::Bundled,
@@ -762,7 +766,7 @@ fn truthy(v: Option<&Value>) -> bool {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
         Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
+        Some(Value::Number(n)) => n.parse::<f64>().is_ok_and(|f| f != 0.0),
         Some(_) => true,
     }
 }
@@ -903,7 +907,10 @@ fn split_flow(text: &str) -> Vec<&str> {
 fn unquote(value: &str) -> String {
     let v = value.trim();
     if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
-        return serde_json::from_str(v).unwrap_or_else(|_| v[1..v.len() - 1].to_string());
+        return json::parse(v)
+            .ok()
+            .and_then(|p| p.as_str().map(str::to_string))
+            .unwrap_or_else(|| v[1..v.len() - 1].to_string());
     }
     if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
         return v[1..v.len() - 1].replace("''", "'");
@@ -915,7 +922,8 @@ fn unquote(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::lock::parse_lockfile;
-    use serde_json::json;
+    // The tests write documents with serde_json's `json!`; the reader is handed them as text.
+    use serde_json::{Value, json};
     use std::path::Path;
 
     fn npmjs(_: &str) -> String {
@@ -923,8 +931,7 @@ mod tests {
     }
 
     fn manifest(doc: Value) -> RootManifest {
-        let Value::Object(map) = doc else { panic!("not an object") };
-        RootManifest::from_doc(map, Path::new("package.json")).unwrap()
+        RootManifest::parse(&doc.to_string(), Path::new("package.json")).unwrap()
     }
 
     fn read(file: &str, text: &str, doc: Value) -> Result<ForeignLock> {
@@ -1294,7 +1301,7 @@ snapshots:
     fn reads_the_yaml_pnpm_writes() {
         let text = "# comment\nkey: 'it''s'\n\"q:k\": \"a\\\"b\"\nlist:\n  - a\n  - 'b'\nflow: {x: [1, '2,3'], y: {z: true}}\nname@file:a:b:\n  deep: {}\nempty:\n";
         assert_eq!(
-            yaml(text).unwrap(),
+            yaml(text).unwrap().to_string(),
             json!({
                 "key": "it's",
                 "q:k": "a\"b",
@@ -1303,6 +1310,7 @@ snapshots:
                 "name@file:a:b": { "deep": {} },
                 "empty": {},
             })
+            .to_string()
         );
         let deep = "{a: ".repeat(100) + &"}".repeat(100);
         assert!(yaml(&format!("k: {deep}\n")).is_err());

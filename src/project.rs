@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map as JsonMap, Value};
+use crate::json::{self, Object, Value};
 
 use crate::bin::{self, Bins};
 use crate::error::{Error, Result};
@@ -24,12 +24,12 @@ pub struct RootManifest {
     pub peer_dependencies: Option<Deps>,
     pub peer_optional: Vec<String>,
     pub workspaces: Option<Vec<String>>,
-    pub doc: JsonMap<String, Value>,
+    pub doc: Object,
 }
 
 impl RootManifest {
     pub fn parse(text: &str, file: &Path) -> Result<Self> {
-        let value: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        let value: Value = json::parse(text.trim_start_matches('\u{feff}'))
             .map_err(|e| manifest_error(format!("{} is not valid JSON: {e}", file.display())))?;
         let Value::Object(doc) = value else {
             return Err(manifest_error(format!("{} is not a JSON object", file.display())));
@@ -37,7 +37,7 @@ impl RootManifest {
         Self::from_doc(doc, file)
     }
 
-    pub fn from_doc(doc: JsonMap<String, Value>, file: &Path) -> Result<Self> {
+    pub fn from_doc(doc: Object, file: &Path) -> Result<Self> {
         let group = |name: &str| -> Result<Option<Deps>> {
             match doc.get(name) {
                 None => Ok(None),
@@ -126,10 +126,10 @@ impl RootManifest {
         prod
     }
 
-    pub fn scripts(&self, file: &Path) -> Result<JsonMap<String, Value>> {
+    pub fn scripts(&self, file: &Path) -> Result<Object> {
         match self.doc.get("scripts") {
-            None => Ok(JsonMap::new()),
-            Some(Value::Object(m)) if m.values().all(Value::is_string) => Ok(m.clone()),
+            None => Ok(Object::new()),
+            Some(Value::Object(m)) if m.iter().all(|(_, v)| v.as_str().is_some()) => Ok(m.clone()),
             Some(_) => Err(manifest_error(format!("{}: scripts is not a map of commands", file.display()))),
         }
     }
@@ -326,18 +326,17 @@ pub fn save_range(spec: &Spec, version: &str, exact: bool) -> String {
 }
 
 /// Put each dep in its group, out of any other. Groups stay sorted.
-pub fn add_deps(doc: &mut JsonMap<String, Value>, added: &[Added]) {
+pub fn add_deps(doc: &mut Object, added: &[Added]) {
     for dep in added {
         for group in GROUPS {
             if group != dep.group {
                 drop_dep(doc, group, &dep.name);
             }
         }
-        let entry = doc.entry(dep.group).or_insert_with(|| Value::Object(JsonMap::new()));
-        if !entry.is_object() {
-            *entry = Value::Object(JsonMap::new());
+        if !doc.get(dep.group).is_some_and(|g| g.as_object().is_some()) {
+            doc.insert(dep.group, Value::Object(Object::new()));
         }
-        if let Value::Object(map) = entry {
+        if let Some(Value::Object(map)) = doc.get_mut(dep.group) {
             map.insert(dep.name.clone(), Value::String(dep.range.clone()));
             map.sort_keys();
         }
@@ -345,23 +344,23 @@ pub fn add_deps(doc: &mut JsonMap<String, Value>, added: &[Added]) {
 }
 
 /// Take each name out of every group; the names in no group come back.
-pub fn remove_deps(doc: &mut JsonMap<String, Value>, names: &[String]) -> Vec<String> {
+pub fn remove_deps(doc: &mut Object, names: &[String]) -> Vec<String> {
     names.iter().filter(|name| GROUPS.iter().filter(|g| drop_dep(doc, g, name)).count() == 0).cloned().collect()
 }
 
-fn drop_dep(doc: &mut JsonMap<String, Value>, group: &str, name: &str) -> bool {
+fn drop_dep(doc: &mut Object, group: &str, name: &str) -> bool {
     let Some(Value::Object(map)) = doc.get_mut(group) else { return false };
-    if map.shift_remove(name).is_none() {
+    if map.remove(name).is_none() {
         return false;
     }
     if map.is_empty() {
-        doc.shift_remove(group);
+        doc.remove(group);
     }
     true
 }
 
 /// Serialized with the indent and line ending the file already uses.
-pub fn format_manifest(doc: &JsonMap<String, Value>, raw: &str) -> String {
+pub fn format_manifest(doc: &Object, raw: &str) -> String {
     let indent = raw
         .lines()
         .find_map(|l| {
@@ -369,16 +368,14 @@ pub fn format_manifest(doc: &JsonMap<String, Value>, raw: &str) -> String {
             (trimmed.starts_with('"') && trimmed.len() < l.len()).then(|| &l[..l.len() - trimmed.len()])
         })
         .unwrap_or("  ");
-    let mut out = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
-    let mut ser = serde_json::Serializer::with_formatter(&mut out, formatter);
-    let _ = serde::Serialize::serialize(doc, &mut ser);
-    let mut text = String::from_utf8(out).unwrap_or_default();
-    if raw.contains("\r\n") {
-        text = text.replace('\n', "\r\n");
+    let mut text = json::to_pretty(&Value::Object(doc.clone()), indent);
+    text.pop(); // `to_pretty` ends in a newline; the file keeps the ending it had
+    let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    if eol != "\n" {
+        text = text.replace('\n', eol);
     }
     if raw.ends_with('\n') {
-        text.push_str(if raw.contains("\r\n") { "\r\n" } else { "\n" });
+        text.push_str(eol);
     }
     text
 }

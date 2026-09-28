@@ -7,6 +7,7 @@ use std::time::Instant;
 use crate::commands::{self, ExecOpts, InstallResult, Opts, Select};
 use crate::config::Flags;
 use crate::error::Error;
+use crate::json::{self, Object, Value};
 use crate::lock::{LOCKFILE, format_lockfile};
 use crate::manifest::parse_date;
 use crate::ui::{self, BOLD, CYAN, GRAY, GREEN, YELLOW, paint};
@@ -453,22 +454,27 @@ fn opts(cli: &Cli) -> Opts {
 fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Error> {
     let o = opts(cli);
     let started = Instant::now();
-    let json = |v: &serde_json::Value| serde_json::to_string_pretty(v).unwrap_or_default();
     match command {
-        "install" => Ok(installed(cli, &commands::install(o)?, started, None)),
-        "dedupe" => Ok(installed(cli, &commands::dedupe(o)?, started, None)),
+        "install" => Ok(installed(cli, &commands::install(o)?, started, Object::new())),
+        "dedupe" => Ok(installed(cli, &commands::dedupe(o)?, started, Object::new())),
         "add" => {
             let r = commands::add(&cli.specs, o)?;
-            let added: Vec<serde_json::Value> = r
+            let added: Vec<Value> = r
                 .added
                 .iter()
-                .map(|a| serde_json::json!({"name": a.name, "range": a.range, "group": a.group}))
+                .map(|a| {
+                    json::obj([("name", (&a.name).into()), ("range", (&a.range).into()), ("group", a.group.into())])
+                })
                 .collect();
-            Ok(installed(cli, &r.install, started, Some(serde_json::json!({ "added": added }))))
+            let mut changes = Object::new();
+            changes.insert("added", Value::Array(added));
+            Ok(installed(cli, &r.install, started, changes))
         }
         "remove" => {
             let (removed, r) = commands::remove(&cli.specs, o)?;
-            Ok(installed(cli, &r, started, Some(serde_json::json!({ "removed": removed }))))
+            let mut changes = Object::new();
+            changes.insert("removed", Value::from(removed));
+            Ok(installed(cli, &r, started, changes))
         }
         "lock" => {
             let l = commands::lock_command(o, !cli.json)?;
@@ -477,7 +483,7 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
         "prune" => {
             let p = commands::prune(o)?;
             if cli.json {
-                return Ok(json(&serde_json::to_value(&p).unwrap_or_default()));
+                return Ok(pretty(&p.to_value()));
             }
             let swept = match &p.entries {
                 Some(e) => format!("{} entries ({})", e.removed, mib(e.bytes)),
@@ -490,17 +496,23 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
         "resolve" => {
             let picked = commands::resolve_specs(&cli.specs, o)?;
             if cli.json {
-                let list: Vec<serde_json::Value> = picked
+                let list: Vec<Value> = picked
                     .iter()
                     .map(|m| {
-                        serde_json::json!({
-                            "name": m.name, "version": m.version,
-                            "dist": {"tarball": m.dist.tarball, "integrity": m.dist.integrity, "shasum": m.dist.shasum},
-                            "deprecated": m.deprecated,
-                        })
+                        let dist = json::obj([
+                            ("tarball", m.dist.tarball.clone().into()),
+                            ("integrity", m.dist.integrity.clone().into()),
+                            ("shasum", m.dist.shasum.clone().into()),
+                        ]);
+                        json::obj([
+                            ("name", (&m.name).into()),
+                            ("version", (&m.version).into()),
+                            ("dist", dist),
+                            ("deprecated", m.deprecated.into()),
+                        ])
                     })
                     .collect();
-                return Ok(json(&serde_json::Value::Array(list)));
+                return Ok(pretty(&Value::Array(list)));
             }
             Ok(picked
                 .iter()
@@ -527,6 +539,11 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
     }
 }
 
+/// Pretty JSON, as `--json` prints it.
+fn pretty(v: &Value) -> String {
+    json::to_pretty(v, "  ").trim_end().to_string()
+}
+
 fn mib(bytes: u64) -> String {
     format!("{:.1} MiB", bytes as f64 / 1024.0 / 1024.0)
 }
@@ -538,7 +555,7 @@ fn size(bytes: u64) -> String {
 
 fn fetched(cli: &Cli, list: &[commands::Fetched], lock: bool) -> Result<String, Error> {
     if cli.json {
-        return Ok(serde_json::to_string_pretty(list).unwrap_or_default());
+        return Ok(pretty(&Value::Array(list.iter().map(commands::Fetched::to_value).collect())));
     }
     if lock {
         let cached = list.iter().filter(|f| f.cached).count();
@@ -568,16 +585,13 @@ fn fetched(cli: &Cli, list: &[commands::Fetched], lock: bool) -> Result<String, 
 }
 
 /// What an install did, as one line or as JSON with the package.json changes first.
-fn installed(cli: &Cli, r: &InstallResult, started: Instant, changes: Option<serde_json::Value>) -> String {
+fn installed(cli: &Cli, r: &InstallResult, started: Instant, changes: Object) -> String {
     let ms = started.elapsed().as_millis();
     let seconds = format!("{:.2}", ms as f64 / 1000.0);
     if cli.json {
-        let mut out = changes.unwrap_or_else(|| serde_json::json!({}));
-        if let (Some(o), Ok(serde_json::Value::Object(r))) = (out.as_object_mut(), serde_json::to_value(r)) {
-            o.extend(r);
-            o.insert("seconds".into(), serde_json::Value::String(seconds));
-        }
-        return serde_json::to_string_pretty(&out).unwrap_or_default();
+        let mut out = r.to_object(changes);
+        out.insert("seconds", seconds.into());
+        return pretty(&out.into());
     }
     for id in &r.missing_optional {
         ui::info(&format!("{id} is missing from the store and was not linked"));
@@ -621,7 +635,7 @@ fn run_command(cli: &Cli) -> Result<i32, Error> {
     let selects = o.workspaces.is_some();
     let Some((name, args)) = cli.specs.split_first() else {
         let lists = commands::packages(&o)?;
-        let render = |scripts: &serde_json::Map<String, serde_json::Value>, indent: &str| -> String {
+        let render = |scripts: &Object, indent: &str| -> String {
             scripts
                 .iter()
                 .map(|(n, c)| {
@@ -637,18 +651,18 @@ fn run_command(cli: &Cli) -> Result<i32, Error> {
             let top = &lists[0];
             let scripts = top.manifest.scripts(&top.file)?;
             if cli.json {
-                ui::out(&format!("{}\n", serde_json::to_string_pretty(&scripts).unwrap_or_default()));
+                ui::out(&format!("{}\n", pretty(&scripts.into())));
             } else if scripts.is_empty() {
                 ui::info(&format!("no scripts in {}", top.file.display()));
             } else {
                 ui::out(&render(&scripts, ""));
             }
         } else if cli.json {
-            let mut all = serde_json::Map::new();
+            let mut all = Object::new();
             for top in &lists {
-                all.insert(top.name.clone(), serde_json::Value::Object(top.manifest.scripts(&top.file)?));
+                all.insert(top.name.clone(), Value::Object(top.manifest.scripts(&top.file)?));
             }
-            ui::out(&format!("{}\n", serde_json::to_string_pretty(&all).unwrap_or_default()));
+            ui::out(&format!("{}\n", pretty(&all.into())));
         } else {
             for top in &lists {
                 ui::out(&format!("{}\n{}", top.name, render(&top.manifest.scripts(&top.file)?, "  ")));

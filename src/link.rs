@@ -48,7 +48,7 @@ pub struct Options<'a> {
     pub tarballs: Option<BTreeMap<String, Option<Stamp>>>,
 }
 
-#[derive(Debug, Default, Clone, serde::Serialize)]
+#[derive(Debug, Default, Clone)]
 pub struct Stats {
     pub entries: usize,
     pub linked: usize,
@@ -58,6 +58,25 @@ pub struct Stats {
     pub repaired: usize,
     pub bins: usize,
     pub removed: usize,
+}
+
+impl Stats {
+    pub fn to_object(&self) -> crate::json::Object {
+        let mut o = crate::json::Object::new();
+        for (k, v) in [
+            ("entries", self.entries),
+            ("linked", self.linked),
+            ("copied", self.copied),
+            ("cloned", self.cloned),
+            ("reused", self.reused),
+            ("repaired", self.repaired),
+            ("bins", self.bins),
+            ("removed", self.removed),
+        ] {
+            o.insert(k, v.into());
+        }
+        o
+    }
 }
 
 #[derive(Debug, Default)]

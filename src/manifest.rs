@@ -1,61 +1,42 @@
 //! What a registry sends: packuments and manifests, read leniently. A registry document is
 //! publisher-written data, so a field with the wrong shape is dropped rather than failing the
-//! whole document.
+//! whole document. A packument is scanned once for its few top-level fields and the span of each
+//! version; a version's manifest is parsed only when it is picked.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::sync::{Arc, Mutex};
-
-use serde::Deserialize;
-use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::value::RawValue;
 
 use crate::bin::{self, Bins};
 use crate::error::{Error, Result};
 use crate::integrity::from_shasum;
+use crate::json::{Scan, Value};
 
 pub type Map = BTreeMap<String, String>;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct Dist {
-    #[serde(default, deserialize_with = "opt_str")]
     pub tarball: Option<String>,
-    #[serde(default, deserialize_with = "opt_str")]
     pub integrity: Option<String>,
-    #[serde(default, deserialize_with = "opt_str")]
     pub shasum: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct Manifest {
-    #[serde(default, deserialize_with = "any_str")]
     pub name: String,
-    #[serde(default, deserialize_with = "any_str")]
     pub version: String,
-    #[serde(default, deserialize_with = "str_map")]
     pub dependencies: Map,
-    #[serde(default, rename = "optionalDependencies", deserialize_with = "str_map")]
     pub optional_dependencies: Map,
-    #[serde(default, rename = "peerDependencies", deserialize_with = "str_map")]
     pub peer_dependencies: Map,
-    #[serde(default, rename = "peerDependenciesMeta", deserialize_with = "optional_meta")]
+    /// Peers `peerDependenciesMeta` marks optional.
     pub peer_optional: Vec<String>,
-    #[serde(default)]
-    pub bin: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "str_map")]
+    pub bin: Option<Value>,
     pub engines: Map,
-    #[serde(default, deserialize_with = "str_list")]
     pub os: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "str_list")]
     pub cpu: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "str_list")]
     pub libc: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "deprecated")]
     pub deprecated: bool,
-    #[serde(default)]
     pub dist: Dist,
     /// Not the registry's: this came from a full document, so a missing `libc` means none.
-    #[serde(skip)]
     pub full: bool,
 }
 
@@ -80,8 +61,89 @@ impl Manifest {
     }
 
     pub fn from_json(text: &str) -> Result<Self> {
-        serde_json::from_str(text).map_err(|e| Error::new("EJSONPARSE", e.to_string()))
+        let mut s = Scan::new(text);
+        Self::read(&mut s)
     }
+
+    /// The manifest at the cursor. The fields the resolver reads are taken; everything else,
+    /// a readme included, is skipped without being built.
+    fn read(s: &mut Scan) -> Result<Self> {
+        let mut m = Self::default();
+        s.members(|s, key| {
+            match key.as_ref() {
+                "name" => m.name = opt_string(s)?.unwrap_or_default(),
+                "version" => m.version = opt_string(s)?.unwrap_or_default(),
+                "dependencies" => m.dependencies = string_map(s)?,
+                "optionalDependencies" => m.optional_dependencies = string_map(s)?,
+                "peerDependencies" => m.peer_dependencies = string_map(s)?,
+                "engines" => m.engines = string_map(s)?,
+                "peerDependenciesMeta" => {
+                    let meta = s.value()?;
+                    m.peer_optional = meta
+                        .as_object()
+                        .map(|o| {
+                            let optional = |v: &Value| v.get("optional").and_then(Value::as_bool) == Some(true);
+                            o.iter().filter(|(_, v)| optional(v)).map(|(k, _)| k.clone()).collect()
+                        })
+                        .unwrap_or_default();
+                }
+                "bin" => m.bin = Some(s.value()?),
+                "os" => m.os = string_list(s)?,
+                "cpu" => m.cpu = string_list(s)?,
+                "libc" => m.libc = string_list(s)?,
+                // A message; `false` or an empty string is not deprecated.
+                "deprecated" => m.deprecated = opt_string(s)?.is_some_and(|d| !d.is_empty()),
+                "dist" if s.at_object() => s.members(|s, key| {
+                    match key.as_ref() {
+                        "tarball" => m.dist.tarball = opt_string(s)?,
+                        "integrity" => m.dist.integrity = opt_string(s)?,
+                        "shasum" => m.dist.shasum = opt_string(s)?,
+                        _ => s.skip()?,
+                    }
+                    Ok(())
+                })?,
+                _ => s.skip()?,
+            }
+            Ok(())
+        })?;
+        Ok(m)
+    }
+}
+
+/// A string, or `None` for anything else (which is skipped).
+fn opt_string(s: &mut Scan) -> Result<Option<String>> {
+    if s.at_string() {
+        return Ok(Some(s.string()?.into_owned()));
+    }
+    s.skip()?;
+    Ok(None)
+}
+
+/// A map of strings: other values, and a map that is not a map, are dropped.
+fn string_map(s: &mut Scan) -> Result<Map> {
+    let mut out = Map::new();
+    if !s.at_object() {
+        s.skip()?;
+        return Ok(out);
+    }
+    s.members(|s, key| {
+        if let Some(v) = opt_string(s)? {
+            out.insert(key.into_owned(), v);
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// A list of strings; npm takes a bare string as a list of one. Anything else is no list.
+fn string_list(s: &mut Scan) -> Result<Option<Vec<String>>> {
+    Ok(match s.value()? {
+        Value::String(one) => Some(vec![one]),
+        Value::Array(items) => {
+            Some(items.into_iter().filter_map(|v| if let Value::String(s) = v { Some(s) } else { None }).collect())
+        }
+        _ => None,
+    })
 }
 
 /// A packument whose versions are parsed one at a time, when asked for: a pick usually reads
@@ -89,50 +151,49 @@ impl Manifest {
 #[derive(Debug, Default)]
 pub struct Packument {
     pub name: String,
-    pub tags: BTreeMap<String, String>,
+    pub tags: Map,
     pub modified: Option<String>,
-    pub time: BTreeMap<String, String>,
-    raw: BTreeMap<String, Box<RawValue>>,
+    pub time: Map,
+    text: String,
+    /// Each version's manifest, as its span of `text`.
+    spans: BTreeMap<String, (usize, usize)>,
     parsed: Mutex<BTreeMap<String, Option<Arc<Manifest>>>>,
     /// Set when a release cutoff hid versions: the cutoff, as an ISO date.
     pub before: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct RawPackument {
-    #[serde(default, deserialize_with = "any_str")]
-    name: String,
-    #[serde(default, rename = "dist-tags", deserialize_with = "str_map")]
-    tags: Map,
-    #[serde(default, deserialize_with = "opt_str")]
-    modified: Option<String>,
-    #[serde(default, deserialize_with = "str_map")]
-    time: Map,
-    #[serde(default)]
-    versions: Option<BTreeMap<String, Box<RawValue>>>,
-}
-
 impl Packument {
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let raw: RawPackument = serde_json::from_slice(bytes)
-            .map_err(|e| Error::new("EJSONPARSE", format!("registry sent invalid JSON: {e}")))?;
-        Ok(Self {
-            name: raw.name,
-            tags: raw.tags,
-            modified: raw.modified,
-            time: raw.time,
-            raw: raw.versions.unwrap_or_default(),
-            parsed: Mutex::default(),
-            before: None,
+    pub fn parse(bytes: Vec<u8>) -> Result<Self> {
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Error::new("EJSONPARSE", "registry sent a document that is not UTF-8"))?;
+        let mut doc = Self::default();
+        let mut s = Scan::new(&text);
+        s.members(|s, key| {
+            match key.as_ref() {
+                "name" => doc.name = opt_string(s)?.unwrap_or_default(),
+                "dist-tags" => doc.tags = string_map(s)?,
+                "modified" => doc.modified = opt_string(s)?,
+                "time" => doc.time = string_map(s)?,
+                "versions" if s.at_object() => s.members(|s, version| {
+                    let span = s.span()?;
+                    doc.spans.insert(version.into_owned(), span);
+                    Ok(())
+                })?,
+                _ => s.skip()?,
+            }
+            Ok(())
         })
+        .map_err(|e| Error::new("EJSONPARSE", format!("registry sent invalid JSON: {}", e.message)))?;
+        doc.text = text;
+        Ok(doc)
     }
 
     pub fn versions(&self) -> impl Iterator<Item = &str> {
-        self.raw.keys().map(String::as_str)
+        self.spans.keys().map(String::as_str)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.raw.is_empty()
+        self.spans.is_empty()
     }
 
     pub fn version(&self, version: &str) -> Option<Arc<Manifest>> {
@@ -140,8 +201,13 @@ impl Packument {
         if let Some(hit) = parsed.get(version) {
             return hit.clone();
         }
-        let found =
-            self.raw.get(version).and_then(|raw| serde_json::from_str::<Manifest>(raw.get()).ok()).map(Arc::new);
+        let found = self.spans.get(version).and_then(|&(a, b)| {
+            let mut s = Scan::new(&self.text[a..b]);
+            if !s.at_object() {
+                return None;
+            }
+            Manifest::read(&mut s).ok().map(Arc::new)
+        });
         parsed.insert(version.to_string(), found.clone());
         found
     }
@@ -149,11 +215,11 @@ impl Packument {
     /// As the registry stood at `before` (epoch ms): later versions gone, and a tag on one moved to
     /// the highest version at or below it that is left. A version with no date passes.
     pub fn until(mut self, times: &Map, before: i64) -> Self {
-        self.raw.retain(|v, _| times.get(v).and_then(|t| parse_date(t)).is_none_or(|t| t <= before));
-        let kept: Vec<String> = self.raw.keys().cloned().collect();
+        self.spans.retain(|v, _| times.get(v).and_then(|t| parse_date(t)).is_none_or(|t| t <= before));
+        let kept: Vec<String> = self.spans.keys().cloned().collect();
         let mut tags = BTreeMap::new();
         for (tag, v) in &self.tags {
-            let found = if self.raw.contains_key(v) {
+            let found = if self.spans.contains_key(v) {
                 Some(v.clone())
             } else {
                 crate::semver::max_satisfying(kept.iter().map(String::as_str), &format!("<={v}")).map(str::to_string)
@@ -239,173 +305,15 @@ pub fn iso_date(ms: i64) -> String {
     )
 }
 
-// --- lenient field readers ------------------------------------------------------------------
-
-/// Deserializes to `Some(string)` for a string and `None` for anything else, consuming it.
-struct MaybeStr(Option<String>);
-
-impl<'de> Deserialize<'de> for MaybeStr {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = MaybeStr;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("anything")
-            }
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(Some(v.to_string())))
-            }
-            fn visit_string<E: de::Error>(self, v: String) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(Some(v)))
-            }
-            fn visit_bool<E: de::Error>(self, _: bool) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_i64<E: de::Error>(self, _: i64) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_u64<E: de::Error>(self, _: u64) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_f64<E: de::Error>(self, _: f64) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_unit<E: de::Error>(self) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_none<E: de::Error>(self) -> Result<MaybeStr, E> {
-                Ok(MaybeStr(None))
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<MaybeStr, A::Error> {
-                while s.next_element::<IgnoredAny>()?.is_some() {}
-                Ok(MaybeStr(None))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<MaybeStr, A::Error> {
-                while m.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-                Ok(MaybeStr(None))
-            }
-        }
-        d.deserialize_any(V)
-    }
-}
-
-fn opt_str<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    Ok(MaybeStr::deserialize(d)?.0)
-}
-
-fn any_str<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Ok(MaybeStr::deserialize(d)?.0.unwrap_or_default())
-}
-
-/// `deprecated` is a message; `false` or an empty string is not deprecated.
-fn deprecated<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
-    Ok(MaybeStr::deserialize(d)?.0.is_some_and(|s| !s.is_empty()))
-}
-
-/// A map of strings: other values, and a map that is not a map, are dropped.
-fn str_map<'de, D: Deserializer<'de>>(d: D) -> Result<Map, D::Error> {
-    struct V;
-    impl<'de> Visitor<'de> for V {
-        type Value = Map;
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a map")
-        }
-        fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Map, A::Error> {
-            let mut out = Map::new();
-            while let Some((k, v)) = m.next_entry::<String, MaybeStr>()? {
-                if let Some(v) = v.0 {
-                    out.insert(k, v);
-                }
-            }
-            Ok(out)
-        }
-        fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<Map, A::Error> {
-            while s.next_element::<IgnoredAny>()?.is_some() {}
-            Ok(Map::new())
-        }
-        fn visit_str<E: de::Error>(self, _: &str) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-        fn visit_bool<E: de::Error>(self, _: bool) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-        fn visit_i64<E: de::Error>(self, _: i64) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-        fn visit_u64<E: de::Error>(self, _: u64) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-        fn visit_f64<E: de::Error>(self, _: f64) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-        fn visit_unit<E: de::Error>(self) -> Result<Map, E> {
-            Ok(Map::new())
-        }
-    }
-    d.deserialize_any(V)
-}
-
-/// A list of strings; npm takes a bare string as a list of one.
-fn str_list<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<String>>, D::Error> {
-    struct V;
-    impl<'de> Visitor<'de> for V {
-        type Value = Option<Vec<String>>;
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a list")
-        }
-        fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<Self::Value, A::Error> {
-            let mut out = Vec::new();
-            while let Some(v) = s.next_element::<MaybeStr>()? {
-                out.extend(v.0);
-            }
-            Ok(Some(out))
-        }
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(Some(vec![v.to_string()]))
-        }
-        fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Self::Value, A::Error> {
-            while m.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-            Ok(None)
-        }
-        fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-    }
-    d.deserialize_any(V)
-}
-
-/// The names `peerDependenciesMeta` marks optional.
-fn optional_meta<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
-    let value = serde_json::Value::deserialize(d)?;
-    let Some(map) = value.as_object() else { return Ok(Vec::new()) };
-    Ok(map
-        .iter()
-        .filter(|(_, m)| m.get("optional").and_then(serde_json::Value::as_bool) == Some(true))
-        .map(|(k, _)| k.clone())
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn reads_hostile_manifests() {
-        let m: Manifest = serde_json::from_str(
+        let m = Manifest::from_json(
             r#"{"name":"a","version":"1.0.0","dependencies":["x"],"os":"linux",
-                "optionalDependencies":{"b":"1","c":2},"deprecated":false,
+                "optionalDependencies":{"b":"1","c":2},"deprecated":false,"readme":"{\"}",
                 "peerDependenciesMeta":{"p":{"optional":true},"q":{}},"dist":{"integrity":5}}"#,
         )
         .unwrap();
@@ -419,16 +327,20 @@ mod tests {
 
     #[test]
     fn reads_versions_lazily() {
-        let p = Packument::parse(br#"{"name":"a","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"a","version":"1.0.0"},"0.1.0":{"name":"a","version":"0.1.0"}}}"#).unwrap();
-        assert_eq!(p.versions().count(), 2);
+        let p = Packument::parse(br#"{"name":"a","readme":"x","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"a","version":"1.0.0"},"0.1.0":{"name":"a","version":"0.1.0"},"bad":7}}"#.to_vec()).unwrap();
+        assert_eq!(p.versions().count(), 3);
         assert_eq!(p.version("1.0.0").unwrap().version, "1.0.0");
         assert!(p.version("2.0.0").is_none());
+        assert!(p.version("bad").is_none());
+        assert!(Packument::parse(b"{\"versions\":{".to_vec()).is_err());
     }
 
     #[test]
     fn filters_by_date() {
-        let p = Packument::parse(br#"{"name":"a","dist-tags":{"latest":"2.0.0"},"versions":{"1.0.0":{},"2.0.0":{}}}"#)
-            .unwrap();
+        let p = Packument::parse(
+            br#"{"name":"a","dist-tags":{"latest":"2.0.0"},"versions":{"1.0.0":{},"2.0.0":{}}}"#.to_vec(),
+        )
+        .unwrap();
         let times: Map =
             [("1.0.0".into(), "2020-01-01T00:00:00.000Z".into()), ("2.0.0".into(), "2024-01-01T00:00:00.000Z".into())]
                 .into();
