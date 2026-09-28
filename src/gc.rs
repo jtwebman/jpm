@@ -13,10 +13,16 @@ use crate::sys;
 
 const GRACE: Duration = Duration::from_secs(3600);
 
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Debug, Default)]
 pub struct Swept {
     pub removed: usize,
     pub bytes: u64,
+}
+
+impl Swept {
+    pub fn to_value(&self) -> crate::json::Value {
+        crate::json::obj([("removed", self.removed.into()), ("bytes", self.bytes.into())])
+    }
 }
 
 fn young(path: &Path) -> bool {

@@ -211,7 +211,7 @@ impl Registry {
             }
             other => other?,
         };
-        let doc = Packument::parse(&bytes).map_err(|e| e.context(&url))?;
+        let doc = Packument::parse(bytes).map_err(|e| e.context(&url))?;
         let Some(before) = self.before.filter(|_| !self.excluded(name)) else { return Ok(Arc::new(doc)) };
         // Nothing in a document untouched since the cutoff is newer than it.
         if doc.modified.as_deref().and_then(parse_date).is_some_and(|m| m <= before) {
@@ -235,7 +235,7 @@ impl Registry {
         }
         // A kept full document older than the abbreviated one lacks the newest dates: ask again.
         let bytes = self.document(name, &self.path(name)?, FULL, true)?;
-        let fresh = Packument::parse(&bytes)?;
+        let fresh = Packument::parse(bytes)?;
         let times = fresh.time.clone();
         if let Ok(mut m) = self.fulls.lock() {
             let cell = OnceLock::new();
@@ -249,7 +249,7 @@ impl Registry {
         memo(&self.fulls, name, || {
             let url = self.path(name)?;
             let bytes = self.document(name, &url, FULL, false)?;
-            Ok(Arc::new(Packument::parse(&bytes).map_err(|e| e.context(&url))?))
+            Ok(Arc::new(Packument::parse(bytes).map_err(|e| e.context(&url))?))
         })
     }
 
@@ -449,16 +449,6 @@ struct DocCache {
     mode: CacheMode,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Head {
-    at: i64,
-    key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    etag: Option<String>,
-    #[serde(rename = "maxAge", skip_serializing_if = "Option::is_none")]
-    max_age: Option<i64>,
-}
-
 impl DocCache {
     /// `corgi https://host:8080/base/@scope%2fname` -> `host+8080/base/@scope/name/_corgi`, or a
     /// hash for a url with a segment that is not plainly a name.
@@ -487,11 +477,19 @@ impl DocCache {
     fn get(&self, key: &str) -> Option<Kept> {
         let bytes = std::fs::read(self.file(key)).ok()?;
         let end = bytes.iter().position(|b| *b == b'\n')?;
-        let head: Head = serde_json::from_slice(&bytes[..end]).ok()?;
-        if head.key != key {
+        let head = crate::json::parse(std::str::from_utf8(&bytes[..end]).ok()?).ok()?;
+        if head.get("key")?.as_str()? != key {
             return None;
         }
-        Some(Kept { body: bytes[end + 1..].to_vec(), etag: head.etag, at: head.at, max_age: head.max_age })
+        let number = |k: &str| {
+            head.get(k).and_then(|v| if let crate::json::Value::Number(n) = v { n.parse().ok() } else { None })
+        };
+        Some(Kept {
+            body: bytes[end + 1..].to_vec(),
+            etag: head.get("etag").and_then(crate::json::Value::as_str).map(str::to_string),
+            at: number("at")?,
+            max_age: number("maxAge"),
+        })
     }
 
     fn set(&self, key: &str, body: &[u8], at: i64, etag: Option<&str>, max_age: Option<i64>) {
@@ -501,8 +499,16 @@ impl DocCache {
             return;
         }
         let file = self.file(key);
-        let head = Head { at, key: key.to_string(), etag: etag.map(str::to_string), max_age };
-        let mut data = serde_json::to_vec(&head).unwrap_or_default();
+        let mut head = crate::json::Object::new();
+        head.insert("at", at.into());
+        head.insert("key", key.into());
+        if let Some(e) = etag {
+            head.insert("etag", e.into());
+        }
+        if let Some(m) = max_age {
+            head.insert("maxAge", m.into());
+        }
+        let mut data = crate::json::to_string(&head.into()).into_bytes();
         data.push(b'\n');
         data.extend_from_slice(body);
         if let Some(parent) = file.parent() {
@@ -553,7 +559,8 @@ mod tests {
             "1.0.0":{"name":"a","version":"1.0.0"},
             "1.1.0":{"name":"a","version":"1.1.0"},
             "1.2.0":{"name":"a","version":"1.2.0","deprecated":"no"},
-            "2.0.0-rc.1":{"name":"a","version":"2.0.0-rc.1"}}}"#,
+            "2.0.0-rc.1":{"name":"a","version":"2.0.0-rc.1"}}}"#
+                .to_vec(),
         )
         .unwrap()
     }

@@ -5,11 +5,10 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-
 use crate::bin;
 use crate::error::{Error, Result};
-use crate::graph::{Deps, Package, Peers, Resolution, Root, Specs, same_specs, split_key};
+use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root, Specs, same_specs, split_key};
+use crate::json::{self, Object, Value};
 use crate::project::{RootManifest, Workspace, local_path, local_shape};
 use crate::registry::tarball_url;
 use crate::semver;
@@ -21,72 +20,259 @@ pub const LOCKFILE: &str = "jpm.lock";
 pub const UPM_LOCKFILE: &str = "upm.lock";
 const VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LockEntry {
     /// Only for a tarball dependency, whose key ends in its source: the version inside.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// Only when the tarball is not where the registry would put it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved: Option<String>,
     pub integrity: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: Deps,
-    #[serde(default, rename = "optionalDependencies", skip_serializing_if = "BTreeMap::is_empty")]
     pub optional_dependencies: Deps,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bin: Deps,
-    #[serde(default, rename = "peerDependencies", skip_serializing_if = "BTreeMap::is_empty")]
     pub peer_dependencies: Deps,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub peers: Peers,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub os: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cpu: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub libc: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkspaceEntry {
     pub name: String,
     pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub specs: Option<Specs>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: Deps,
-    #[serde(default, rename = "optionalDependencies", skip_serializing_if = "BTreeMap::is_empty")]
     pub optional_dependencies: Deps,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bin: Deps,
-    #[serde(default, rename = "peerDependencies", skip_serializing_if = "BTreeMap::is_empty")]
     pub peer_dependencies: Deps,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub peers: Peers,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LockRoot {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub specs: Option<Specs>,
     pub dependencies: Deps,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspaces: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lockfile {
-    #[serde(rename = "lockfileVersion")]
     pub lockfile_version: u32,
     pub root: LockRoot,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub workspaces: BTreeMap<String, WorkspaceEntry>,
     pub packages: BTreeMap<String, LockEntry>,
+}
+
+// --- the file's shape: fixed field order, empty fields left out -------------------------------
+
+fn put_map(o: &mut Object, key: &str, map: &Deps) {
+    if !map.is_empty() {
+        o.insert(key, json::str_map(map));
+    }
+}
+
+fn put_peers(o: &mut Object, peers: &Peers) {
+    if !peers.is_empty() {
+        o.insert("peers", Value::Object(peers.iter().map(|(k, v)| (k.clone(), v.as_str().into())).collect()));
+    }
+}
+
+fn put_list(o: &mut Object, key: &str, list: &[String]) {
+    if !list.is_empty() {
+        o.insert(key, Value::from(list.to_vec()));
+    }
+}
+
+fn put_specs(o: &mut Object, specs: Option<&Specs>) {
+    if let Some(s) = Specs::canonical(specs) {
+        o.insert("specs", s.to_value());
+    }
+}
+
+impl LockEntry {
+    fn to_value(&self) -> Value {
+        let mut o = Object::new();
+        if let Some(v) = &self.version {
+            o.insert("version", v.into());
+        }
+        if let Some(r) = &self.resolved {
+            o.insert("resolved", r.into());
+        }
+        o.insert("integrity", (&self.integrity).into());
+        put_map(&mut o, "dependencies", &self.dependencies);
+        put_map(&mut o, "optionalDependencies", &self.optional_dependencies);
+        put_map(&mut o, "bin", &self.bin);
+        put_map(&mut o, "peerDependencies", &self.peer_dependencies);
+        put_peers(&mut o, &self.peers);
+        put_list(&mut o, "os", &self.os);
+        put_list(&mut o, "cpu", &self.cpu);
+        put_list(&mut o, "libc", &self.libc);
+        o.into()
+    }
+
+    fn from_value(v: &Value, at: &str) -> Result<Self> {
+        let o = object(v, at)?;
+        Ok(Self {
+            version: opt_string(o, "version", at)?,
+            resolved: opt_string(o, "resolved", at)?,
+            integrity: opt_string(o, "integrity", at)?.unwrap_or_default(),
+            dependencies: map(o, "dependencies", at)?,
+            optional_dependencies: map(o, "optionalDependencies", at)?,
+            bin: map(o, "bin", at)?,
+            peer_dependencies: map(o, "peerDependencies", at)?,
+            peers: peers(o, at)?,
+            os: list(o, "os", at)?,
+            cpu: list(o, "cpu", at)?,
+            libc: list(o, "libc", at)?,
+        })
+    }
+}
+
+impl WorkspaceEntry {
+    fn to_value(&self) -> Value {
+        let mut o = Object::new();
+        o.insert("name", (&self.name).into());
+        o.insert("version", (&self.version).into());
+        put_specs(&mut o, self.specs.as_ref());
+        put_map(&mut o, "dependencies", &self.dependencies);
+        put_map(&mut o, "optionalDependencies", &self.optional_dependencies);
+        put_map(&mut o, "bin", &self.bin);
+        put_map(&mut o, "peerDependencies", &self.peer_dependencies);
+        put_peers(&mut o, &self.peers);
+        o.into()
+    }
+
+    fn from_value(v: &Value, at: &str) -> Result<Self> {
+        let o = object(v, at)?;
+        let need = |key: &str| {
+            opt_string(o, key, at)?.ok_or_else(|| fail(format!("{at}.name and {at}.version must be strings")))
+        };
+        Ok(Self {
+            name: need("name")?,
+            version: need("version")?,
+            specs: specs(o, at)?,
+            dependencies: map(o, "dependencies", at)?,
+            optional_dependencies: map(o, "optionalDependencies", at)?,
+            bin: map(o, "bin", at)?,
+            peer_dependencies: map(o, "peerDependencies", at)?,
+            peers: peers(o, at)?,
+        })
+    }
+}
+
+impl Lockfile {
+    fn to_value(&self) -> Value {
+        let mut root = Object::new();
+        if let Some(n) = &self.root.name {
+            root.insert("name", n.into());
+        }
+        if let Some(v) = &self.root.version {
+            root.insert("version", v.into());
+        }
+        put_specs(&mut root, self.root.specs.as_ref());
+        root.insert("dependencies", json::str_map(&self.root.dependencies));
+        if let Some(w) = self.root.workspaces.as_ref().filter(|w| !w.is_empty()) {
+            root.insert("workspaces", Value::from(w.clone()));
+        }
+        let mut o = Object::new();
+        o.insert("lockfileVersion", u64::from(self.lockfile_version).into());
+        o.insert("root", root.into());
+        if !self.workspaces.is_empty() {
+            o.insert(
+                "workspaces",
+                Value::Object(self.workspaces.iter().map(|(k, w)| (k.clone(), w.to_value())).collect()),
+            );
+        }
+        o.insert("packages", Value::Object(self.packages.iter().map(|(k, e)| (k.clone(), e.to_value())).collect()));
+        o.into()
+    }
+
+    fn from_value(v: &Value) -> Result<Self> {
+        let o = v.as_object().ok_or_else(|| fail(format!("{LOCKFILE} must be an object")))?;
+        let version = o.get("lockfileVersion");
+        if version != Some(&Value::Number(VERSION.to_string())) {
+            let found = version.map_or_else(|| "undefined".to_string(), json::to_string);
+            return Err(fail(format!("unsupported lockfileVersion {found}, expected {VERSION}")));
+        }
+        let root = o.get("root").ok_or_else(|| fail("root must be an object"))?;
+        let r = object(root, "root")?;
+        let deps = r.get("dependencies").ok_or_else(|| fail("root.dependencies must be an object"))?;
+        let root = LockRoot {
+            name: opt_string(r, "name", "root")?,
+            version: opt_string(r, "version", "root")?,
+            specs: specs(r, "root")?,
+            dependencies: json::string_map(deps)
+                .ok_or_else(|| fail("root.dependencies must be an object of strings"))?,
+            workspaces: r.get("workspaces").map(|_| list(r, "workspaces", "root")).transpose()?,
+        };
+        let mut workspaces = BTreeMap::new();
+        if let Some(w) = o.get("workspaces") {
+            for (path, ws) in object(w, "workspaces")?.iter() {
+                workspaces.insert(path.clone(), WorkspaceEntry::from_value(ws, &format!("workspaces[{path:?}]"))?);
+            }
+        }
+        let mut packages = BTreeMap::new();
+        let p = o.get("packages").ok_or_else(|| fail("packages must be an object"))?;
+        for (key, entry) in object(p, "packages")?.iter() {
+            packages.insert(key.clone(), LockEntry::from_value(entry, &format!("packages[{key:?}]"))?);
+        }
+        Ok(Self { lockfile_version: VERSION, root, workspaces, packages })
+    }
+}
+
+fn object<'a>(v: &'a Value, at: &str) -> Result<&'a Object> {
+    v.as_object().ok_or_else(|| fail(format!("{at} must be an object")))
+}
+
+fn opt_string(o: &Object, key: &str, at: &str) -> Result<Option<String>> {
+    match o.get(key) {
+        None => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(fail(format!("{at}.{key} must be a string"))),
+    }
+}
+
+fn map(o: &Object, key: &str, at: &str) -> Result<Deps> {
+    match o.get(key) {
+        None => Ok(Deps::new()),
+        Some(v) => json::string_map(v).ok_or_else(|| fail(format!("{at}.{key} must be an object of strings"))),
+    }
+}
+
+fn list(o: &Object, key: &str, at: &str) -> Result<Vec<String>> {
+    match o.get(key) {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|i| {
+                i.as_str().map(str::to_string).ok_or_else(|| fail(format!("{at}.{key} must be an array of strings")))
+            })
+            .collect(),
+        Some(_) => Err(fail(format!("{at}.{key} must be an array of strings"))),
+    }
+}
+
+fn peers(o: &Object, at: &str) -> Result<Peers> {
+    map(o, "peers", at)?
+        .into_iter()
+        .map(|(k, v)| {
+            let kind =
+                PeerKind::parse(&v).ok_or_else(|| fail(format!("{at}.peers[{k:?}] must be required or optional")))?;
+            Ok((k, kind))
+        })
+        .collect()
+}
+
+fn specs(o: &Object, at: &str) -> Result<Option<Specs>> {
+    match o.get("specs") {
+        None => Ok(None),
+        Some(v) => {
+            Specs::from_value(v).map(Some).ok_or_else(|| fail(format!("{at}.specs must be an object of string maps")))
+        }
+    }
 }
 
 fn fail(message: impl Into<String>) -> Error {
@@ -271,25 +457,12 @@ fn reach(lock: &Lockfile, seed: &dyn Fn(&Top, &str) -> bool, optional: bool) -> 
 
 pub fn format_lockfile(lock: &Lockfile) -> Result<String> {
     validate(lock)?; // a lockfile our own reader would reject must never reach disk
-    let mut lock = lock.clone();
-    lock.root.specs = Specs::canonical(lock.root.specs.as_ref());
-    for ws in lock.workspaces.values_mut() {
-        ws.specs = Specs::canonical(ws.specs.as_ref());
-    }
-    Ok(crate::util::pretty(&lock))
+    Ok(json::to_pretty(&lock.to_value(), "  "))
 }
 
 pub fn parse_lockfile(text: &str, file: &str) -> Result<Lockfile> {
-    let lock: Lockfile = serde_json::from_str(text).map_err(|e| {
-        let version =
-            serde_json::from_str::<serde_json::Value>(text).ok().and_then(|v| v.get("lockfileVersion").cloned());
-        match version {
-            Some(v) if v != serde_json::json!(VERSION) => {
-                fail(format!("unsupported lockfileVersion {v}, expected {VERSION}"))
-            }
-            _ => fail(format!("{file} is not a valid lockfile: {e}")),
-        }
-    })?;
+    let value = json::parse(text).map_err(|e| fail(format!("{file} is not valid JSON: {}", e.message)))?;
+    let lock = Lockfile::from_value(&value)?;
     validate(&lock)?;
     Ok(lock)
 }

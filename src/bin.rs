@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use crate::json::Value;
 
 pub type Bins = BTreeMap<String, String>;
 
@@ -79,7 +79,10 @@ fn rooted(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    fn j(text: &str) -> Value {
+        crate::json::parse(text).unwrap()
+    }
 
     fn bins(name: &str, bin: Value) -> Vec<(String, String)> {
         normalize(Some(name), Some(&bin)).into_iter().collect()
@@ -87,16 +90,16 @@ mod tests {
 
     #[test]
     fn normalizes_shapes() {
-        assert_eq!(bins("foo", json!("./cli.js")), [("foo".into(), "cli.js".into())]);
-        assert_eq!(bins("@s/foo", json!("cli.js")), [("foo".into(), "cli.js".into())]);
-        assert_eq!(bins("x", json!(["bin/a.js"])), [("a.js".into(), "bin/a.js".into())]);
-        assert_eq!(bins("x", json!({"a": "b", "c": 1})), [("a".into(), "b".into())]);
+        assert_eq!(bins("foo", j(r#""./cli.js""#)), [("foo".into(), "cli.js".into())]);
+        assert_eq!(bins("@s/foo", j(r#""cli.js""#)), [("foo".into(), "cli.js".into())]);
+        assert_eq!(bins("x", j(r#"["bin/a.js"]"#)), [("a.js".into(), "bin/a.js".into())]);
+        assert_eq!(bins("x", j(r#"{"a": "b", "c": 1}"#)), [("a".into(), "b".into())]);
     }
 
     #[test]
     fn keeps_bins_inside() {
-        assert_eq!(bins("x", json!({"../../evil": "../../../etc/passwd"})), [("evil".into(), "etc/passwd".into())]);
-        assert!(bins("x", json!({"..": "a", "b": ".."})).is_empty());
-        assert_eq!(bins("x", json!({"c:\\x": "a\\b"})), [("x".into(), "a/b".into())]);
+        assert_eq!(bins("x", j(r#"{"../../evil": "../../../etc/passwd"}"#)), [("evil".into(), "etc/passwd".into())]);
+        assert!(bins("x", j(r#"{"..": "a", "b": ".."}"#)).is_empty());
+        assert_eq!(bins("x", j(r#"{"c:\\x": "a\\b"}"#)), [("x".into(), "a/b".into())]);
     }
 }

@@ -154,13 +154,6 @@ pub fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Pretty JSON with a trailing newline, the way package.json and the lockfile are written.
-pub fn pretty(value: &impl serde::Serialize) -> String {
-    let mut text = serde_json::to_string_pretty(value).unwrap_or_default();
-    text.push('\n');
-    text
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

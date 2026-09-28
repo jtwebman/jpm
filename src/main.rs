@@ -11,6 +11,7 @@ mod glob;
 mod graph;
 mod http;
 mod integrity;
+mod json;
 mod keys;
 mod link;
 mod lock;

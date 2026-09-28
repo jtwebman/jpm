@@ -37,11 +37,10 @@ pub fn libc() -> Option<&'static str> {
 }
 
 /// What a package's `os`, `cpu` and `libc` fields are matched against, in Node's spelling.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Platform {
     pub os: String,
     pub cpu: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub libc: Option<String>,
 }
 
@@ -61,6 +60,19 @@ impl Platform {
             other => other,
         };
         Self { os: os.into(), cpu: cpu.into(), libc: libc().map(str::to_string) }
+    }
+}
+
+impl Platform {
+    /// `{"os","cpu","libc"}`, as the install state records it.
+    pub fn to_value(&self) -> crate::json::Value {
+        let mut o = crate::json::Object::new();
+        o.insert("os", self.os.as_str().into());
+        o.insert("cpu", self.cpu.as_str().into());
+        if let Some(libc) = &self.libc {
+            o.insert("libc", libc.as_str().into());
+        }
+        o.into()
     }
 }
 

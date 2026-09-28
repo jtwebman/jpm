@@ -4,8 +4,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::bin::Bins;
 use crate::error::{Error, Result};
 use crate::semver;
@@ -13,23 +11,36 @@ use crate::sys::Platform;
 
 pub type Deps = BTreeMap<String, String>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PeerKind {
     Required,
     Optional,
 }
 
+impl PeerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "required" => Some(Self::Required),
+            "optional" => Some(Self::Optional),
+            _ => None,
+        }
+    }
+}
+
 pub type Peers = BTreeMap<String, PeerKind>;
 
 /// The ranges a top (the root or a workspace) declared, verbatim. Empty groups are left out.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Specs {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dependencies: Option<Deps>,
-    #[serde(default, rename = "devDependencies", skip_serializing_if = "Option::is_none")]
     pub dev_dependencies: Option<Deps>,
-    #[serde(default, rename = "optionalDependencies", skip_serializing_if = "Option::is_none")]
     pub optional_dependencies: Option<Deps>,
 }
 
@@ -39,6 +50,33 @@ impl Specs {
         let keep = |m: &Deps| (!m.is_empty()).then(|| m.clone());
         let s = Self { dependencies: keep(deps), dev_dependencies: keep(dev), optional_dependencies: keep(optional) };
         (!s.is_empty()).then_some(s)
+    }
+
+    /// The groups that have anything in them, in their fixed order.
+    pub fn to_value(&self) -> crate::json::Value {
+        let mut o = crate::json::Object::new();
+        for (name, group) in self.groups() {
+            if let Some(g) = group.filter(|g| !g.is_empty()) {
+                o.insert(name, crate::json::str_map(g));
+            }
+        }
+        o.into()
+    }
+
+    /// From an object of string maps; anything else in it is an error for the caller to name.
+    pub fn from_value(v: &crate::json::Value) -> Option<Self> {
+        let o = v.as_object()?;
+        let group = |name: &str| -> Option<Option<Deps>> {
+            match o.get(name) {
+                None => Some(None),
+                Some(g) => crate::json::string_map(g).map(Some),
+            }
+        };
+        Some(Self {
+            dependencies: group("dependencies")?,
+            dev_dependencies: group("devDependencies")?,
+            optional_dependencies: group("optionalDependencies")?,
+        })
     }
 
     pub fn is_empty(&self) -> bool {
