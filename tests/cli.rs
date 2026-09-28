@@ -231,7 +231,7 @@ fn reads_upm_lockfiles() {
 }
 
 #[test]
-fn reads_npm_lockfiles() {
+fn brings_over_npm_lockfiles() {
     let r = registry();
     let env = Env::new(&r);
     env.manifest(json!({ "name": "app", "dependencies": { "a": "^1.0.0" } }));
@@ -248,11 +248,52 @@ fn reads_npm_lockfiles() {
         }))
         .unwrap(),
     );
+    // CI reads it as it is and writes nothing.
+    env.ok(&["ci"]);
+    assert!(!env.exists("jpm.lock"));
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"), "the locked version, not the newest");
+    // An install brings it over: same versions, now in jpm.lock.
+    let out = env.ok(&["install"]);
+    assert!(out.contains("from package-lock.json"), "{out}");
+    let lock = env.lock();
+    assert!(lock["packages"].get("a@1.0.0").is_some() && lock["packages"].get("b@1.0.0").is_some());
+    assert!(env.exists("package-lock.json"), "the old file is left alone");
+    // And jpm.lock is what a later edit works on.
+    env.ok(&["add", "cli"]);
+    assert!(env.lock()["packages"].get("a@1.0.0").is_some(), "the edit keeps the brought-over versions");
+}
+
+#[test]
+fn resolves_an_out_of_date_lockfile_with_its_versions() {
+    let r = registry();
+    let env = Env::new(&r);
+    // package.json moved on (a new dependency) since pnpm wrote this; its versions still count.
+    env.manifest(json!({ "dependencies": { "b": "^1.0.0", "host": "^1.0.0" } }));
+    env.write(
+        "pnpm-lock.yaml",
+        "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      b:\n        specifier: ^1.0.0\n        version: 1.0.0\npackages:\n  b@1.0.0:\n    resolution: {integrity: sha512-x}\nsnapshots:\n  b@1.0.0: {}\n",
+    );
+    let out = env.ok(&["install"]);
+    assert!(out.contains("versions preferred"), "{out}");
+    let lock = env.lock();
+    assert_eq!(lock["root"]["dependencies"]["b"], "1.0.0", "pnpm's b, where 1.1.0 is newer");
+    assert_eq!(lock["root"]["dependencies"]["host"], "1.0.0");
+}
+
+#[test]
+fn rewrites_older_lockfiles_in_the_new_format() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "^1.0.0" } }));
     env.ok(&["install"]);
-    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
-    assert!(!env.exists("jpm.lock"), "another manager's lockfile is read, never written beside");
-    let out = env.jpm(&["add", "b"]);
-    assert!(!out.status.success());
+    let text = env.read("jpm.lock");
+    assert!(text.contains("jpm-lock 2") && text.contains("package b@1.1.0"), "{text}");
+    // A JSON lockfile (an older jpm's, or upm's) is written again as text.
+    let json = env.jpm(&["lock", "--json"]).stdout;
+    env.write("jpm.lock", &String::from_utf8_lossy(&json));
+    env.ok(&["install"]);
+    assert!(env.read("jpm.lock").starts_with("# jpm lockfile"));
+    assert_eq!(env.read("jpm.lock"), text, "the same lockfile, byte for byte");
 }
 
 #[test]

@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 
 use crate::json::{self, Object, Value};
 
-use crate::graph::Resolution;
-use crate::keys::graph_hash;
 use crate::util::{short_hash, write_atomic};
 
 pub const STATE_FILE: &str = ".jpm.json";
@@ -205,28 +203,15 @@ pub fn stamp_of(file: &Path) -> Option<Stamp> {
     Some([m.len().to_string(), ns(m.modified()).to_string(), ctime.to_string(), ino.to_string()])
 }
 
-/// The one value a warm install compares: the graph, what is linked out of it, and the store.
-pub fn state_hash(res: &Resolution, production: bool, store: &Path) -> String {
-    let mut lines = vec![
-        "jpm-state-1".to_string(),
-        graph_hash(res),
-        format!("production:{}", u8::from(production)),
-        format!("store:{}", store.display()),
-    ];
-    for (id, p) in &res.packages {
-        let bin: Vec<String> = p.bin.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect();
-        let bin = bin.join(",");
-        match &p.local {
-            Some(path) => lines.push(format!("{id}:local:{path}:{bin}")),
-            None => lines.push(format!(
-                "{id}:{}:{bin}:{}{}",
-                p.integrity,
-                if p.dev { "d" } else { "" },
-                if p.optional { "o" } else { "" }
-            )),
-        }
-    }
-    short_hash(&lines.join("\n"))
+/// The one value a warm install compares: the lockfile's content (which decides the graph, its
+/// bins and every store entry), and what this install links out of it, from which store.
+pub fn state_hash(lock_hash: &str, production: bool, store: &Path, platform: &crate::sys::Platform) -> String {
+    short_hash(&format!(
+        "jpm-state-2\n{lock_hash}\nproduction:{}\nstore:{}\n{}",
+        u8::from(production),
+        store.display(),
+        json::to_string(&platform.to_value())
+    ))
 }
 
 /// One value over what the tree is a function of: the lockfile's bytes, the root manifest and

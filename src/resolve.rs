@@ -36,6 +36,9 @@ pub struct Options<'a> {
     pub tarball: Option<&'a TarballReader<'a>>,
     /// Told each package as the walk picks it, before its dependencies are walked.
     pub on_pick: Option<&'a OnPick<'a>>,
+    /// Versions to pick when a range allows them, by registry name: another manager's lockfile
+    /// being brought over, so its choices survive where they still fit.
+    pub prefer: Option<&'a HashMap<String, Vec<String>>>,
     pub threads: usize,
 }
 
@@ -241,10 +244,21 @@ impl Walk<'_> {
         cell.get_or_init(|| {
             // An exact version or the locked version dedupe prefers is asked for by version.
             let exact = (spec.kind == Kind::Version).then(|| semver::parse(&spec.fetch_spec).map(|v| v.text)).flatten();
-            let wanted = exact.or_else(|| if self.opts.dedupe && !fresh { self.kept(spec) } else { None });
+            let wanted = exact
+                .or_else(|| if self.opts.dedupe && !fresh { self.kept(spec) } else { None })
+                .or_else(|| self.preferred(spec));
             self.opts.registry.pick(spec, wanted.as_deref())
         })
         .clone()
+    }
+
+    /// The highest preferred version the spec allows; never for a tag, which names what it names.
+    fn preferred(&self, spec: &Spec) -> Option<String> {
+        if spec.kind == Kind::Tag {
+            return None;
+        }
+        let versions = self.opts.prefer?.get(&spec.fetch_name)?;
+        semver::max_satisfying(versions.iter().map(String::as_str), &spec.fetch_spec).map(str::to_string)
     }
 
     /// The abbreviated document leaves `libc` out, so every linux build costs a read of the full

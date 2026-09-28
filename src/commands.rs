@@ -1,6 +1,6 @@
 //! What each command does, without argv parsing or result formatting (that is `cli.rs`).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -289,9 +289,12 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let dir = project.dir.clone();
     let previous = if ctx.opts.verify { None } else { state::read(&dir) };
     // The same inputs, with the tree still standing: a no-op that never reads the graph.
+    // Only from jpm.lock itself (or frozen): any other lockfile is to be brought over first.
+    let source = ctx.lock_source(&dir)?.0;
+    let own = ctx.opts.frozen || (source.file_name().is_some_and(|n| n == LOCKFILE) && lock::is_current(&source));
     if let Some(st) = previous
         .as_ref()
-        .filter(|s| s.inputs.is_some() && edit.is_none() && !ctx.dedupe && project.workspaces.is_empty())
+        .filter(|s| own && s.inputs.is_some() && edit.is_none() && !ctx.dedupe && project.workspaces.is_empty())
     {
         let stamps = ctx.stamps(&dir);
         let stamped = stamps.as_ref().zip(st.stamps.as_ref()).is_some_and(|(a, b)| a == b);
@@ -360,8 +363,15 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     if let Some(edit) = &edit {
         save_manifest(edit)?;
     }
-    let checked = lock::from_lockfile(&lock, &ctx.base_for());
-    let resolution = filter_platform(&checked, &platform)?;
+    // What is needed of the lockfile itself, before it is taken apart into the graph.
+    let workspaces = lock.workspaces.len();
+    let locked = lock.packages.len();
+    let lock_hash = lock::content_hash(&lock);
+    let tarballs = files_of(ctx, &lock);
+    let recorded = lock::recorded_keys(&lock);
+    let checked = lock::into_resolution(lock, &ctx.base_for());
+    let keys = recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages));
+    let resolution = filter_platform(checked, &platform)?;
     for w in &resolution.warnings {
         warn(w);
     }
@@ -370,15 +380,14 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             warn(&format!("unmet peer — {unmet}"));
         }
     }
-    let workspaces = lock.workspaces.len();
-    let elsewhere = lock.packages.len().saturating_sub(resolution.packages.len() - workspaces);
+    let elsewhere = locked.saturating_sub(resolution.packages.len() - workspaces);
     let mut resolution = resolution;
     if !ctx.binless.is_empty() {
         read_bins(&mut resolution, &store, &ctx.binless, &dir)?;
     }
     let wanted: Vec<&Package> =
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
-    let hash = state::state_hash(&resolution, ctx.opts.production, &store.dir);
+    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, &platform);
     let settled = previous.as_ref().is_some_and(|s| s.hash == hash);
     if !settled {
         fill(&store, &wanted, &dir)?;
@@ -397,7 +406,6 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     } else {
         None
     };
-    let tarballs = files_of(ctx, &lock);
     let packages = wanted.len();
     let options = link::Options {
         dir: &dir,
@@ -405,6 +413,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         production: ctx.opts.production,
         verify: ctx.opts.verify,
         hash: hash.clone(),
+        keys,
         inputs,
         tarballs: Some(tarballs.clone()),
     };
@@ -518,10 +527,12 @@ fn plan(
     let dir = &project.dir;
     let (_, foreign_file) = ctx.lock_source(dir)?;
     if let Some(file) = foreign_file {
-        if ctx.dedupe {
-            return Err(foreign::beside(file, "dedupe"));
-        }
-        return foreign_lock(ctx, project, file);
+        // Frozen is CI: read in memory, write nothing. Otherwise jpm.lock takes over.
+        return if ctx.opts.frozen {
+            foreign_lock(ctx, project, file)
+        } else {
+            import(ctx, project, store, file, on_pick)
+        };
     }
     let existing = if ctx.opts.frozen { lock::read_lockfile(dir)?.map(|(l, _)| l) } else { current_lock(dir) };
     let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
@@ -534,7 +545,14 @@ fn plan(
         && lock::same_tree(l, &project.manifest, &project.workspaces)
         && !ctx.dedupe
     {
-        return Ok(l.clone());
+        let mut l = l.clone();
+        // upm's JSON, an older jpm.lock or a hand edit: written again in jpm's format, hash and all.
+        if l.hash.is_none() && !ctx.opts.frozen {
+            lock::write_lockfile(dir, &mut l)?;
+            ctx.source = None;
+            info(&format!("wrote {} in jpm's lockfile format", dir.join(LOCKFILE).display()));
+        }
+        return Ok(l);
     }
     if ctx.opts.frozen {
         let why = match &existing {
@@ -549,7 +567,62 @@ fn plan(
         return Err(fail("ELOCK", format!("{} {why}", dir.join(LOCKFILE).display())));
     }
     let registry = ctx.registry(store);
-    resolve_lock(ctx, project, existing, &registry, &reader, on_pick, &moved, true)
+    resolve_lock(ctx, project, existing, &registry, &reader, on_pick, &moved, true, None)
+}
+
+/// Another manager's lockfile becomes `jpm.lock`. When it describes package.json exactly it is
+/// carried over as is, no registry asked; otherwise (out of date, workspaces, an older format)
+/// the tree is resolved with the versions it names preferred wherever the ranges allow them.
+fn import(
+    ctx: &mut Ctx,
+    project: &Project,
+    store: &Store,
+    file: &'static str,
+    on_pick: Option<&resolve::OnPick>,
+) -> Result<Lockfile> {
+    let dir = &project.dir;
+    let exact = foreign_lock(ctx, project, file);
+    let text = ctx.foreign_read.take().map(|(t, _)| t).unwrap_or_default();
+    ctx.source = None;
+    let lock = match exact {
+        Ok(mut lock) => {
+            fill_bins(ctx, &mut lock, store, dir)?;
+            lock::write_lockfile(dir, &mut lock)?;
+            info(&format!("wrote {} from {file} with the same versions; {file} is no longer read", LOCKFILE));
+            lock
+        }
+        Err(why) => {
+            info(&format!("{}; resolving with its versions preferred", why.message));
+            let mut prefer: HashMap<String, Vec<String>> = HashMap::new();
+            for (name, version) in foreign::pins(file, &text).unwrap_or_default() {
+                prefer.entry(name).or_default().push(version);
+            }
+            let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
+            let registry = ctx.registry(store);
+            let lock = resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], true, Some(&prefer))?;
+            info(&format!("{file} is no longer read; it can be deleted"));
+            lock
+        }
+    };
+    ctx.binless.clear();
+    ctx.source = None;
+    Ok(lock)
+}
+
+/// pnpm records only `hasBin`: a converted lockfile reads those bins out of the packages.
+fn fill_bins(ctx: &Ctx, lock: &mut Lockfile, store: &Store, dir: &Path) -> Result<()> {
+    let base = ctx.base_for();
+    for key in &ctx.binless {
+        let Some((name, version)) = crate::graph::split_key(key) else { continue };
+        let Some(entry) = lock.packages.get_mut(key) else { continue };
+        let url = entry.resolved.clone().unwrap_or_else(|| crate::registry::tarball_url(&base(name), name, version));
+        store.ensure(&tarball_of(dir, &url, None), &entry.integrity)?;
+        let text = std::fs::read_to_string(store.file(&entry.integrity, "package.json")?).unwrap_or_default();
+        if let Ok(m) = Manifest::from_json(&text) {
+            entry.bin = m.bins();
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -562,6 +635,7 @@ fn resolve_lock(
     on_pick: Option<&resolve::OnPick>,
     moved: &[String],
     write: bool,
+    prefer: Option<&HashMap<String, Vec<String>>>,
 ) -> Result<Lockfile> {
     let base = ctx.base_for();
     let mut locked = existing.as_ref().map(|l| lock::from_lockfile(l, &base));
@@ -579,6 +653,7 @@ fn resolve_lock(
         workspaces: workspaces.clone(),
         tarball: Some(reader),
         on_pick,
+        prefer,
         threads: pool::network_threads(),
     };
     let mut resolution = resolve::resolve(&project.manifest, &options(locked.as_ref()))?;
@@ -595,7 +670,7 @@ fn resolve_lock(
     for w in &resolution.warnings {
         warn(w);
     }
-    let lock = lock::to_lockfile(&resolution, &base);
+    let mut lock = lock::to_lockfile(&resolution, &base);
     if let Some(existing) = &existing {
         if lock::format_lockfile(&lock)? == lock::format_lockfile(existing)? {
             if ctx.dedupe {
@@ -611,7 +686,7 @@ fn resolve_lock(
         }
     }
     if write {
-        lock::write_lockfile(&project.dir, &lock)?;
+        lock::write_lockfile(&project.dir, &mut lock)?;
         info(&format!("wrote {} — {}", project.dir.join(LOCKFILE).display(), counts(&lock)));
     }
     Ok(lock)
@@ -716,9 +791,6 @@ pub fn counts(lock: &Lockfile) -> String {
 /// else the root's.
 fn edit_target(ctx: &mut Ctx, command: &str) -> Result<Edit> {
     let mut project = ctx.load_project()?;
-    if let (_, Some(file)) = ctx.lock_source(&project.dir)? {
-        return Err(foreign::beside(file, command));
-    }
     let mut workspace = ctx.inside.clone();
     if let Some(select) = &ctx.opts.workspaces {
         let picked = select_workspaces(select, &project.dir, &project.workspaces)?;
@@ -884,13 +956,16 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
     let mut ctx = Ctx::open(opts, false)?;
     let project = ctx.load_project()?;
     let dir = project.dir.clone();
+    let store = ctx.store(false);
     if let (_, Some(file)) = ctx.lock_source(&dir)? {
-        let l = foreign_lock(&mut ctx, &project, file)?;
-        info(&format!("{file} is up to date — {}", counts(&l)));
-        return Ok(l);
+        // `--json` shows it without writing anything; otherwise jpm.lock takes over.
+        return if write {
+            import(&mut ctx, &project, &store, file, None)
+        } else {
+            foreign_lock(&mut ctx, &project, file)
+        };
     }
     let existing = current_lock(&dir);
-    let store = ctx.store(false);
     let reader = |source: &str, pinned: Option<&str>| read_tarball(&ctx, &store, &dir, source, pinned);
     let moved = match &existing {
         Some(l) => moved_tarballs(&ctx, &dir, l, &reader, BTreeMap::new())?,
@@ -900,11 +975,16 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
         && moved.is_empty()
         && lock::same_tree(l, &project.manifest, &project.workspaces)
     {
-        info(&format!("{LOCKFILE} is up to date — {}", counts(l)));
-        return Ok(l.clone());
+        let mut l = l.clone();
+        if l.hash.is_none() && write {
+            lock::write_lockfile(&dir, &mut l)?;
+            info(&format!("wrote {} in jpm's lockfile format", dir.join(LOCKFILE).display()));
+        }
+        info(&format!("{LOCKFILE} is up to date — {}", counts(&l)));
+        return Ok(l);
     }
     let registry = ctx.registry(&store);
-    resolve_lock(&ctx, &project, existing, &registry, &reader, None, &moved, write)
+    resolve_lock(&ctx, &project, existing, &registry, &reader, None, &moved, write, None)
 }
 
 #[derive(Debug)]
@@ -930,7 +1010,7 @@ pub fn fetch_lockfile(opts: Opts) -> Result<Vec<Fetched>> {
             .ok_or_else(|| fail("ELOCK", format!("no {LOCKFILE} in {}", dir.display())))?,
     };
     let store = ctx.store(false);
-    let res = filter_platform(&lock::from_lockfile(&lock, &ctx.base_for()), &Platform::current())?;
+    let res = filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &Platform::current())?;
     for w in &res.warnings {
         warn(w);
     }

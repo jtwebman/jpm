@@ -291,8 +291,11 @@ impl Env {
         std::fs::symlink_metadata(self.project().join(rel)).is_ok()
     }
 
+    /// The lockfile as JSON, through `jpm lock --json` (the file itself is jpm's text format).
     pub fn lock(&self) -> Value {
-        serde_json::from_str(&self.read("jpm.lock")).unwrap()
+        let out = self.jpm(&["lock", "--json"]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).unwrap()
     }
 }
 

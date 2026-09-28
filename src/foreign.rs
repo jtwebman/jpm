@@ -10,12 +10,12 @@ use crate::json::{self, Object as Map, Value};
 use crate::bin::{self, Bins};
 use crate::error::{Error, Result};
 use crate::graph::{Deps, PeerKind, Peers, Specs};
-use crate::lock::{self, LOCKFILE, LockEntry, LockRoot, Lockfile};
+use crate::lock::{self, LockEntry, LockRoot, Lockfile};
 use crate::project::{GROUPS, RootManifest};
 use crate::registry::tarball_url;
 use crate::semver::max_satisfying;
 
-pub const FOREIGN: [&str; 3] = ["package-lock.json", "pnpm-lock.yaml", "bun.lock"];
+pub const FOREIGN: [&str; 4] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock"];
 
 pub struct ForeignLock {
     pub lock: Lockfile,
@@ -62,9 +62,9 @@ enum Target {
     Missing,
 }
 
-/// The project's lockfile as jpm's, when it still describes package.json. jpm never writes it,
-/// so one that does not is refused rather than resolved: its own manager keeps it current.
-/// `file` is one of FOREIGN. `has_workspaces` is true when the project declares or has workspaces.
+/// Another manager's lockfile as jpm's, when it still describes package.json exactly: the same
+/// tree, nothing resolved. What it cannot say exactly is refused here; `pins` then reads its
+/// versions for a resolve. `file` is one of FOREIGN. `has_workspaces` is true when the project declares or has workspaces.
 /// `base_for(name)` gives the registry base url for a package name.
 pub fn load(
     file: &str,
@@ -74,10 +74,10 @@ pub fn load(
     base_for: &dyn Fn(&str) -> String,
 ) -> Result<ForeignLock> {
     if has_workspaces {
-        return Err(fail(format!("jpm does not read workspaces from {file}: delete it to switch to jpm")));
+        return Err(fail(format!("{file} has workspaces, which jpm reads only for their versions")));
     }
     let mut source = match file {
-        "package-lock.json" => read_npm(text)?,
+        "package-lock.json" | "npm-shrinkwrap.json" => read_npm(text)?,
         "pnpm-lock.yaml" => read_pnpm(text)?,
         "bun.lock" => read_bun(text)?,
         _ => return Err(fail(format!("jpm does not read {file}"))),
@@ -86,21 +86,73 @@ pub fn load(
     build(file, source, manifest, base_for)
 }
 
-/// The error for a command that would write jpm.lock beside another manager's lockfile.
-pub fn beside(file: &str, command: &str) -> Error {
-    let manager = manager(file);
-    fail(format!(
-        "{command} would write {LOCKFILE} beside {file}: run {manager} {command}, or delete {file} to switch to jpm"
-    ))
-}
-
-/// Who writes each file: the manager a refusal sends a person back to.
-fn manager(file: &str) -> &'static str {
+/// Every registry package version the file names, as `(name, version)`, read loosely: what a
+/// file that cannot be brought over whole (out of date, with workspaces, an older format) still
+/// says about which versions the project used. npm, pnpm (any version) and bun.
+pub fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
     match file {
-        "package-lock.json" => "npm",
-        "pnpm-lock.yaml" => "pnpm",
-        _ => "bun",
+        "package-lock.json" | "npm-shrinkwrap.json" => {
+            let doc = json::parse(text).map_err(|e| fail(format!("{file} cannot be read: {}", e.message)))?;
+            // v2 and v3 list every path; v1 nests `dependencies`.
+            let mut stack: Vec<(String, &Value)> = Vec::new();
+            if let Some(packages) = doc.get("packages").and_then(Value::as_object) {
+                for (path, entry) in packages {
+                    let Some(at) = path.rfind(NM) else { continue };
+                    let name = entry.get("name").and_then(Value::as_str).unwrap_or(&path[at + NM.len()..]);
+                    if let Some(v) = npm_version(entry) {
+                        out.push((name.to_string(), v.to_string()));
+                    }
+                }
+            } else if let Some(deps) = doc.get("dependencies") {
+                stack.push((String::new(), deps));
+            }
+            while let Some((_, deps)) = stack.pop() {
+                for (name, entry) in deps.as_object().into_iter().flatten() {
+                    if let Some(v) = entry.get("version").and_then(Value::as_str) {
+                        // An alias is written `npm:real@version`.
+                        match v.strip_prefix("npm:").map(split_id) {
+                            Some((real, version)) => out.push((real, version)),
+                            None if crate::semver::is_exact(v) => out.push((name.clone(), v.to_string())),
+                            None => {}
+                        }
+                    }
+                    if let Some(nested) = entry.get("dependencies") {
+                        stack.push((name.clone(), nested));
+                    }
+                }
+            }
+        }
+        "pnpm-lock.yaml" => {
+            let doc = pnpm_doc(text)?;
+            for (id, _) in doc.get("packages").and_then(Value::as_object).into_iter().flatten() {
+                // `name@1.0.0` (v9), `/name@1.0.0(peer@1)` (v6-8) or `/name/1.0.0_peer@1` (v5).
+                let id = strip_peers(id.trim_start_matches('/'));
+                let id = id.split('_').next().unwrap_or(id);
+                let (name, version) = match id.rfind('@').filter(|at| *at > 0) {
+                    Some(at) => (id[..at].to_string(), id[at + 1..].to_string()),
+                    None => match id.rsplit_once('/') {
+                        Some((n, v)) => (n.to_string(), v.to_string()),
+                        None => continue,
+                    },
+                };
+                if crate::semver::is_exact(&version) {
+                    out.push((name, version));
+                }
+            }
+        }
+        "bun.lock" => {
+            let doc = json::parse(&strip_trailing_commas(text))
+                .map_err(|e| fail(format!("bun.lock cannot be read: {}", e.message)))?;
+            for (_, tuple) in doc.get("packages").and_then(Value::as_object).into_iter().flatten() {
+                if let Some(t) = bun_tuple(tuple) {
+                    out.push(split_id(t.id));
+                }
+            }
+        }
+        _ => return Err(fail(format!("jpm does not read {file}"))),
     }
+    Ok(out)
 }
 
 fn fail(message: impl Into<String>) -> Error {
@@ -118,12 +170,7 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
     if truthy(doc.get("patchedDependencies")) || truthy(pnpm) {
         return Err(fail("jpm does not apply the patches package.json names"));
     }
-    let stale = || {
-        fail(format!(
-            "{file} is out of date with package.json: run {} install, or delete it to switch to jpm",
-            manager(file)
-        ))
-    };
+    let stale = || fail(format!("{file} is out of date with package.json"));
     let specs = manifest.specs();
     let declared = flat(specs.as_ref());
     let recorded = flat(Some(&source.specs));
@@ -322,8 +369,9 @@ fn root_of(groups: [Deps; 3], target: &dyn Fn(&str) -> Option<String>) -> (Specs
 // `packages` describes each version, `snapshots` each version with its peer set, and edges
 // are exact already. Bins are only `hasBin: true`, so install reads them out of the package.
 
-fn read_pnpm(text: &str) -> Result<Source> {
-    // pnpm 11 and later may write two documents: its own dependencies first, then the lockfile.
+/// The document that is the lockfile: pnpm 11 and later may write two, its own dependencies
+/// first.
+fn pnpm_doc(text: &str) -> Result<Value> {
     let mut parts = vec![String::new()];
     for line in text.split('\n') {
         match line.strip_prefix("---") {
@@ -343,6 +391,11 @@ fn read_pnpm(text: &str) -> Result<Source> {
             doc = d;
         }
     }
+    Ok(doc)
+}
+
+fn read_pnpm(text: &str) -> Result<Source> {
+    let doc = pnpm_doc(text)?;
     let version = doc.get("lockfileVersion").map(string_of).unwrap_or_default();
     if !version.starts_with('9') {
         let v = if version.is_empty() { "v5" } else { &version };
@@ -690,6 +743,7 @@ fn build(
             os: node.os,
             cpu: node.cpu,
             libc: node.libc,
+            subgraph: None,
         };
         packages.insert(key.clone(), entry);
     }
@@ -700,7 +754,7 @@ fn build(
         dependencies: source.root,
         workspaces: None,
     };
-    let lock = Lockfile { lockfile_version: 1, root, workspaces: BTreeMap::new(), packages };
+    let lock = Lockfile { lockfile_version: 1, root, workspaces: BTreeMap::new(), packages, hash: None };
     lock::validate(&lock).map_err(|e| fail(format!("{file} does not map onto jpm: {}", e.message)))?;
     let warnings = twice
         .into_iter()
@@ -921,7 +975,7 @@ fn unquote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::parse_lockfile;
+    use crate::lock::{LOCKFILE, parse_lockfile};
     // The tests write documents with serde_json's `json!`; the reader is handed them as text.
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1257,10 +1311,7 @@ snapshots:
             json!({ "dependencies": { "a": "^1", "b": "^1" } }),
             json!({}),
         ] {
-            assert!(
-                err("pnpm-lock.yaml", text, doc)
-                    .starts_with("pnpm-lock.yaml is out of date with package.json: run pnpm install")
-            );
+            assert!(err("pnpm-lock.yaml", text, doc).starts_with("pnpm-lock.yaml is out of date with package.json"));
         }
     }
 
@@ -1286,15 +1337,25 @@ snapshots:
     }
 
     #[test]
-    fn refuses_workspaces_and_commands_beside_it() {
+    fn refuses_workspaces_exactly() {
         let e = load("pnpm-lock.yaml", PNPM, &manifest(demo()), true, &npmjs).err().unwrap();
-        assert_eq!(e.message, "jpm does not read workspaces from pnpm-lock.yaml: delete it to switch to jpm");
-        let e = beside("package-lock.json", "add");
-        assert_eq!(e.code, "ELOCK");
-        assert_eq!(
-            e.message,
-            "add would write jpm.lock beside package-lock.json: run npm add, or delete package-lock.json to switch to jpm"
-        );
+        assert_eq!(e.message, "pnpm-lock.yaml has workspaces, which jpm reads only for their versions");
+    }
+
+    #[test]
+    fn pins_every_format() {
+        let npm = pins("package-lock.json", NPM).unwrap();
+        assert!(npm.contains(&("tool".to_string(), "1.0.0".to_string())));
+        assert!(npm.contains(&("@s/native".to_string(), "1.0.0".to_string())));
+        let v1 = r#"{"lockfileVersion":1,"dependencies":{"a":{"version":"1.2.3","dependencies":{"b":{"version":"2.0.0"}}},"c":{"version":"npm:real@3.0.0"}}}"#;
+        let mut v1 = pins("npm-shrinkwrap.json", v1).unwrap();
+        v1.sort();
+        assert_eq!(v1, [("a".into(), "1.2.3".into()), ("b".into(), "2.0.0".into()), ("real".into(), "3.0.0".into())]);
+        assert!(!pins("pnpm-lock.yaml", PNPM).unwrap().is_empty());
+        let old = "lockfileVersion: 5.4\npackages:\n  /a/1.0.0:\n    resolution: {integrity: x}\n  /@s/b/2.0.0_c@1.0.0:\n    dev: true\n";
+        let mut old = pins("pnpm-lock.yaml", old).unwrap();
+        old.sort();
+        assert_eq!(old, [("@s/b".into(), "2.0.0".into()), ("a".into(), "1.0.0".into())]);
     }
 
     #[test]

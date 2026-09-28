@@ -19,7 +19,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::error::{Error, Result};
 use crate::graph::{Package, Resolution};
-use crate::keys::store_keys;
 use crate::state::{self, RootLinks, Stamp, Stamps, State, Summary};
 use crate::store::{Index, Store, remove_tree};
 use crate::util::{relative, temp_suffix};
@@ -42,6 +41,8 @@ pub struct Options<'a> {
     pub verify: bool,
     /// `state_hash` of this resolution with these flags.
     pub hash: String,
+    /// Each package's store entry name, by key.
+    pub keys: HashMap<String, String>,
     /// What the state records for the no-op check: only when the tree is a function of the
     /// lockfile and root manifest alone (no workspaces).
     pub inputs: Option<Inputs>,
@@ -194,7 +195,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     }
     state::clear(opts.dir);
 
-    let keys = store_keys(&res.packages);
+    let keys = &opts.keys;
     let mut wanted = HashMap::new();
     let mut dropped = Vec::new();
     for (id, pkg) in &res.packages {

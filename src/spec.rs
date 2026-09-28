@@ -218,7 +218,7 @@ fn url_safe(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b))
 }
 
-fn check_name(name: &str, raw: &str) -> Result<()> {
+pub fn check_name(name: &str, raw: &str) -> Result<()> {
     let bad = |why: &str| Err(invalid(format!("Invalid package name \"{name}\" of package \"{raw}\": {why}")));
     if name.is_empty() {
         return bad("name is empty");
