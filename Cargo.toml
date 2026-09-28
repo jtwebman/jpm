@@ -1,0 +1,32 @@
+[package]
+name = "jpm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A fast, small package manager for the npm registry"
+rust-version = "1.88"
+
+[dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+ring = "0.17.14"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzip"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"
+
+[target."cfg(windows)".dependencies]
+junction = "2.1.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Smallest binary, for comparing size against speed: `cargo build --profile small`.
+[profile.small]
+inherits = "release"
+opt-level = "z"

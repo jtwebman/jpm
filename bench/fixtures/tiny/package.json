@@ -1,0 +1,9 @@
+{
+  "name": "bench-tiny",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Benchmark fixture: one package with no dependencies, so a change to thread startup shows its cost.",
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}

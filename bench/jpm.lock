@@ -1,0 +1,32 @@
+{
+  "lockfileVersion": 1,
+  "root": {
+    "name": "jpm-bench",
+    "specs": {
+      "devDependencies": {
+        "jup": "0.6.0",
+        "upm": "1.2.0"
+      }
+    },
+    "dependencies": {
+      "jup": "0.6.0",
+      "upm": "1.2.0"
+    }
+  },
+  "packages": {
+    "jup@0.6.0": {
+      "integrity": "sha512-AHkEEcVy24Rg4H3GmhVY8QxffCBoI3ieaAVeSfvGu7sWBOuzp1ns8Vgneml6Lb+s6xjAXSCBv1pEF/IOM5jDZQ==",
+      "bin": {
+        "corepack": "bin/corepack.mjs",
+        "jup": "bin/jup.mjs"
+      }
+    },
+    "upm@1.2.0": {
+      "integrity": "sha512-PNtOfNLaQXb9Sydxko+E/hRo4euATyKCPZzVQJl7hmf00sf1cMJ2aaj1+zwNuPMyk0ijKzDRyiZasVocJ9IaBQ==",
+      "bin": {
+        "upm": "dist/upm.mjs",
+        "upx": "dist/upx.mjs"
+      }
+    }
+  }
+}
