@@ -9,9 +9,11 @@ rust-version = "1.88"
 [dependencies]
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 ring = "0.17.14"
+# No logging; src/http.rs picks the suites. TLS 1.2 stays: registry.npmjs.org does not speak 1.3.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
-ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzip"] }
+webpki-roots = "1"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"
