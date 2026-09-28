@@ -19,14 +19,25 @@ libc = "0.2.189"
 [target."cfg(windows)".dependencies]
 junction = "2.1.0"
 
+# Built for size: jpm waits on the network and the disk far more than on the CPU. The crates
+# that do the CPU work (inflate, JSON, TLS records) keep full speed.
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
 
-# Smallest binary, for comparing size against speed: `cargo build --profile small`.
-[profile.small]
+[profile.release.package.zlib-rs]
+opt-level = 3
+
+[profile.release.package.serde_json]
+opt-level = 3
+
+[profile.release.package.rustls]
+opt-level = 3
+
+# Everything at full speed, for comparing: `cargo build --profile fast`.
+[profile.fast]
 inherits = "release"
-opt-level = "z"
+opt-level = 3
