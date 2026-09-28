@@ -99,8 +99,8 @@ turn this off.
 
 ```sh
 cargo test                       # unit tests and end-to-end tests against a local registry
-cargo build --release            # optimized, stripped binary
-cargo build --profile small      # optimized for size instead of speed
+cargo build --release            # built for size, the CPU-heavy crates for speed
+cargo build --profile fast       # every crate at full speed, for comparing
 ```
 
 Platform-specific code lives in `src/sys/`, one file per OS; only the target's file is
