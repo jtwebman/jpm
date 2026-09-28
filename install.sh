@@ -1,0 +1,57 @@
+#!/bin/sh
+# Install jpm: curl -fsSL https://getjpm.sh | sh
+# JPM_VERSION picks a release (default: latest); JPM_INSTALL moves it (default: ~/.jpm/bin).
+set -eu
+
+repo="jtwebman/jpm"
+dir="${JPM_INSTALL:-$HOME/.jpm/bin}"
+
+case "$(uname -s)" in
+  Linux) os=linux ;;
+  Darwin) os=darwin ;;
+  *) echo "jpm: no build for $(uname -s); use install.ps1 on Windows" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  x86_64 | amd64) cpu=x64 ;;
+  arm64 | aarch64) cpu=arm64 ;;
+  *) echo "jpm: no build for $(uname -m)" >&2; exit 1 ;;
+esac
+# A shell under Rosetta reports x86_64 on an arm64 Mac: take the native build.
+if [ "$os" = darwin ] && [ "$cpu" = x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then
+  cpu=arm64
+fi
+
+asset="jpm-$os-$cpu"
+if [ -n "${JPM_VERSION:-}" ]; then
+  base="https://github.com/$repo/releases/download/$JPM_VERSION"
+else
+  base="https://github.com/$repo/releases/latest/download"
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+echo "jpm: downloading $asset"
+curl -fsSL "$base/$asset" -o "$tmp/jpm"
+curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
+
+want="$(grep " $asset\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)"
+if command -v sha256sum >/dev/null 2>&1; then
+  have="$(sha256sum "$tmp/jpm" | cut -d' ' -f1)"
+else
+  have="$(shasum -a 256 "$tmp/jpm" | cut -d' ' -f1)"
+fi
+if [ -z "$want" ] || [ "$want" != "$have" ]; then
+  echo "jpm: checksum mismatch for $asset" >&2
+  exit 1
+fi
+
+mkdir -p "$dir"
+chmod +x "$tmp/jpm"
+mv "$tmp/jpm" "$dir/jpm"
+ln -sf jpm "$dir/jpx"
+echo "jpm: installed $("$dir/jpm" --version) to $dir/jpm"
+
+case ":$PATH:" in
+  *":$dir:"*) ;;
+  *) echo "jpm: add $dir to your PATH, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
+esac

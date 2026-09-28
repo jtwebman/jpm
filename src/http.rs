@@ -99,7 +99,10 @@ pub fn get(url: &str, headers: &[(&str, &str)], auth: &std::collections::BTreeMa
 
 /// A GET whose body is read as it arrives, retried like `get` until the body starts, with its
 /// declared length.
-pub fn open(url: &str, auth: &std::collections::BTreeMap<String, String>) -> Result<(Box<dyn Read + Send>, Option<u64>)> {
+pub fn open(
+    url: &str,
+    auth: &std::collections::BTreeMap<String, String>,
+) -> Result<(Box<dyn Read + Send>, Option<u64>)> {
     let authorization = auth_for(auth, url);
     let mut last = None;
     for attempt in 0..ATTEMPTS {
@@ -112,7 +115,8 @@ pub fn open(url: &str, auth: &std::collections::BTreeMap<String, String>) -> Res
         }
         match request.call() {
             Ok(r) if r.status().is_success() => {
-                let length = r.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+                let length =
+                    r.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
                 return Ok((Box::new(r.into_body().into_reader()), length));
             }
             Ok(r) if r.status() == 404 => return Err(Error::new("E404", format!("Tarball {url} returned 404"))),
