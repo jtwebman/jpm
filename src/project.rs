@@ -346,11 +346,7 @@ pub fn add_deps(doc: &mut JsonMap<String, Value>, added: &[Added]) {
 
 /// Take each name out of every group; the names in no group come back.
 pub fn remove_deps(doc: &mut JsonMap<String, Value>, names: &[String]) -> Vec<String> {
-    names
-        .iter()
-        .filter(|name| !GROUPS.iter().fold(false, |found, g| drop_dep(doc, g, name) || found))
-        .cloned()
-        .collect()
+    names.iter().filter(|name| GROUPS.iter().filter(|g| drop_dep(doc, g, name)).count() == 0).cloned().collect()
 }
 
 fn drop_dep(doc: &mut JsonMap<String, Value>, group: &str, name: &str) -> bool {
