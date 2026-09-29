@@ -1,6 +1,6 @@
 //! Subresource-integrity strings (`sha512-<base64>`): parse, hash and verify.
 
-use ring::digest::{self, Algorithm, Context};
+use jpm_crypto::hash::{Alg, Hasher};
 
 use crate::error::{Error, Result};
 use crate::util::{from_base64, from_hex, to_base64};
@@ -43,8 +43,8 @@ impl Integrity {
         format!("{}-{}", self.algorithm, to_base64(&self.digest))
     }
 
-    pub fn hasher(&self) -> Context {
-        Context::new(algorithm(self.algorithm))
+    pub fn hasher(&self) -> Hasher {
+        Hasher::new(algorithm(self.algorithm))
     }
 
     /// Check a finished hash against this integrity.
@@ -59,12 +59,12 @@ impl Integrity {
     }
 }
 
-fn algorithm(name: &str) -> &'static Algorithm {
+fn algorithm(name: &str) -> Alg {
     match name {
-        "sha512" => &digest::SHA512,
-        "sha384" => &digest::SHA384,
-        "sha256" => &digest::SHA256,
-        _ => &digest::SHA1_FOR_LEGACY_USE_ONLY,
+        "sha512" => Alg::Sha512,
+        "sha384" => Alg::Sha384,
+        "sha256" => Alg::Sha256,
+        _ => Alg::Sha1,
     }
 }
 
@@ -80,7 +80,7 @@ pub fn from_shasum(shasum: &str) -> Result<String> {
 /// `sha512-<base64>` of some bytes.
 #[cfg(test)]
 pub fn sha512(data: &[u8]) -> String {
-    format!("sha512-{}", to_base64(digest::digest(&digest::SHA512, data).as_ref()))
+    format!("sha512-{}", to_base64(&jpm_crypto::hash::digest(Alg::Sha512, data)))
 }
 
 #[cfg(test)]
