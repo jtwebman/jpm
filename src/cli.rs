@@ -81,8 +81,8 @@ Notes
   pnpm-lock.yaml or bun.lock: the same versions, resolved again only where package.json moved.
   --frozen-lockfile reads such a file as it is and writes nothing.
 
-  prune removes unused project entries and incomplete store content, keeping anything
-  under an hour old.
+  prune removes the project's unused entries, then global entries and store content that no
+  project installed from the store uses, keeping anything under an hour old.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
 
@@ -496,7 +496,13 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
                 Some(e) => format!("{} entries ({})", e.removed, mib(e.bytes)),
                 None => "no install state, kept every entry".into(),
             };
-            Ok(format!("{swept}  {} store entries ({})", p.store.removed, mib(p.store.bytes)))
+            Ok(format!(
+                "{swept}  {} shared entries ({})  {} store entries ({})",
+                p.shared.removed,
+                mib(p.shared.bytes),
+                p.store.removed,
+                mib(p.store.bytes)
+            ))
         }
         "fetch" if from_project => fetched(cli, &commands::fetch_lockfile(o)?, true),
         "fetch" => fetched(cli, &commands::fetch_specs(&cli.specs, o)?, false),

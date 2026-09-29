@@ -6,6 +6,9 @@
 //! - `v1/pkg/<shard>/<name>/`: the files, never written after the rename that publishes them.
 //! - `v1/pkg/<shard>/<name>.idx`: the index; its presence is what makes the entry real.
 //! - `v1/tmp/`: entries being unpacked, renamed into `pkg/` once whole.
+//! - `v1/links/`: the global virtual store's entries (see `link`).
+//! - `v1/projects/`: one file per project installed from this store, holding its path.
+//! - `v1/lock`: held shared by installs and exclusively by a prune.
 //! - `metadata/`: registry documents kept between runs.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,7 +21,7 @@ use flate2::read::GzDecoder;
 
 use crate::error::{Error, Result};
 use crate::integrity::Integrity;
-use crate::util::{temp_suffix, to_base64, to_base64_url, write_atomic};
+use crate::util::{short_hash, temp_suffix, to_base64, to_base64_url, write_atomic};
 use crate::{bin, http, tar};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,12 +314,44 @@ impl Store {
 
     /// The global virtual store: package entries with their dependency links, shared by projects.
     pub fn links_dir(&self) -> PathBuf {
-        self.root.join("links")
+        links_dir_of(&self.dir)
+    }
+
+    pub fn projects_dir(&self) -> PathBuf {
+        self.root.join("projects")
+    }
+
+    /// Record `project` as installed from this store, for a prune to find what it uses. Best
+    /// effort: a project left out only risks losing shared entries its next install rebuilds.
+    pub fn register(&self, project: &Path) {
+        let path = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+        let text = path.to_string_lossy();
+        let file = self.projects_dir().join(short_hash(&text));
+        if file.exists() {
+            return;
+        }
+        let _ = fs::create_dir_all(self.projects_dir());
+        let _ = write_atomic(&file, text.as_bytes());
+    }
+
+    /// The store's lock: shared while an install uses the store, exclusive while a prune empties
+    /// it, so a prune never removes what an install is about to link. `None` when the store
+    /// cannot be written, which leaves nothing to prune either.
+    pub fn hold(&self, exclusive: bool) -> Option<fs::File> {
+        let _ = fs::create_dir_all(&self.root);
+        let file = fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.root.join("lock")).ok()?;
+        if exclusive { file.lock() } else { file.lock_shared() }.ok()?;
+        Some(file)
     }
 
     pub fn pkg_root(&self) -> PathBuf {
         self.root.join("pkg")
     }
+}
+
+/// The global virtual store under a store directory.
+pub fn links_dir_of(store_dir: &Path) -> PathBuf {
+    store_dir.join("v1").join("links")
 }
 
 /// Remove a store tree, lifting the read-only bits first where the OS needs that.

@@ -57,7 +57,7 @@ jpm install --offline                # no network: install from jpm.lock and the
 jpm lock                             # write jpm.lock without installing
 jpm resolve vue@^3                   # show which version a spec picks
 jpm fetch --lock                     # fill the store from jpm.lock, no linking
-jpm prune                            # remove unused entries
+jpm prune                            # remove entries and store content no project uses
 ```
 
 Commit `jpm.lock` with `package.json`. `jpm --help` lists every option.
@@ -141,6 +141,11 @@ The global virtual store is on by default. Turn it off with `global-store=false`
 cannot be written. Tools that expect a package's real path to sit inside the project may need
 it off.
 
+`jpm prune` removes what no project uses. Every install registers its project with the store
+(`v1/projects`), and a prune keeps the global entries and packages that registered projects
+still use. A project that is gone, or on a drive that is not mounted, is dropped from the
+register; its next install rebuilds what it needs.
+
 ## Development
 
 ```sh
@@ -162,30 +167,37 @@ Fixtures: `nitro` (62 packages), `nuxt` (591), `next` (275).
 
 | manager | nitro | nuxt | next |
 | --- | ---: | ---: | ---: |
-| **jpm** | **616 ms** | 2.86 s | 4.97 s |
-| upm 1.2 | 873 ms | 2.94 s | 4.66 s |
-| aube 2.6 | 766 ms | **2.78 s** | **4.49 s** |
-| pnpm 12.8 | 707 ms | 3.18 s | 5.60 s |
-| bun 1.4 | 985 ms | 4.44 s | 7.00 s |
-| npm 12.1 | 1.36 s | 13.6 s | 7.80 s |
+| **jpm** | **766 ms** | 3.60 s | 4.51 s |
+| upm 1.2 | 850 ms | 3.51 s | **4.50 s** |
+| aube 2.6 | 859 ms | **3.29 s** | 4.67 s |
+| pnpm 12.8 | **766 ms** | 4.04 s | 5.97 s |
+| bun 1.4 | 1.19 s | 5.11 s | 7.01 s |
+| npm 12.1 | 1.36 s | 13.7 s | 7.90 s |
+
+Cold installs are bound by the registry, and vary from run to run by more than the gaps
+here.
 
 **Warm** (cache and lockfile kept, `node_modules` deleted):
 
 | manager | nitro | nuxt | next |
 | --- | ---: | ---: | ---: |
-| **jpm** | 21 ms | 146 ms | 114 ms |
-| upm 1.2 | 66 ms | 278 ms | 123 ms |
-| aube 2.6 | **15 ms** | **111 ms** | **101 ms** |
-| pnpm 12.8 | 43 ms | 211 ms | 133 ms |
-| bun 1.4 | 31 ms | 218 ms | 114 ms |
-| npm 12.1 | 563 ms | 3.00 s | 4.24 s |
+| **jpm** | **4 ms** | **11 ms** | **6 ms** |
+| aube 2.6 | 16 ms | 104 ms | 97 ms |
+| deno 2.9 | 31 ms | 188 ms | 135 ms |
+| bun 1.4 | 31 ms | 221 ms | 112 ms |
+| pnpm 12.8 | 42 ms | 222 ms | 131 ms |
+| upm 1.2 | 64 ms | 261 ms | 122 ms |
+| npm 12.1 | 552 ms | 3.02 s | 4.14 s |
 
-**Repeat** (nothing changed): jpm 0–1 ms, bun 2–9 ms, pnpm 12 6–7 ms, upm 22–25 ms,
-npm 168–397 ms.
+With the global virtual store, a warm install only links a project's direct dependencies to
+entries already built in the store. Before the global store, jpm took 21, 146 and 114 ms.
 
-jpm uses the least memory in most runs, for example 10.5 MB for a warm `nuxt` against 60 MB
-for pnpm 12 and 128 MB for upm, and the least CPU on cold installs. Its binary is 2.4 MB;
-bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
+**Repeat** (nothing changed): jpm 0 ms, bun 2–9 ms, aube 3–24 ms, pnpm 12 6–7 ms,
+deno 6–16 ms, upm 22–23 ms, npm 166–391 ms.
+
+jpm uses the least memory in all but one phase (bun's cold `next`): 7.5 MB for a warm `nuxt` against 58 MB for pnpm 12,
+80 MB for aube and 120 MB for upm, and 151 MB for a cold `nuxt` against 421 MB for aube and
+557 MB for upm. Its binary is 2.4 MB; bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
 
 Charts: [cold](bench/charts/cold.svg), [warm](bench/charts/warm.svg),
 [repeat](bench/charts/repeat.svg), [memory](bench/charts/cold.memory.svg),
