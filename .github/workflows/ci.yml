@@ -20,6 +20,16 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The full history on Linux, for the commit-message check below.
+          fetch-depth: ${{ matrix.os == 'ubuntu-latest' && 0 || 1 }}
+      # Commits carry no AI co-author trailers.
+      - if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: |
+          range=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          if git log --format=%B "$range" | grep -Eiq '^co-authored-by:.*(claude|anthropic)'; then
+            echo "a commit in this PR has a Co-Authored-By trailer for Claude; remove it"; exit 1
+          fi
       # Installs the version rust-toolchain.toml pins.
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
