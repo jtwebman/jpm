@@ -576,7 +576,12 @@ fn read_pnpm(text: &str) -> Result<Source> {
     for (group, specs) in GROUPS.iter().zip(&mut groups) {
         let Some(map) = top.and_then(|t| t.get(group)).and_then(Value::as_object) else { continue };
         for (name, dep) in map {
-            specs.insert(name.clone(), dep.get("specifier").map(string_of).unwrap_or_default());
+            let specifier = dep.get("specifier").map(string_of).unwrap_or_default();
+            // `catalog:` is recorded as written; `catalogs` holds the range it stood for.
+            let listed =
+                |c: &str| doc.get("catalogs")?.get(catalog_name(c))?.get(name)?.get("specifier").map(string_of);
+            let specifier = specifier.strip_prefix("catalog:").and_then(listed).unwrap_or(specifier);
+            specs.insert(name.clone(), specifier);
             let r = dep.get("version").map(string_of).unwrap_or_default();
             versions.insert(name.clone(), pnpm_edge(&mut aliases, name, &r)?);
         }
@@ -621,6 +626,14 @@ fn pnpm_target<'a>(dep: &'a str, r: &'a str) -> Option<(&'a str, &'a str)> {
     match bare.rfind('@') {
         Some(at) if at > 0 => Some((&bare[..at], &bare[at + 1..])),
         _ => Some((dep, bare)),
+    }
+}
+
+/// The catalog `catalog:<name>` names; a bare `catalog:` is the default one.
+fn catalog_name(after: &str) -> &str {
+    match after.trim() {
+        "" => "default",
+        name => name,
     }
 }
 
@@ -670,11 +683,21 @@ fn read_bun(text: &str) -> Result<Source> {
         declared.optional_peers = list(t.meta.get("optionalPeers")).into_iter().collect();
         nodes.push(with_edges(node, &declared, &|dep| bun_find(&tree, from, dep)));
     }
-    let (specs, root) =
-        root_of(groups_of(workspaces.and_then(|w| w.get(""))), &|name| match bun_find(&tree, 0, name) {
-            Target::Version(v) => Some(v),
-            _ => None,
+    let mut groups = groups_of(workspaces.and_then(|w| w.get("")));
+    // bun records `catalog:` as written, and the catalogs beside it.
+    for (name, range) in groups.iter_mut().flat_map(|g| g.iter_mut()) {
+        let listed = range.strip_prefix("catalog:").and_then(|c| match catalog_name(c) {
+            "default" => doc.get("catalog")?.get(name),
+            c => doc.get("catalogs")?.get(c)?.get(name),
         });
+        if let Some(r) = listed.and_then(Value::as_str) {
+            *range = r.to_string();
+        }
+    }
+    let (specs, root) = root_of(groups, &|name| match bun_find(&tree, 0, name) {
+        Target::Version(v) => Some(v),
+        _ => None,
+    });
     let overrides = doc.get("overrides").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Object(Map::new()));
     Ok(Source { nodes, specs, root, overrides: Some(overrides) })
 }
@@ -990,8 +1013,9 @@ fn truthy(v: Option<&Value>) -> bool {
 
 // --- the YAML pnpm writes ---------------------------------------------------------------
 // Block maps, block lists, flow `{}` and `[]`, quoted and plain scalars. Nothing else appears in
-// a lockfile; a hand-written `pnpm-workspace.yaml` or `.yarnrc.yml` adds comments and lists
-// indented no deeper than their key.
+// a lockfile; a hand-written `pnpm-workspace.yaml` or `.yarnrc.yml` adds comments, lists
+// indented no deeper than their key, lists of maps (`- path: …`) and `|` or `>` text. A line
+// the reader cannot place is an error, never dropped.
 
 /// Deeper than any lockfile nests; past it the file is hostile, not pnpm's.
 const MAX_DEPTH: usize = 64;
@@ -1002,12 +1026,21 @@ pub fn read_yaml(text: &str) -> Result<Value> {
 }
 
 fn yaml(text: &str) -> Result<Value> {
-    let lines: Vec<&str> = text.split('\n').map(strip_comment).filter(|l| !l.trim().is_empty()).collect();
-    let indent = lines.first().map_or(0, |l| indent_of(l));
+    let lines: Vec<(usize, &str)> = text
+        .split('\n')
+        .map(strip_comment)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| (indent_of(l), l.trim()))
+        .collect();
+    let indent = lines.first().map_or(0, |l| l.0);
     // Written out as JSON for its parser, which indexes a big map's keys: inserting them one by
     // one would scan the map for each, and pnpm's `packages` can hold a hundred thousand.
     let mut out = String::new();
-    Yaml { lines, i: 0 }.block(indent, 0, &mut out)?;
+    let mut y = Yaml { lines, i: 0 };
+    y.block(indent, 0, &mut out)?;
+    if let Some((_, line)) = y.lines.get(y.i) {
+        return Err(fail(format!("YAML cannot be read: `{line}` is indented where nothing can start")));
+    }
     json::parse(&out).map_err(|e| fail(format!("pnpm-lock.yaml cannot be read: {}", e.message)))
 }
 
@@ -1036,7 +1069,8 @@ fn strip_comment(line: &str) -> &str {
 }
 
 struct Yaml<'a> {
-    lines: Vec<&'a str>,
+    /// Each line's indent and its text, trimmed.
+    lines: Vec<(usize, &'a str)>,
     i: usize,
 }
 
@@ -1045,36 +1079,44 @@ impl Yaml<'_> {
         if depth > MAX_DEPTH {
             return Err(too_deep());
         }
-        let item = |l: &&str| l.trim().starts_with("- ");
-        let list = self.lines.get(self.i).is_some_and(item);
+        let item = |l: &str| l.starts_with("- ");
+        let list = self.lines.get(self.i).is_some_and(|l| item(l.1));
         out.push(if list { '[' } else { '{' });
         let mut first = true;
-        while let Some(line) = self.lines.get(self.i).copied().filter(|l| indent_of(l) == indent) {
-            if list && !item(&line) {
+        while let Some(&(at, line)) = self.lines.get(self.i).filter(|l| l.0 == indent) {
+            if list && !item(line) {
                 break;
             }
-            self.i += 1;
             if !std::mem::take(&mut first) {
                 out.push(',');
             }
-            let line = line.trim();
             if list {
-                scalar(&line[2..], depth + 1, out)?;
+                let body = line[1..].trim_start();
+                if item(body) || is_pair(body) {
+                    // `- key: value` starts a map, `- - x` a list, at the column its text is in.
+                    let col = at + line.len() - body.len();
+                    self.lines[self.i] = (col, body);
+                    self.block(col, depth + 1, out)?;
+                } else {
+                    self.i += 1;
+                    scalar(body, depth + 1, out)?;
+                }
                 continue;
             }
+            self.i += 1;
             let colon = key_end(line);
             json::quote(out, &unquote(&line[..colon]));
             out.push(':');
             let rest = line.get(colon + 1..).unwrap_or_default().trim();
-            if !rest.is_empty() {
+            if let Some(fold) = block_text(rest) {
+                self.text(indent, fold, out);
+            } else if !rest.is_empty() {
                 scalar(rest, depth + 1, out)?;
             } else {
                 match self.lines.get(self.i) {
-                    Some(next) if indent_of(next) > indent => self.block(indent_of(next), depth + 1, out)?,
+                    Some(&(next, _)) if next > indent => self.block(next, depth + 1, out)?,
                     // `key:` then `- item` at the key's own indent: still the key's list.
-                    Some(next) if indent_of(next) == indent && next.trim_start().starts_with("- ") => {
-                        self.block(indent, depth + 1, out)?
-                    }
+                    Some(&(next, l)) if next == indent && item(l) => self.block(indent, depth + 1, out)?,
                     _ => out.push_str("{}"),
                 }
             }
@@ -1082,6 +1124,45 @@ impl Yaml<'_> {
         out.push(if list { ']' } else { '}' });
         Ok(())
     }
+}
+
+impl Yaml<'_> {
+    /// The lines of a `|` or `>` block under a key at `indent`, as one string.
+    // ponytail: blank lines, `#` lines and relative indents inside the block are lost; no file
+    // jpm reads keeps anything it uses in one. Keep raw lines if that changes.
+    fn text(&mut self, indent: usize, fold: bool, out: &mut String) {
+        let mut text = String::new();
+        while let Some(&(_, line)) = self.lines.get(self.i).filter(|l| l.0 > indent) {
+            if !text.is_empty() {
+                text.push(if fold { ' ' } else { '\n' });
+            }
+            text.push_str(line);
+            self.i += 1;
+        }
+        json::quote(out, &text);
+    }
+}
+
+/// `|` or `>` with its indicators starts block text: whether it folds lines into one.
+fn block_text(rest: &str) -> Option<bool> {
+    let fold = match rest.as_bytes().first()? {
+        b'|' => false,
+        b'>' => true,
+        _ => return None,
+    };
+    rest[1..].bytes().all(|c| c == b'-' || c == b'+' || c.is_ascii_digit()).then_some(fold)
+}
+
+/// `key: value` or `key:`, not a scalar that holds a colon (`'a: b'`, `npm:x@1`, a URL).
+fn is_pair(text: &str) -> bool {
+    if text.starts_with(['{', '[']) {
+        return false;
+    }
+    let colon = key_end(text);
+    let key = &text[..colon];
+    let quoted = key.starts_with(['"', '\'']);
+    (!quoted || (key.len() >= 2 && key.ends_with(&key[..1])))
+        && (text[colon..] == *":" || text[colon..].starts_with(": "))
 }
 
 fn too_deep() -> Error {
@@ -1666,6 +1747,74 @@ snapshots:
         // npm's and yarn's rules are not pnpm's to record.
         m.overrides = vec![rule, crate::rules::Override::parse("npm", "c", "1.0.0").unwrap()];
         assert!(load("pnpm-lock.yaml", text, &m, false, &npmjs).is_ok());
+    }
+
+    #[test]
+    fn reads_catalog_ranges_from_pnpm_and_bun_locks() {
+        let pnpm = |a: &str| {
+            format!(
+                "lockfileVersion: '9.0'
+catalogs:
+  default:
+    a: {{specifier: '{a}', version: 1.0.0}}
+  x:
+    b: {{specifier: ^2, version: 2.0.0}}
+importers:
+  .:
+    dependencies:
+      a: {{specifier: 'catalog:', version: 1.0.0}}
+      b: {{specifier: 'catalog:x', version: 2.0.0}}
+packages:
+  a@1.0.0: {{resolution: {{integrity: sha512-a}}}}
+  b@2.0.0: {{resolution: {{integrity: sha512-b}}}}
+snapshots:
+  a@1.0.0: {{}}
+  b@2.0.0: {{}}
+"
+            )
+        };
+        let bun = |a: &str| {
+            json!({
+                "lockfileVersion": 1,
+                "workspaces": { "": { "dependencies": { "a": "catalog:", "b": "catalog:x" } } },
+                "catalog": { "a": a },
+                "catalogs": { "x": { "b": "^2" } },
+                "packages": { "a": ["a@1.0.0", "", {}, "sha512-a"], "b": ["b@2.0.0", "", {}, "sha512-b"] },
+            })
+            .to_string()
+        };
+        // package.json's ranges as the project reads them: catalogs already applied.
+        let doc = json!({ "dependencies": { "a": "^1", "b": "^2" } });
+        let want = Deps::from([("a".into(), "1.0.0".into()), ("b".into(), "2.0.0".into())]);
+        assert_eq!(read("pnpm-lock.yaml", &pnpm("^1"), doc.clone()).unwrap().lock.root.dependencies, want);
+        assert_eq!(read("bun.lock", &bun("^1"), doc.clone()).unwrap().lock.root.dependencies, want);
+        // The catalog has moved since the file was written.
+        assert!(err("pnpm-lock.yaml", &pnpm("^1.5"), doc.clone()).contains("out of date"));
+        assert!(err("bun.lock", &bun("^1.5"), doc).contains("out of date"));
+    }
+
+    #[test]
+    fn reads_lists_of_maps_and_block_text() {
+        // .yarnrc.yml as yarn writes it: plugins before the catalog.
+        let doc = read_yaml(
+            "nodeLinker: node-modules\nplugins:\n  - path: .yarn/plugins/a.cjs\n    spec: \"a\"\n  - - nested\n  - plain\nnote: |\n  one\n  two\nfold: >-\n  a\n  b\ncatalog:\n  a: ^1\n",
+        )
+        .unwrap();
+        let expect = json!({
+            "nodeLinker": "node-modules",
+            "plugins": [{ "path": ".yarn/plugins/a.cjs", "spec": "a" }, ["nested"], "plain"],
+            "note": "one\ntwo",
+            "fold": "a b",
+            "catalog": { "a": "^1" },
+        });
+        assert_eq!(serde_json::from_str::<Value>(&crate::json::to_string(&doc)).unwrap(), expect);
+        // A scalar with a colon in it is no map.
+        let doc = read_yaml("l:\n- 'a: b'\n- npm:x@1\n- https://x\n").unwrap();
+        assert_eq!(doc.get("l").and_then(crate::json::Value::as_array).map(Vec::len), Some(3));
+        // A line with no place is an error, not the end of the file.
+        for bad in ["a:\n  b: 1\n    c: 2\nd: 3\n", "a: 1\n  b: 2\n", "- x\n    y: 1\n"] {
+            assert!(read_yaml(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
