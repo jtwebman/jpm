@@ -172,6 +172,12 @@ struct Linker<'a> {
 pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let tops = tops_of(opts.dir, res);
     let entries_dir = opts.dir.join("node_modules").join(".jpm");
+    // A cloned repo can hold `node_modules` or `.jpm` as a symlink to anywhere: entries would be
+    // built there, and stale ones swept away.
+    let real_root =
+        fs::canonicalize(opts.dir).map_err(|e| Error::io(&e, format!("cannot read {}", opts.dir.display())))?;
+    inside(&opts.dir.join("node_modules"), &real_root)?;
+    inside(&entries_dir, &real_root)?;
     let previous = state::read(opts.dir);
     let state_of = |entries: Vec<String>, shared: Vec<String>, complete: bool, root: RootLinks| {
         let single = tops.len() == 1;
@@ -212,6 +218,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             continue;
         }
         let Some(key) = keys.get(id) else { continue };
+        // One directory name under `.jpm` or the store's `links`, whoever computed it.
+        if key.is_empty() || key.starts_with('.') || key.contains(['/', '\\', '\0', ':']) {
+            return Err(fail(format!("{id} has an unsafe store key {key:?}")));
+        }
         if !opts.store.has(&pkg.integrity) {
             if !pkg.optional {
                 return Err(fail(format!("{id} is not in the store at {}", opts.store.dir.display())));
@@ -282,8 +292,6 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
         return Err(e);
     }
-    let real_root =
-        fs::canonicalize(opts.dir).map_err(|e| Error::io(&e, format!("cannot read {}", opts.dir.display())))?;
     for (i, top) in tops.iter().enumerate() {
         if let Some(parent) = top.nm.parent() {
             inside(parent, &real_root)?;

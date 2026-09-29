@@ -917,6 +917,13 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
     for (key, e) in &lock.packages {
         let at = format!("packages[{key:?}]");
         let source = check_key(key)?;
+        // It becomes part of a directory name, so it is exactly what `short_hash` writes.
+        if e.subgraph
+            .as_ref()
+            .is_some_and(|g| g.len() != 22 || !g.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        {
+            return Err(fail(format!("{at}.subgraph is not a digest")));
+        }
         if e.integrity.is_empty() {
             return Err(fail(format!("{at}.integrity must be a non-empty string")));
         }
@@ -959,6 +966,7 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         check_top(ws.specs.as_ref(), &edges, &at, &ws.peer_dependencies)?;
     }
     for (name, version) in &lock.root.dependencies {
+        spec::check_name(name, name).map_err(|_| fail(format!("root.dependencies[{name:?}] is not a package name")))?;
         if !known.contains(&format!("{name}@{version}")) {
             let place = if version.starts_with("link:") { "workspaces" } else { "packages" };
             return Err(fail(format!(
@@ -994,6 +1002,8 @@ fn check_edges(
     }
     for (field, map) in ["dependencies", "optionalDependencies"].iter().zip(maps) {
         for (name, version) in map {
+            // Each name becomes a link in node_modules: a `/` past a scope or a `..` would climb out.
+            spec::check_name(name, name).map_err(|_| fail(format!("{at}.{field}[{name:?}] is not a package name")))?;
             if !known(&format!("{name}@{version}")) {
                 let place = if version.starts_with("link:") { "workspaces" } else { "packages" };
                 return Err(fail(format!(
@@ -1117,6 +1127,23 @@ mod tests {
         let e = lock.packages.remove("b@1.0.0").unwrap();
         lock.packages.insert("../b@1.0.0".into(), e);
         assert!(validate(&lock).is_err());
+        // A subgraph becomes part of a directory name: a traversal in one is refused, even
+        // under a hash that matches.
+        let mut lock = sample();
+        lock.packages.get_mut("b@1.0.0").unwrap().subgraph = Some("a/../../../../../escaped".into());
+        assert!(validate(&lock).unwrap_err().message.contains("subgraph"));
+        let body = text_body(&lock);
+        let text = format!("{HEADER}jpm-lock {TEXT_VERSION}\nhash {}\n{body}", content_digest(&body));
+        assert!(parse_lockfile(&text, LOCKFILE).unwrap_err().message.contains("subgraph"));
+        // A dependency name becomes a link in node_modules: a path in one is refused.
+        for name in ["../x", "a/b/c", "@s/../../x", "a@https://h/../../x"] {
+            let mut lock = sample();
+            lock.packages.get_mut("a@1.0.0").unwrap().dependencies.insert(name.into(), "1.0.0".into());
+            assert!(validate(&lock).unwrap_err().message.contains("not a package name"), "{name}");
+            let mut lock = sample();
+            lock.root.dependencies.insert(name.into(), "1.0.0".into());
+            assert!(validate(&lock).is_err(), "{name}");
+        }
         assert!(
             parse_lockfile(r#"{"lockfileVersion":2,"root":{"dependencies":{}},"packages":{}}"#, "x")
                 .unwrap_err()

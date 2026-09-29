@@ -54,11 +54,16 @@ fn freed(path: &Path) -> u64 {
 
 /// Drop `<dir>/node_modules/.jpm` entries the last install did not want.
 pub fn sweep_entries(dir: &Path, keep: &HashSet<String>) -> Swept {
-    let entries = dir.join("node_modules").join(".jpm");
+    let nm = dir.join("node_modules");
+    let entries = nm.join(".jpm");
     let mut out = Swept::default();
+    // Never through a symlink: a cloned repo could point either one at a directory to empty.
+    if [&nm, &entries].iter().any(|p| fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())) {
+        return out;
+    }
     for e in fs::read_dir(&entries).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_dir()) {
+        if !entry_name(&name) || keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
         out.bytes += freed(&e.path());
@@ -66,6 +71,17 @@ pub fn sweep_entries(dir: &Path, keep: &HashSet<String>) -> Swept {
         out.removed += 1;
     }
     out
+}
+
+/// `<name>@<version>-<22-character digest>`: only what jpm itself names an entry.
+fn entry_name(name: &str) -> bool {
+    let Some((head, digest)) = name.len().checked_sub(22).and_then(|at| name.split_at_checked(at)) else {
+        return false;
+    };
+    head.len() > 2
+        && head.ends_with('-')
+        && head[1..].contains('@')
+        && digest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// What the registered projects use: global entry names, and the store directories of the
@@ -175,12 +191,14 @@ mod tests {
     fn sweeps_unwanted_entries() {
         let dir = crate::store::tests::scratch("gc2");
         let entries = dir.join("node_modules").join(".jpm");
-        for name in ["a@1.0.0-x", "b@1.0.0-y", ".tmp-1"] {
+        let (a, b) = ("a@1.0.0-aaaaaaaaaaaaaaaaaaaaaa", "b@1.0.0-bbbbbbbbbbbbbbbbbbbbbb");
+        for name in [a, b, ".tmp-1", "not-an-entry"] {
             fs::create_dir_all(entries.join(name)).unwrap();
         }
-        let keep: HashSet<String> = ["a@1.0.0-x".to_string()].into();
+        let keep: HashSet<String> = [a.to_string()].into();
         assert_eq!(sweep_entries(&dir, &keep).removed, 1);
-        assert!(entries.join("a@1.0.0-x").exists() && entries.join(".tmp-1").exists());
+        assert!(entries.join(a).exists() && entries.join(".tmp-1").exists() && entries.join("not-an-entry").exists());
+        assert!(!entries.join(b).exists());
         remove_tree(&dir);
     }
 }
