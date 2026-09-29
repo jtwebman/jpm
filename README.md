@@ -393,18 +393,14 @@ jpm uses the least memory in all but one phase (bun's cold `next`): 7.5 MB for a
 80 MB for aube and 120 MB for upm, and 151 MB for a cold `nuxt` against 421 MB for aube and
 557 MB for upm. Its binary is 1.6 MB; bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
 
-Charts: [cold](bench/charts/cold.svg), [warm](bench/charts/warm.svg),
-[repeat](bench/charts/repeat.svg), [memory](bench/charts/cold.memory.svg),
-[size](bench/charts/size.svg).
-
-`bench/` holds the harness from upm with a `jpm` runner added. To run it:
+These were measured with the earlier harness, taken from upm, on 2026-09-28. To run the
+benchmarks (see [bench/README.md](bench/README.md)):
 
 ```sh
-jpm install --dir bench          # the harness's own tools
-bench/bench.sh -r jpm,upm,npm,pnpm12,bun -f nuxt
+bench/bench.sh -r jpm,npm,pnpm,bun -f nuxt
 ```
 
 ## License
 
 MIT, Copyright (c) 2026 JT Turner. jpm started as a port of upm, Copyright (c) Pooya Parsa,
-also MIT; `bench/` is upm's benchmark harness. See [LICENSE](LICENSE).
+also MIT. See [LICENSE](LICENSE).

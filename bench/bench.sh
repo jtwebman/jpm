@@ -1,335 +1,297 @@
-#!/usr/bin/env bash
-# bench.sh — cold / warm / repeat install benchmark across package managers.
-#
-#   ./bench.sh                          # everything, default iteration counts
-#   ./bench.sh -r jpm,bun -f nitro  # a subset
-#   ./bench.sh --cold 3 --warm 5        # more samples
-#
-# Results go to results/<stamp>.jsonl, one JSON object per timed run, and the charts beside
-# them, one per phase: <stamp>.<phase>.svg, .<phase>.memory.svg and .<phase>.cpu.svg,
-# plus <stamp>.size.svg for each manager's size on disk.
-# A full suite also refreshes the committed charts/<phase>.svg, charts/size.svg and the like.
-# Tables: node report.ts results/<stamp>.jsonl
-set -euo pipefail
+#!/bin/sh
+# Benchmark jpm against other package managers. See bench/README.md.
+set -u
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$HERE/runners.sh"
-
-ALL_FIXTURES="nitro nuxt next"
-
-RUNNERS="$ALL_RUNNERS"
-FIXTURES="$ALL_FIXTURES"
-COLD_RUNS=3
-WARM_RUNS=3
-REPEAT_RUNS=3
+BENCH=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$BENCH")
+ALL="jpm npm pnpm bun yarn deno aube upm"
+RUNNERS=$ALL
+FIXTURES="nitro nuxt next"
+PHASES="cold warm repeat"
+SAMPLES=3
+MIN_FREE=3
 KEEP=0
-CHART=1
 DRY=0
-MIN_FREE_MB=3072
-# Outside the repo: aube and nub install into the nearest directory above with `workspaces` or
-# a pnpm-workspace.yaml, member or not, and this repo has both. `check_work` holds any override
-# to the same rule.
-WORK="${BENCH_WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/jpm-bench}"
-OUT=""
-
-die() { echo "bench: $*" >&2; exit 1; }
+BINS=""
+W=${BENCH_WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/jpm-bench}
 
 usage() {
-  sed -n '2,11p' "$HERE/bench.sh" | sed 's/^# \?//'
-  cat <<EOF
+	cat <<EOF
+usage: bench/bench.sh [options]
+       bench/bench.sh --report results/<stamp>.tsv
 
-Options
-  -r, --runners <list>   comma separated (default: all)
-                         available: $ALL_RUNNERS
-  -f, --fixtures <list>  comma separated (default: all)
-                         available: $ALL_FIXTURES
-      --cold <n>         cold iterations per pair (default $COLD_RUNS)
-      --warm <n>         warm iterations per pair (default $WARM_RUNS)
-      --repeat <n>       repeat/no-op iterations per pair (default $REPEAT_RUNS)
-      --keep             do not delete each pair's project + cache when done
-      --min-free <mb>    abort if free disk drops below this (default $MIN_FREE_MB)
-  -o, --out <file>       results file (default results/<stamp>.jsonl)
-      --no-chart         skip rendering the SVG at the end
-      --dry-run          print the plan and exit
-  -h, --help             this
+  -r, --runners a,b     package managers (default: those found of $ALL)
+  -f, --fixtures a,b    fixtures from bench/fixtures (default: nitro,nuxt,next)
+  -n, --samples N       runs per phase (default: 3)
+      --phases a,b      cold, warm, repeat (default: all three)
+      --bin name=path   use this binary for a runner (repeatable)
+      --min-free GB     stop when the work dir has less free space (default: 3)
+      --keep            keep the projects and caches afterwards
+      --dry-run         print what would run
+      --report FILE     print the tables for a results file
+  -h, --help            this text
+
+Work dir: \$BENCH_WORK (now $W).
 EOF
 }
 
+die() { echo "bench: $*" >&2; exit 1; }
+list() { echo "$1" | tr ',' ' '; }
+
+# Markdown tables of medians from a results file.
+report() {
+	awk -F '\t' '
+	function ftime(ms) {
+		if (ms < 1000) return sprintf("%d ms", ms)
+		if (ms < 10000) return sprintf("%.2f s", ms / 1000)
+		if (ms < 100000) return sprintf("%.1f s", ms / 1000)
+		return sprintf("%.0f s", ms / 1000)
+	}
+	function fmem(kb) { return kb < 10240 ? sprintf("%.1f MB", kb / 1024) : sprintf("%.0f MB", kb / 1024) }
+	function median(k, col,   n, i, j, a, t) {
+		n = cnt[k]
+		for (i = 1; i <= n; i++) a[i] = v[k, i, col] + 0
+		for (i = 2; i <= n; i++) for (j = i; j > 1 && a[j - 1] > a[j]; j--) { t = a[j]; a[j] = a[j - 1]; a[j - 1] = t }
+		return n % 2 ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2
+	}
+	function row(r) { return "| " r (ver[r] == "" ? "" : " " ver[r]) " |" }
+	# One table: runners down, the given columns across, lowest median in bold.
+	function table(nc, col,   i, r, k, best, m, line) {
+		line = "| manager |"; for (i = 1; i <= nc; i++) line = line " " C[i] " |"; print line
+		line = "| --- |"; for (i = 1; i <= nc; i++) line = line " ---: |"; print line
+		for (i = 1; i <= nc; i++) {
+			best[i] = -1
+			for (r = 1; r <= nr; r++) if (cnt[k = R[r] SUBSEP K[i]]) {
+				med[k] = median(k, col)
+				if (best[i] < 0 || med[k] < best[i]) best[i] = med[k]
+			}
+		}
+		for (r = 1; r <= nr; r++) {
+			line = row(R[r])
+			for (i = 1; i <= nc; i++) {
+				k = R[r] SUBSEP K[i]
+				if (!cnt[k]) m = fail[k] ? "failed" : "-"
+				else m = col == 1 ? ftime(med[k]) : fmem(med[k])
+				if (cnt[k] && med[k] == best[i]) m = "**" m "**"
+				line = line " " m " |"
+			}
+			print line
+		}
+		print ""
+	}
+	NR == 1 { next }
+	{
+		if (!($1 in sr)) { sr[$1]; R[++nr] = $1; ver[$1] = $2 }
+		if (!($3 in sf)) { sf[$3]; F[++nf] = $3 }
+		if (!($4 in sp)) { sp[$4]; P[++np] = $4 }
+		runs++
+		k = $1 SUBSEP $3 SUBSEP $4
+		if ($6 != 0) { fail[k]++; nfail++; next }
+		n = ++cnt[k]; v[k, n, 1] = $7; v[k, n, 2] = $9
+	}
+	END {
+		d["cold"] = "no cache, no lockfile"
+		d["warm"] = "cache and lockfile kept, `node_modules` deleted"
+		d["repeat"] = "nothing changed"
+		for (p = 1; p <= np; p++) {
+			print "**" toupper(substr(P[p], 1, 1)) substr(P[p], 2) "** (" d[P[p]] "):\n"
+			for (f = 1; f <= nf; f++) { C[f] = F[f]; K[f] = F[f] SUBSEP P[p] }
+			table(nf, 1)
+		}
+		print "**Peak memory** (max RSS):\n"
+		nc = 0
+		for (f = 1; f <= nf; f++) for (p = 1; p <= np; p++) { C[++nc] = F[f] " " P[p]; K[nc] = F[f] SUBSEP P[p] }
+		table(nc, 2)
+		printf "%d runs, %d failed.\n", runs, nfail
+		for (k in fail) { split(k, a, SUBSEP); printf "  failed: %s %s %s (%d)\n", a[1], a[2], a[3], fail[k] }
+	}' "$1"
+}
+
 while [ $# -gt 0 ]; do
-  case "$1" in
-    -r|--runners)  RUNNERS="${2//,/ }"; shift 2 ;;
-    -f|--fixtures) FIXTURES="${2//,/ }"; shift 2 ;;
-    --cold)        COLD_RUNS="$2"; shift 2 ;;
-    --warm)        WARM_RUNS="$2"; shift 2 ;;
-    --repeat)      REPEAT_RUNS="$2"; shift 2 ;;
-    --keep)        KEEP=1; shift ;;
-    --no-chart)    CHART=0; shift ;;
-    --min-free)    MIN_FREE_MB="$2"; shift 2 ;;
-    -o|--out)      OUT="$2"; shift 2 ;;
-    --dry-run)     DRY=1; shift ;;
-    -h|--help)     usage; exit 0 ;;
-    *)             die "unknown option: $1 (try --help)" ;;
-  esac
+	case $1 in
+	-r | --runners) RUNNERS=$(list "${2:?}"); shift ;;
+	-f | --fixtures) FIXTURES=$(list "${2:?}"); shift ;;
+	-n | --samples) SAMPLES=${2:?}; shift ;;
+	--phases) PHASES=$(list "${2:?}"); shift ;;
+	--bin) BINS="$BINS ${2:?}"; shift ;;
+	--min-free) MIN_FREE=${2:?}; shift ;;
+	--keep) KEEP=1 ;;
+	--dry-run) DRY=1 ;;
+	--report) report "${2:?}"; exit ;;
+	-h | --help) usage; exit ;;
+	*) usage >&2; exit 2 ;;
+	esac
+	shift
 done
 
+case $SAMPLES$MIN_FREE in *[!0-9]*) die "-n and --min-free take whole numbers" ;; esac
+case $W in /*[!/]*) ;; *) die "BENCH_WORK must be an absolute path below /: $W" ;; esac
+case $W in *[[:space:]]*) die "BENCH_WORK must not contain spaces: $W" ;; esac
+for p in $PHASES; do case $p in cold | warm | repeat) ;; *) die "unknown phase: $p" ;; esac; done
+for f in $FIXTURES; do case $f in */* | .*) die "bad fixture name: $f" ;; esac; [ -f "$BENCH/fixtures/$f/package.json" ] || die "no fixture: $f"; done
+/usr/bin/time -f %M true >/dev/null 2>&1 ||
+	die "needs GNU time at /usr/bin/time (Debian/Ubuntu: apt install time)"
+case $(date +%N) in *N*) die "needs GNU date (date +%N)" ;; esac
+
+# The explicit --bin for a runner, if any.
+given() { for b in $BINS; do case $b in "$1"=*) echo "${b#*=}"; return ;; esac; done; }
+
+# Arguments for an install.
+args() {
+	case $1 in
+	jpm | aube | upm | bun) echo "install --ignore-scripts" ;;
+	npm) echo "install --ignore-scripts --no-audit --no-fund" ;;
+	pnpm) echo "install --ignore-scripts --no-frozen-lockfile" ;;
+	yarn) echo "install" ;;
+	deno) echo "install" ;;
+	esac
+}
+
+# Environment for runner $1 with home $2: HOME and the XDG dirs point into the
+# runner's own dir, so every cache and store lands there; the rest names each
+# cache explicitly and turns scripts, telemetry and update checks off.
+envs() {
+	h=$2
+	echo "HOME=$h XDG_CACHE_HOME=$h/.cache XDG_CONFIG_HOME=$h/.config XDG_DATA_HOME=$h/.local/share"
+	echo "XDG_STATE_HOME=$h/.local/state COREPACK_HOME=$W/corepack DO_NOT_TRACK=1"
+	echo "npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false"
+	case $1 in
+	jpm) echo "JPM_STORE=$h/store" ;;
+	npm) echo "npm_config_cache=$h/npm-cache" ;;
+	pnpm) echo "npm_config_store_dir=$h/pnpm-store npm_config_cache_dir=$h/pnpm-cache" \
+		"pnpm_config_store_dir=$h/pnpm-store pnpm_config_cache_dir=$h/pnpm-cache" ;;
+	bun) echo "BUN_INSTALL_CACHE_DIR=$h/bun-cache" ;;
+	yarn) echo "YARN_GLOBAL_FOLDER=$h/yarn YARN_ENABLE_SCRIPTS=false YARN_ENABLE_TELEMETRY=0" \
+		"YARN_NODE_LINKER=node-modules YARN_ENABLE_IMMUTABLE_INSTALLS=false" ;;
+	deno) echo "DENO_DIR=$h/deno DENO_NO_UPDATE_CHECK=1" ;;
+	esac
+}
+
+# Runs a command under GNU time; sets ST, WALL (ms), CPU (ms) and RSS (KB).
+# OVER, the cost of the wrapper itself in µs, is taken off the wall time.
+OVER=0
+timed() {
+	log=$1; shift
+	t0=$(date +%s%N)
+	/usr/bin/time -f '%U %S %M' -o "$W/time" "$@" >"$log" 2>&1
+	ST=$?
+	t1=$(date +%s%N)
+	us=$(( (t1 - t0) / 1000 - OVER ))
+	[ "$us" -gt 0 ] || us=0
+	WALL=$(( (us + 500) / 1000 ))
+	# shellcheck disable=SC2046
+	set -- $(tail -n 1 "$W/time" 2>/dev/null) 0 0 0
+	CPU=$(awk -v u="$1" -v s="$2" 'BEGIN { printf "%d", (u + s) * 1000 + 0.5 }')
+	RSS=$3
+}
+
+[ $DRY = 1 ] || mkdir -p "$W/logs" "$BENCH/results" || exit 1
+
+# Find each runner, print its version once (a first-run download is not timed).
+FOUND=""
 for r in $RUNNERS; do
-  case " $ALL_RUNNERS " in *" $r "*) ;; *) die "unknown runner: $r" ;; esac
+	case " $ALL " in *" $r "*) ;; *) die "unknown runner: $r (known: $ALL)" ;; esac
+	bin=$(given "$r")
+	if [ -z "$bin" ] && [ "$r" = jpm ]; then
+		bin=${CARGO_TARGET_DIR:-$ROOT/target}/release/jpm
+		[ $DRY = 1 ] || cargo build --release --manifest-path "$ROOT/Cargo.toml" || die "cargo build failed"
+	fi
+	case $bin in /*) ;; */*) bin=$PWD/$bin ;; *) bin=$(command -v "${bin:-$r}") || { echo "skip $r: not found"; continue; } ;; esac
+	[ $DRY = 1 ] || [ -x "$bin" ] || { echo "skip $r: $bin is not executable"; continue; }
+	eval "BIN_$r=\$bin"
+	ver="?"
+	if [ $DRY = 0 ]; then
+		mkdir -p "$W/r/$r/vhome"
+		# shellcheck disable=SC2046
+		ver=$(env $(envs "$r" "$W/r/$r/vhome") "$bin" --version 2>&1 | head -n 1 |
+			sed -n 's/^[^0-9]*\([0-9][0-9.]*[0-9]\).*/\1/p')
+		[ -n "$ver" ] || { echo "skip $r: $bin --version failed"; continue; }
+		case $r$ver in yarn1.*) echo "skip yarn: $ver is yarn classic, not berry"; continue ;; esac
+	fi
+	eval "VER_$r=\$ver"
+	echo "$r $ver: $bin"
+	FOUND="$FOUND $r"
 done
+[ -n "$FOUND" ] || die "no runners"
+
+# Stops cleanly when the work dir's disk runs low.
+check_disk() {
+	free=$(df -Pk "$W" | awk 'NR == 2 { print $4 }')
+	[ "$free" -ge $((MIN_FREE * 1024 * 1024)) ] && return
+	echo "bench: stopping, less than $MIN_FREE GB free under $W" >&2
+	STOP=1
+}
+
+# Deletes a dir under the work dir; stores keep their files read-only.
+wipe() {
+	case $1 in "$W"/?*) ;; *) die "refusing to delete $1" ;; esac
+	[ -e "$1" ] || return 0
+	chmod -R u+w "${1:?}"
+	rm -rf "${1:?}"
+	[ ! -e "$1" ] || die "could not delete $1"
+}
+
+# A fresh project: no cache, no lockfile, no node_modules.
+fresh() {
+	wipe "$1"
+	mkdir -p "$1/home" "$1/proj" && cp -R "$BENCH/fixtures/$2/." "$1/proj/"
+}
+
+# One install for runner $1 in dir $2; log name $3.
+pm_install() {
+	eval "bin=\$BIN_$1"
+	ST=125 WALL=0 CPU=0 RSS=0
+	cd "$2/proj" || return
+	# shellcheck disable=SC2046,SC2086
+	timed "$W/logs/$3.log" env $(envs "$1" "$2/home") "$bin" $(args "$1")
+	cd "$ROOT" || exit 1
+	if [ "$ST" = 0 ]; then : >"$2/ok"; else rm -f "$2/ok"; fi
+}
+
+if [ $DRY = 0 ]; then
+	best=999999999
+	for _ in 1 2 3 4 5; do timed /dev/null env A=1 true; [ "$us" -lt "$best" ] && best=$us; done
+	OVER=$best
+fi
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+RES=$BENCH/results/$STAMP.tsv
+[ $DRY = 1 ] || printf 'runner\tversion\tfixture\tphase\tsample\tstatus\twall_ms\tcpu_ms\trss_kb\n' >"$RES"
+STOP=0
 for f in $FIXTURES; do
-  [ -f "$HERE/fixtures/$f/package.json" ] || die "unknown fixture: $f"
+	for p in $PHASES; do
+		s=0
+		while [ "$s" -lt "$SAMPLES" ]; do
+			s=$((s + 1))
+			for r in $FOUND; do
+				d=$W/r/$r/$f
+				if [ $DRY = 1 ]; then
+					eval "bin=\$BIN_$r"
+					echo "$p $f $s: cd $d/proj && $bin $(args "$r")"
+					continue
+				fi
+				check_disk
+				[ $STOP = 0 ] || break 4
+				# Prepare: cold starts empty; warm and repeat start from a good install.
+				if [ "$p" = cold ]; then
+					fresh "$d" "$f"
+				elif [ ! -f "$d/ok" ]; then
+					fresh "$d" "$f" && pm_install "$r" "$d" "$r-$f-$p-$s-setup"
+				fi
+				[ "$p" = warm ] && wipe "$d/proj/node_modules"
+				pm_install "$r" "$d" "$r-$f-$p-$s"
+				eval "ver=\$VER_$r"
+				printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+					"$r" "$ver" "$f" "$p" "$s" "$ST" "$WALL" "$CPU" "$RSS" >>"$RES"
+				printf '%-6s %-6s %-6s %s  %6s ms  %s\n' "$r" "$f" "$p" "$s" "$WALL" \
+					"$([ "$ST" = 0 ] || echo "FAILED ($ST), see $W/logs/$r-$f-$p-$s.log")"
+			done
+		done
+	done
 done
-
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-[ -n "$OUT" ] || OUT="$HERE/results/$STAMP.jsonl"
-mkdir -p "$(dirname "$OUT")"
-
-# Every manager gets the same quiet, non-interactive, no-telemetry environment.
-export NO_COLOR=1 NO_UPDATE_NOTIFIER=1 DO_NOT_TRACK=1 ADBLOCK=1
-export npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
-unset CI || true   # pnpm turns on --frozen-lockfile under CI, which breaks a cold run
-# A manager that segfaults is a failed run, which the results already record. Without this it
-# is also a core dump the size of its heap dropped in whatever directory it died in — `aube
-# --version` alone left 1.7 GB in the repo root. Nothing here ever wants to open one.
-ulimit -c 0 2>/dev/null || true
-
-free_mb() { df -Pm "$WORK" | awk 'NR==2 {print $4}'; }
-
-# Apparent size and a package count, recorded so an obviously-wrong run (a
-# manager that installed nothing) shows up in the results instead of looking
-# fast. Both follow symlinks and dedupe by inode: an isolated layout holds the
-# real directory *and* symlinks pointing at it, and aube symlinks its whole tree
-# out to a global store, so a plain count is not comparable across managers.
-# A package linked into a global store has its own dependencies beside it there,
-# not under it, so every node_modules a link leads into is walked too.
-link_roots() {
-  node -e '
-    const fs = require("fs");
-    const seen = new Set(), queue = [process.argv[1]];
-    while (queue.length) {
-      const dir = queue.pop();
-      if (seen.has(dir)) continue;
-      seen.add(dir);
-      let names = [];
-      try { names = fs.readdirSync(dir); } catch {}
-      for (const name of names) {
-        const at = dir + "/" + name;
-        let links = [at];
-        if (name.startsWith("@")) try { links = fs.readdirSync(at).map((n) => at + "/" + n); } catch {}
-        for (const link of links) {
-          try {
-            if (!fs.lstatSync(link).isSymbolicLink()) continue;
-            const real = fs.realpathSync(link), i = real.lastIndexOf("/node_modules/");
-            if (i >= 0) queue.push(real.slice(0, i) + "/node_modules");
-          } catch {}
-        }
-      }
-    }
-    console.log([...seen].join("\n"));
-  ' "$1"
-}
-
-tree_stats() {
-  local proj="$1" bytes=0 pkgs=0 roots
-  if [ -d "$proj/node_modules" ]; then
-    mapfile -t roots < <(link_roots "$proj/node_modules")
-    bytes="$(timeout 120 du -sbLc "${roots[@]}" 2>/dev/null | awk 'END {print $1}')"
-    pkgs="$(timeout 120 find -L "${roots[@]}" -name package.json -not -path '*/.bin/*' \
-              -printf '%i\n' 2>/dev/null | sort -u | wc -l)"
-  fi
-  echo "${bytes:-0} ${pkgs:-0}"
-}
-
-# A small private cache may mean the manager used a shared cache elsewhere.
-# Record the size so the report can flag it for inspection.
-cache_bytes() {
-  du -sb "$1" 2>/dev/null | awk '{print $1+0}'
-}
-
-emit() { # runner version fixture phase iter ms ok bytes pkgs cache_bytes runner_bytes runner_packed_bytes rss_bytes rss_process_bytes user_us sys_us
-  node -e '
-const fields = ["runner","version","fixture","phase","iter","ms","ok","bytes","packages","cache_bytes","runner_bytes","runner_packed_bytes","rss_bytes","rss_process_bytes","user_ms","sys_ms"];
-const row = Object.fromEntries(fields.map((key, i) => [key, process.argv[i + 1]]));
-for (const key of ["iter","ms","bytes","packages","cache_bytes","runner_bytes","runner_packed_bytes"]) row[key] = Number(row[key]);
-for (const key of ["runner_bytes","runner_packed_bytes"]) if (!row[key]) delete row[key];
-// Without rusage (the run failed before measure.pl started) these stay out, not zero.
-for (const key of ["rss_bytes","rss_process_bytes"]) {
-  if (row[key]) row[key] = Number(row[key]); else delete row[key];
-}
-for (const key of ["user_ms","sys_ms"]) {
-  if (row[key]) row[key] = Math.round(Number(row[key]) / 1000); else delete row[key];
-}
-row.ok = row.ok === "true";
-row.ts = new Date().toISOString();
-console.log(JSON.stringify(row));
-' "$@" >> "$OUT"
-}
-
-# Cold means nothing carried over: no cache, no lockfile of any manager, no tree.
-reset_project() {
-  local proj="$1" fixture="$2"
-  rm -rf "$proj"
-  mkdir -p "$proj"
-  cp "$HERE/fixtures/$fixture/package.json" "$proj/package.json"
-}
-
-# One timed install. Echoes "<ms> <ok> <tree rss bytes> <process rss bytes> <user us> <sys us>".
-# measure.pl times the install command alone and reads its rusage; the outer clock is only
-# for a run that failed before it got that far, which has no rusage.
-timed_install() {
-  local runner="$1" proj="$2" cache="$3" log="$4" usage="$5"
-  local t0 t1 ok=true ms rss="" one="" user="" sys=""
-  rm -f "$usage"
-  t0=$(date +%s%N)
-  if ! ( cd "$proj" && MEASURE_OUT="$usage" runner_install "$runner" "$cache" ) >>"$log" 2>&1; then
-    ok=false
-  fi
-  t1=$(date +%s%N)
-  ms=$(( (t1 - t0) / 1000000 ))
-  [ -s "$usage" ] && read -r ms rss one user sys < "$usage"
-  echo "$ms $ok $rss $one $user $sys"
-}
-
-progress() { # runner phase iter ms ok pkgs rss_bytes user_us sys_us
-  local runner="$1"; shift
-  printf '   %-7s %-6s %2d  %8s ms  ok=%-5s %5s pkgs  %6s MB rss  %8s ms cpu\n' "$runner" "$1" "$2" "$3" "$4" "$5" \
-    "$(( ${6:-0} / 1000000 ))" "$(( (${7:-0} + ${8:-0}) / 1000 ))"
-  # Every fixture installs something: a success with nothing in node_modules went elsewhere.
-  if [ "$4" = true ] && [ "${5:-0}" = 0 ]; then
-    echo "   ! $runner $1 run $2 succeeded with no packages in the project: check where it installed" >&2
-  fi
-}
-
-# A package.json or workspace file above the projects is a root a manager may install into
-# instead of the project: see WORK.
-check_work() {
-  local dir; dir="$(cd "$WORK" && pwd -P)"
-  while [ "$dir" != / ]; do
-    dir="$(dirname "$dir")"
-    for f in package.json pnpm-workspace.yaml aube-workspace.yaml; do
-      [ -e "$dir/$f" ] && die "$dir/$f is above the work directory $WORK; set BENCH_WORK elsewhere"
-    done
-  done
-  return 0
-}
-
-command -v perl >/dev/null || die "perl is needed to measure memory and CPU (measure.pl)"
-
-echo "bench: runners  : $RUNNERS"
-echo "bench: fixtures : $FIXTURES"
-echo "bench: samples  : cold=$COLD_RUNS warm=$WARM_RUNS repeat=$REPEAT_RUNS"
-echo "bench: workdir  : $WORK"
-echo "bench: results  : $OUT"
-[ "$DRY" = 1 ] && exit 0
-
-mkdir -p "$WORK"
-check_work
-LOGDIR="$WORK/logs"; mkdir -p "$LOGDIR"
-# `ulimit -c 0` covers anything this script starts, but a runner that raises it again leaves
-# one behind anyway. On the way out, drop what this run dropped: `core.<pid>`, younger than
-# the marker, in one of the two directories a runner is ever started from. On the way out and
-# not at the end, so a run that dies partway still tidies up after itself.
-touch "$OUT.started"
-sweep_cores() {
-  for dir in "$JPM_ROOT" "$HERE"; do
-    find "$dir" -maxdepth 1 -name 'core.[0-9]*' -newer "$OUT.started" -delete 2>/dev/null || true
-  done
-  rm -f "$OUT.started"
-}
-trap sweep_cores EXIT
-
-# The jpm runner measures the release build, so it has to be this working tree's.
-if [[ " $RUNNERS " == *" jpm "* && "$JPM_BIN" == "$JPM_ROOT/target/release/jpm" ]]; then
-  echo "bench: building jpm (release)..."
-  ( cd "$JPM_ROOT" && cargo build --release ) >"$LOGDIR/jpm-build.log" 2>&1 \
-    || die "jpm build failed, see $LOGDIR/jpm-build.log"
-fi
-
-# Resolve every manager to its entry first: the download of a pinned manager is jup's cost,
-# not the manager's, and it must not land inside a timed run. Running each once also shows
-# the entry works before anything is timed.
-command -v node >/dev/null || die "node is needed to run the benchmark"
-[ -f "$JUP" ] || die "jup is missing from bench/node_modules, run: jpm install --dir $BENCH_DIR"
-echo "bench: resolving managers..."
-# Packed once per manager: compressing the largest takes about a second.
-declare -A PACKED=()
-for r in $RUNNERS; do
-  runner_resolve "$r" >"$LOGDIR/$r-resolve.log" 2>&1 || die "runner $r did not resolve, see $LOGDIR/$r-resolve.log"
-  PACKED[$r]="$(runner_packed_bytes "$r" 2>/dev/null)"
-  # upm has no --version; resolving it is its check.
-  # From $WORK, since a manager may refuse the repo's own packageManager field.
-  [ "$r" = upm ] || { runner_cmd "$r" && ( cd "$WORK" && "${CMD[@]}" --version ) >>"$LOGDIR/$r-resolve.log" 2>&1; } \
-    || die "runner $r is not usable here, see $LOGDIR/$r-resolve.log"
-  echo "  $r $(runner_version "$r")  ${RUNNER_ENTRY[$r]}"
-done
-
-# One timed sample of one phase for one runner. The pair's project and cache carry over from
-# its previous sample, so warm follows cold and repeat follows warm.
-sample() { # runner fixture phase iter
-  local runner="$1" fixture="$2" phase="$3" i="$4"
-  local pair="$WORK/$runner-$fixture"
-  local proj="$pair/project" cache="$pair/cache" log="$LOGDIR/$runner-$fixture.log"
-  local ms ok rss one user sys bytes pkgs
-  case "$phase" in
-    cold) reset_project "$proj" "$fixture"; rm -rf "$cache"; mkdir -p "$cache" ;;
-    warm) rm -rf "$proj/node_modules" ;;
-  esac
-  read -r ms ok rss one user sys <<<"$(timed_install "$runner" "$proj" "$cache" "$log" "$pair/usage")"
-  read -r bytes pkgs <<<"$(tree_stats "$proj")"
-  emit "$runner" "${VERSION[$runner]}" "$fixture" "$phase" "$i" "$ms" "$ok" "$bytes" "$pkgs" \
-    "$(cache_bytes "$cache")" "${SIZE[$runner]}" "${PACKED[$runner]}" "$rss" "$one" "$user" "$sys"
-  progress "$runner" "$phase" "$i" "$ms" "$ok" "$pkgs" "$rss" "$user" "$sys"
-}
-
-declare -A VERSION=() SIZE=()
-for r in $RUNNERS; do
-  VERSION[$r]="$(runner_version "$r")"
-  SIZE[$r]="$(runner_bytes "$r" 2>/dev/null)"
-done
-read -ra RUNNER_LIST <<<"$RUNNERS"
-n=${#RUNNER_LIST[@]}
-
-# Rounds, not one manager's samples back to back: each round runs every manager once, so a
-# slow minute of network or registry lands on all of them instead of whichever ran then.
-# Each round starts one manager later, so none always runs first.
-for fixture in $FIXTURES; do
-  avail="$(free_mb)"
-  [ "$avail" -ge "$MIN_FREE_MB" ] || die "only ${avail}MB free, below --min-free ${MIN_FREE_MB}MB; stopping before $fixture"
-  echo "== $fixture (${avail}MB free)"
-  for r in $RUNNERS; do : > "$LOGDIR/$r-$fixture.log"; done
-  round=0
-  for phase in cold warm repeat; do
-    case "$phase" in cold) runs=$COLD_RUNS ;; warm) runs=$WARM_RUNS ;; repeat) runs=$REPEAT_RUNS ;; esac
-    for i in $(seq 1 "$runs"); do
-      for j in $(seq 0 $((n - 1))); do
-        sample "${RUNNER_LIST[$(( (round + j) % n ))]}" "$fixture" "$phase" "$i"
-      done
-      round=$((round + 1))
-    done
-  done
-  if [ "$KEEP" = 0 ]; then
-    for r in $RUNNERS; do rm -rf "$WORK/$r-$fixture"; done
-  fi
-done
-
+[ $DRY = 1 ] && exit
+[ $KEEP = 1 ] || wipe "$W/r"
 echo
-echo "bench: done -> $OUT"
-echo "bench: report with: node $HERE/report.ts $OUT"
-
-if [ "$CHART" = 1 ]; then
-  # Only a full suite replaces the committed charts/ the README links to.
-  full=0
-  [ "$RUNNERS" = "$ALL_RUNNERS" ] && [ "$FIXTURES" = "$ALL_FIXTURES" ] && full=1
-  for measure in time memory cpu; do
-    node "$HERE/chart.ts" "$OUT" --measure "$measure" \
-      || echo "bench: $measure chart failed, results are still in $OUT" >&2
-    if [ "$full" = 1 ]; then
-      node "$HERE/chart.ts" "$OUT" --measure "$measure" -o "$HERE/charts/" \
-        || echo "bench: $measure chart failed for charts/" >&2
-    fi
-  done
-  node "$HERE/chart.ts" "$OUT" --size || echo "bench: size chart failed" >&2
-  if [ "$full" = 1 ]; then
-    node "$HERE/chart.ts" "$OUT" --size -o "$HERE/charts/" \
-      || echo "bench: size chart failed for charts/" >&2
-  fi
-fi
+report "$RES"
+echo
+echo "results: $RES"
