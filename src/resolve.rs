@@ -36,10 +36,19 @@ pub struct Options<'a> {
     pub tarball: Option<&'a TarballReader<'a>>,
     /// Told each package as the walk picks it, before its dependencies are walked.
     pub on_pick: Option<&'a OnPick<'a>>,
-    /// Versions to pick when a range allows them, by registry name: another manager's lockfile
-    /// being brought over, so its choices survive where they still fit.
-    pub prefer: Option<&'a HashMap<String, Vec<String>>>,
+    /// Another manager's lockfile being brought over, so its choices survive where they fit.
+    pub prefer: Option<&'a Prefer>,
     pub threads: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct Prefer {
+    /// Registry name -> the versions the file names.
+    pub versions: HashMap<String, Vec<String>>,
+    /// `name@range` -> the version the file resolved that very range to (yarn keys by range).
+    pub ranges: HashMap<String, String>,
+    /// Every registry range must be one of `ranges`: a frozen install from yarn.lock.
+    pub only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -244,6 +253,9 @@ impl Walk<'_> {
         cell.get_or_init(|| {
             // An exact version or the locked version dedupe prefers is asked for by version.
             let exact = (spec.kind == Kind::Version).then(|| semver::parse(&spec.fetch_spec).map(|v| v.text)).flatten();
+            if exact.is_none() && self.opts.prefer.is_some_and(|p| p.only) && self.ranged(spec).is_none() {
+                return Err(Error::new("ELOCK", format!("it has no {}@{}", spec.fetch_name, spec.fetch_spec)));
+            }
             let wanted = exact
                 .or_else(|| if self.opts.dedupe && !fresh { self.kept(spec) } else { None })
                 .or_else(|| self.preferred(spec));
@@ -252,13 +264,22 @@ impl Walk<'_> {
         .clone()
     }
 
-    /// The highest preferred version the spec allows; never for a tag, which names what it names.
+    /// What the file resolved this very range to, else the highest version it names that the
+    /// range allows; a tag only by the first, as the tag named it then.
     fn preferred(&self, spec: &Spec) -> Option<String> {
+        if let Some(v) = self.ranged(spec) {
+            return Some(v);
+        }
         if spec.kind == Kind::Tag {
             return None;
         }
-        let versions = self.opts.prefer?.get(&spec.fetch_name)?;
+        let versions = self.opts.prefer?.versions.get(&spec.fetch_name)?;
         semver::max_satisfying(versions.iter().map(String::as_str), &spec.fetch_spec).map(str::to_string)
+    }
+
+    fn ranged(&self, spec: &Spec) -> Option<String> {
+        let v = self.opts.prefer?.ranges.get(&format!("{}@{}", spec.fetch_name, spec.fetch_spec))?;
+        (spec.kind == Kind::Tag || semver::satisfies(v, &spec.fetch_spec)).then(|| v.clone())
     }
 
     /// The abbreviated document leaves `libc` out, so every linux build costs a read of the full
