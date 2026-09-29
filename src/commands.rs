@@ -482,7 +482,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     ui::phase("filled");
     let fetch = |p: &Package| -> Result<()> {
-        fetcher.arrivals.wait(&p.integrity);
+        pool::blocking(|| fetcher.arrivals.wait(&p.integrity));
         match store.ensure(&tarball_of(&dir, &p.resolved, p.source.as_deref()), &p.integrity) {
             Err(e) if p.source.is_some() => Err(stale(e, p.source.as_deref().unwrap_or(""))),
             other => other.map(|_| ()),
