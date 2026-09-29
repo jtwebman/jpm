@@ -13,9 +13,10 @@ use crate::graph::{Deps, PeerKind, Peers, Specs};
 use crate::lock::{self, LockEntry, LockRoot, Lockfile};
 use crate::project::{GROUPS, RootManifest};
 use crate::registry::tarball_url;
+use crate::resolve::Prefer;
 use crate::semver::max_satisfying;
 
-pub const FOREIGN: [&str; 4] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock"];
+pub const FOREIGN: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock"];
 
 pub struct ForeignLock {
     pub lock: Lockfile,
@@ -80,16 +81,76 @@ pub fn load(
         "package-lock.json" | "npm-shrinkwrap.json" => read_npm(text)?,
         "pnpm-lock.yaml" => read_pnpm(text)?,
         "bun.lock" => read_bun(text)?,
+        "yarn.lock" => return Err(fail("yarn.lock names no peers, platforms or bins")),
         _ => return Err(fail(format!("jpm does not read {file}"))),
     };
     hold_to(file, &mut source, manifest)?;
     build(file, source, manifest, base_for)
 }
 
-/// Every registry package version the file names, as `(name, version)`, read loosely: what a
-/// file that cannot be brought over whole (out of date, with workspaces, an older format) still
-/// says about which versions the project used. npm, pnpm (any version) and bun.
-pub fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
+/// The versions a file that cannot be brought over whole (out of date, with workspaces, an older
+/// format, or yarn.lock, which names too little) still says the project used, for a resolve to
+/// prefer. yarn.lock also says which version each range got.
+pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
+    if file == "yarn.lock" {
+        return Ok(read_yarn(text));
+    }
+    let mut prefer = Prefer::default();
+    for (name, version) in pins(file, text)? {
+        prefer.versions.entry(name).or_default().push(version);
+    }
+    Ok(prefer)
+}
+
+/// yarn.lock, v1 or berry: each block is a list of `name@range` keys, then its fields, the one
+/// read here being `version`. Keys that are not registry ranges (git, files, workspaces, patches)
+/// are left out.
+fn read_yarn(text: &str) -> Prefer {
+    let mut out = Prefer::default();
+    let berry = text.lines().any(|l| l == "__metadata:");
+    let mut keys: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            keys = line
+                .trim_end_matches(':')
+                .split(',')
+                .filter_map(|d| yarn_key(d.trim().trim_matches('"'), berry))
+                .collect();
+            continue;
+        }
+        let Some(field) = line.strip_prefix("  ").filter(|f| !f.starts_with(' ')) else { continue };
+        let Some(v) = field.strip_prefix("version") else { continue };
+        let v = v.trim_start_matches(':').trim().trim_matches('"');
+        if !crate::semver::is_exact(v) {
+            continue;
+        }
+        for (name, range) in keys.drain(..) {
+            out.versions.entry(name.clone()).or_default().push(v.to_string());
+            out.ranges.insert(format!("{name}@{range}"), v.to_string());
+        }
+    }
+    out
+}
+
+/// A key as the resolver asks for it: registry name and range. Berry writes `name@npm:range`
+/// for a plain range, where yarn 1 would mean an alias; `name@npm:real@range` is one in both.
+fn yarn_key(key: &str, berry: bool) -> Option<(String, String)> {
+    let plain = key.get(1..).and_then(|k| k.find("@npm:")).filter(|&i| berry && !key[i + 6..].contains('@'));
+    let key = match plain {
+        Some(i) => format!("{}@{}", &key[..=i], &key[i + 6..]),
+        None => key.to_string(),
+    };
+    let spec = crate::spec::parse_spec(&key).ok()?;
+    matches!(spec.kind, crate::spec::Kind::Version | crate::spec::Kind::Range | crate::spec::Kind::Tag)
+        .then_some((spec.fetch_name, spec.fetch_spec))
+}
+
+/// Every registry package version the file names, as `(name, version)`, read loosely. npm, pnpm
+/// (any version) and bun.
+fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     match file {
         "package-lock.json" | "npm-shrinkwrap.json" => {
@@ -1383,5 +1444,21 @@ snapshots:
   },}"#;
         let v: Value = serde_json::from_str(&strip_trailing_commas(text)).unwrap();
         assert_eq!(v, json!({ "a": ["x,]", "y\",}"], "b": { "c": 1 } }));
+    }
+
+    #[test]
+    fn reads_yarn_ranges() {
+        let v1 = "# yarn lockfile v1\n\n\n\"@s/a@^1.0.0\", \"@s/a@^1.1.0\":\n  version \"1.2.0\"\n  resolved \"https://r/@s/a/-/a-1.2.0.tgz\"\n  dependencies:\n    version \"^2\"\n\nb@npm:c@^2:\n  version \"2.0.1\"\n\nd@github:x/d:\n  version \"1.0.0\"\n";
+        let p = read_yarn(v1);
+        assert_eq!(p.ranges["@s/a@^1.0.0"], "1.2.0");
+        assert_eq!(p.ranges["@s/a@^1.1.0"], "1.2.0");
+        assert_eq!(p.ranges["c@^2"], "2.0.1", "an alias asks for the real package");
+        assert_eq!(p.ranges.len(), 3, "not the git one: {:?}", p.ranges);
+        let berry = "__metadata:\n  version: 8\n  cacheKey: 10c0\n\n\"@s/a@npm:^1.0.0, @s/a@npm:~1.1.0\":\n  version: 1.2.0\n  resolution: \"@s/a@npm:1.2.0\"\n\n\"app@workspace:.\":\n  version: 0.0.0-use.local\n";
+        let p = read_yarn(berry);
+        assert_eq!(p.ranges["@s/a@^1.0.0"], "1.2.0");
+        assert_eq!(p.ranges["@s/a@~1.1.0"], "1.2.0");
+        assert_eq!(p.ranges.len(), 2, "{:?}", p.ranges);
+        assert_eq!(p.versions["@s/a"], ["1.2.0", "1.2.0"]);
     }
 }

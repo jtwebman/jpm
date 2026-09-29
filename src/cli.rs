@@ -78,7 +78,8 @@ Notes
   save ^version unless --exact. dedupe favors locked versions; delete {LOCKFILE} for a fresh resolve.
   A url or a path to a .tgz is a tarball dependency, locked by where it is.
   With no {LOCKFILE}, install writes one from upm.lock, package-lock.json, npm-shrinkwrap.json,
-  pnpm-lock.yaml or bun.lock: the same versions, resolved again only where package.json moved.
+  pnpm-lock.yaml, bun.lock or yarn.lock: the same versions, resolved again only where package.json
+  moved.
   --frozen-lockfile reads such a file as it is and writes nothing.
 
   prune removes the project's unused entries, then global entries and store content that no

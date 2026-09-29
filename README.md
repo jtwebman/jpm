@@ -70,6 +70,8 @@ Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and 
 - `package-lock.json` and `npm-shrinkwrap.json` (npm 7 and later), `pnpm-lock.yaml`
   (pnpm 9 and later) and `bun.lock` are carried over as they are: the same versions and the
   same tree, with no registry lookups.
+- `yarn.lock` (yarn 1, and yarn 2 and later) records no peers, platforms or bins, so jpm
+  reads those from the registry and gives every range the version yarn gave it.
 - When that is not possible (the file is out of date with `package.json`, has workspaces, or
   is an older format such as npm 6's or pnpm 8's), jpm resolves the tree with the file's
   versions preferred wherever the ranges in `package.json` allow them.

@@ -371,6 +371,47 @@ fn brings_over_npm_lockfiles() {
     assert!(env.lock()["packages"].get("a@1.0.0").is_some(), "the edit keeps the brought-over versions");
 }
 
+/// b@^1.0.0 at 1.0.0 for the root and 1.1.0 for a: a resolve would put both on 1.1.0.
+const YARN_V1: &str = "# yarn lockfile v1\n\n\na@1.1.0:\n  version \"1.1.0\"\n  dependencies:\n    b \"^1.1.0\"\n\nb@^1.0.0:\n  version \"1.0.0\"\n\nb@^1.1.0:\n  version \"1.1.0\"\n";
+const YARN_BERRY: &str = "__metadata:\n  version: 8\n\n\"a@npm:1.1.0\":\n  version: 1.1.0\n  resolution: \"a@npm:1.1.0\"\n  dependencies:\n    b: \"npm:^1.1.0\"\n\n\"b@npm:^1.0.0\":\n  version: 1.0.0\n\n\"b@npm:^1.1.0\":\n  version: 1.1.0\n";
+
+#[test]
+fn brings_over_yarn_lockfiles() {
+    let r = registry();
+    for text in [YARN_V1, YARN_BERRY] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { "a": "1.1.0", "b": "^1.0.0" } }));
+        env.write("yarn.lock", text);
+        // CI installs yarn's versions and writes nothing.
+        env.ok(&["ci"]);
+        assert!(!env.exists("jpm.lock"));
+        assert!(env.read("node_modules/b/index.js").contains("b@1.0.0"), "yarn's b, where 1.1.0 is newer");
+        assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+        // An install brings it over, each range as yarn resolved it.
+        let out = env.ok(&["install"]);
+        assert!(out.contains("from yarn.lock"), "{out}");
+        let lock = env.lock();
+        assert_eq!(lock["root"]["dependencies"]["b"], "1.0.0");
+        assert_eq!(lock["packages"]["a@1.1.0"]["dependencies"]["b"], "1.1.0");
+    }
+}
+
+#[test]
+fn resolves_an_out_of_date_yarn_lockfile() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "b": "^1.0.0", "host": "^1.0.0" } }));
+    env.write("yarn.lock", YARN_V1);
+    let out = env.jpm(&["ci"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("yarn.lock is out of date"), "{text}");
+    let out = env.ok(&["install"]);
+    assert!(out.contains("versions preferred"), "{out}");
+    let lock = env.lock();
+    assert_eq!(lock["root"]["dependencies"]["b"], "1.0.0", "yarn's versions still count");
+    assert_eq!(lock["root"]["dependencies"]["host"], "1.0.0");
+}
+
 #[test]
 fn resolves_an_out_of_date_lockfile_with_its_versions() {
     let r = registry();

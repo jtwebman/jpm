@@ -1,6 +1,6 @@
 //! What each command does, without argv parsing or result formatting (that is `cli.rs`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -558,7 +558,7 @@ fn plan(
     if let Some(file) = foreign_file {
         // Frozen is CI: read in memory, write nothing. Otherwise jpm.lock takes over.
         return if ctx.opts.frozen {
-            foreign_lock(ctx, project, file)
+            foreign_lock(ctx, project, store, file, on_pick)
         } else {
             import(ctx, project, store, file, on_pick)
         };
@@ -610,7 +610,7 @@ fn import(
     on_pick: Option<&resolve::OnPick>,
 ) -> Result<Lockfile> {
     let dir = &project.dir;
-    let exact = foreign_lock(ctx, project, file);
+    let exact = foreign_lock(ctx, project, store, file, on_pick);
     let text = ctx.foreign_read.take().map(|(t, _)| t).unwrap_or_default();
     ctx.source = None;
     let lock = match exact {
@@ -622,10 +622,7 @@ fn import(
         }
         Err(why) => {
             info(&format!("{}; resolving with its versions preferred", why.message));
-            let mut prefer: HashMap<String, Vec<String>> = HashMap::new();
-            for (name, version) in foreign::pins(file, &text).unwrap_or_default() {
-                prefer.entry(name).or_default().push(version);
-            }
+            let prefer = foreign::prefer(file, &text).unwrap_or_default();
             let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
             let registry = ctx.registry(store);
             let lock = resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], true, Some(&prefer))?;
@@ -664,7 +661,7 @@ fn resolve_lock(
     on_pick: Option<&resolve::OnPick>,
     moved: &[String],
     write: bool,
-    prefer: Option<&HashMap<String, Vec<String>>>,
+    prefer: Option<&resolve::Prefer>,
 ) -> Result<Lockfile> {
     let base = ctx.base_for();
     let mut locked = existing.as_ref().map(|l| lock::from_lockfile(l, &base));
@@ -789,12 +786,33 @@ fn moved_tarballs(
     Ok(moved)
 }
 
-fn foreign_lock(ctx: &mut Ctx, project: &Project, file: &'static str) -> Result<Lockfile> {
+fn foreign_lock(
+    ctx: &mut Ctx,
+    project: &Project,
+    store: &Store,
+    file: &'static str,
+    on_pick: Option<&resolve::OnPick>,
+) -> Result<Lockfile> {
     let path = project.dir.join(file);
     let stamp = stamp_of(&path);
     let text =
         std::fs::read_to_string(&path).map_err(|e| Error::io(&e, format!("cannot read {file}")).with_code("ELOCK"))?;
     ctx.foreign_read = Some((text.clone(), stamp));
+    if file == "yarn.lock" {
+        // It names too little to link from, so the registry fills in the rest: every range
+        // gets the version yarn gave it, and a range it does not name means it is out of date.
+        let prefer = resolve::Prefer { only: true, ..foreign::prefer(file, &text)? };
+        let ctx = &*ctx;
+        let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, &project.dir, source, pinned);
+        let registry = ctx.registry(store);
+        return resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], false, Some(&prefer)).map_err(|e| {
+            if e.code == "ELOCK" {
+                fail("ELOCK", format!("yarn.lock is out of date with package.json: {}", e.message))
+            } else {
+                e
+            }
+        });
+    }
     let has_workspaces = project.manifest.workspaces.is_some() || !project.workspaces.is_empty();
     let loaded = foreign::load(file, &text, &project.manifest, has_workspaces, &ctx.base_for())?;
     for w in &loaded.warnings {
@@ -991,7 +1009,7 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
         return if write {
             import(&mut ctx, &project, &store, file, None)
         } else {
-            foreign_lock(&mut ctx, &project, file)
+            foreign_lock(&mut ctx, &project, &store, file, None)
         };
     }
     let existing = current_lock(&dir);
@@ -1032,7 +1050,8 @@ pub fn fetch_lockfile(opts: Opts) -> Result<Vec<Fetched>> {
     let lock = match ctx.lock_source(&dir)? {
         (_, Some(file)) => {
             let project = ctx.load_project()?;
-            foreign_lock(&mut ctx, &project, file)?
+            let store = ctx.store(false);
+            foreign_lock(&mut ctx, &project, &store, file, None)?
         }
         _ => lock::read_lockfile(&dir)?
             .map(|(l, _)| l)
