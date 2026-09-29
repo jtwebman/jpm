@@ -18,6 +18,9 @@ webpki-roots = "1"
 [dev-dependencies]
 # Only the tests build JSON with its `json!` macro; the binary uses src/json.rs.
 serde_json = { version = "1", features = ["preserve_order"] }
+# A registry over TLS with a private CA, for the certificate settings' tests.
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"

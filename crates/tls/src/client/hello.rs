@@ -500,5 +500,8 @@ pub(crate) fn verify_chain<'a>(h: &Hello, chain: &[&'a [u8]]) -> Result<PublicKe
     if chain.is_empty() {
         return Err(decode_error("tls: decode error: the server sent no certificate"));
     }
+    if h.config.insecure_skip_verify {
+        return crate::x509::leaf_key(chain[0]).map_err(|e| Error::Cert(e.0));
+    }
     crate::x509::verify_server(chain, h.host, now(), &h.config.roots).map_err(|e| Error::Cert(e.0))
 }

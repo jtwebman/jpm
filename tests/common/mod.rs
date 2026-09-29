@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -88,7 +88,7 @@ pub fn sha512(data: &[u8]) -> String {
     format!("sha512-{}", b64(d.as_ref()))
 }
 
-fn b64(bytes: &[u8]) -> String {
+pub fn b64(bytes: &[u8]) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for c in bytes.chunks(3) {
@@ -138,9 +138,46 @@ impl Registry {
     }
 }
 
-fn serve(stream: TcpStream, pkgs: &Mutex<Vec<Pkg>>, hits: &Mutex<Vec<String>>, requests: &AtomicUsize, base: &str) {
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
-    let mut writer = stream;
+/// A registry over TLS on 127.0.0.1, with the certificate chain (leaf first) and PKCS#8 key.
+pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            chain.into_iter().map(CertificateDer::from).collect(),
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
+        )
+        .unwrap();
+    let config = Arc::new(config);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("https://{}", listener.local_addr().unwrap());
+    let pkgs = Arc::new(Mutex::new(pkgs));
+    let hits = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (p, h, r, u) = (pkgs.clone(), hits.clone(), requests.clone(), url.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let (p, h, r, u, c) = (p.clone(), h.clone(), r.clone(), u.clone(), config.clone());
+            std::thread::spawn(move || {
+                let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
+                serve(tls, &p, &h, &r, &u)
+            });
+        }
+    });
+    Registry { url, pkgs, hits, requests }
+}
+
+fn serve(
+    stream: impl Read + Write,
+    pkgs: &Mutex<Vec<Pkg>>,
+    hits: &Mutex<Vec<String>>,
+    requests: &AtomicUsize,
+    base: &str,
+) {
+    let mut reader = BufReader::new(stream);
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -171,7 +208,13 @@ fn serve(stream: TcpStream, pkgs: &Mutex<Vec<Pkg>>, hits: &Mutex<Vec<String>>, r
             "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: keep-alive\r\n\r\n",
             bytes.len()
         );
-        if writer.write_all(head.as_bytes()).and_then(|()| writer.write_all(&bytes)).is_err() {
+        let writer = reader.get_mut();
+        if writer
+            .write_all(head.as_bytes())
+            .and_then(|()| writer.write_all(&bytes))
+            .and_then(|()| writer.flush())
+            .is_err()
+        {
             return;
         }
     }

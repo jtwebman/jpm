@@ -46,7 +46,11 @@ impl Pki {
     }
 
     pub fn config(&self, alpn: &[&[u8]]) -> Config {
-        Config { roots: vec![self.anchor()], alpn: alpn.iter().map(|p| p.to_vec()).collect() }
+        Config {
+            roots: vec![self.anchor()],
+            alpn: alpn.iter().map(|p| p.to_vec()).collect(),
+            insecure_skip_verify: false,
+        }
     }
 
     pub fn rustls_chain(&self) -> Vec<CertificateDer<'static>> {
