@@ -194,6 +194,8 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
     } else if ["git+https://", "git+ssh://", "git://", "git+file://"].iter().any(|p| lower.starts_with(p)) {
         let at = lower.find("://").unwrap_or(0) + 3;
         format!("{}{}", &lower[..at], &repo[at..])
+    } else if let Some(url) = hosted_page(repo) {
+        url
     } else {
         return Ok(None);
     };
@@ -233,6 +235,20 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
         None => committish.to_string(),
     };
     Ok(Some(format!("{url}#{committish}")))
+}
+
+/// `https://github.com/u/r`, the repository's own page: npm reads it as the repository (as
+/// hosted-git-info does), and downloading it as a tarball gets an HTML page. Only a hosted
+/// repository's top: `…/archive/v1.tar.gz` and other paths are still urls to download.
+fn hosted_page(repo: &str) -> Option<String> {
+    let lower = repo.to_ascii_lowercase();
+    let rest = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://"))?;
+    let (host, path) = repo[repo.len() - rest.len()..].split_once('/')?;
+    let (_, host) = HOSTS.iter().find(|(_, h)| host.eq_ignore_ascii_case(h))?;
+    if ends_as_tarball(path) {
+        return None;
+    }
+    Some(format!("git+https://{host}/{}.git", user_repo(path)?))
 }
 
 /// `u/r` out of `u/r`, `u/r.git` or `u/r/`: a user and repository as hosts spell them.
@@ -465,8 +481,22 @@ mod tests {
             "git+https://GitHub.com/u/r/",
             "git://github.com/u/r.git",
             "GIT+HTTPS://github.com/u/r",
+            // A repository's page, as npm reads it (formik's vscode-textmate).
+            "https://github.com/u/r",
+            "https://github.com/u/r.git",
+            "http://GitHub.com/u/r/",
         ] {
             assert_eq!(git(spec), hub, "{spec}");
+        }
+        assert_eq!(git("https://github.com/u/r#v1.2.3"), format!("{hub}v1.2.3"));
+        assert_eq!(git("https://gitlab.com/g/p"), "git+https://gitlab.com/g/p.git#");
+        // Anything below a repository's top is still a url to download.
+        for url in [
+            "https://github.com/u/r/archive/v1.tar.gz",
+            "https://codeload.github.com/u/r/tar.gz/main",
+            "https://github.com/u",
+        ] {
+            assert_ne!(parse_dep("x", url).map(|s| s.kind).ok(), Some(Kind::Git), "{url}");
         }
         assert_eq!(git("u/r#v1.2.3"), format!("{hub}v1.2.3"));
         assert_eq!(git("u/r#feature/x"), format!("{hub}feature/x"));
