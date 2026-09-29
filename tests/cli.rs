@@ -137,6 +137,50 @@ fn settles_peers_against_the_tree() {
 }
 
 #[test]
+fn consumers_missing_one_peer_share_a_version_that_fits_them_all() {
+    // typescript-eslint caps typescript where ts-api-utils takes any: a copy each gave
+    // ts-api-utils a typescript it could not load (unjs/upm#8).
+    let r = Registry::start(vec![
+        pkg("capped", "1.0.0", json!({ "peerDependencies": { "ts": ">=4.8.4 <6.1.0" } })),
+        pkg("open", "1.0.0", json!({ "peerDependencies": { "ts": ">=4.8.4" } })),
+        pkg("gap", "1.0.0", json!({ "peerDependencies": { "ts": ">=6.5.0" } })),
+        pkg("ts", "5.9.0", json!({})),
+        pkg("ts", "6.0.3", json!({})),
+        pkg("ts", "7.0.2", json!({})),
+    ]);
+    let ts = |env: &Env, who: &str| env.lock()["packages"][who]["dependencies"]["ts"].clone();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "open": "^1", "capped": "^1" } }));
+    env.ok(&["install"]);
+    assert_eq!(ts(&env, "open@1.0.0"), "6.0.3");
+    assert_eq!(ts(&env, "capped@1.0.0"), "6.0.3");
+    assert!(env.lock()["packages"].get("ts@7.0.2").is_none());
+
+    // No version fits both: each keeps its own.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "gap": "^1", "capped": "^1" } }));
+    env.ok(&["install"]);
+    assert_eq!(ts(&env, "gap@1.0.0"), "7.0.2");
+    assert_eq!(ts(&env, "capped@1.0.0"), "6.0.3");
+
+    // A dev-only consumer never narrows what a shipped one gets.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "open": "^1" }, "devDependencies": { "capped": "^1" } }));
+    env.ok(&["install"]);
+    assert_eq!(ts(&env, "open@1.0.0"), "7.0.2");
+    assert_eq!(ts(&env, "capped@1.0.0"), "6.0.3");
+
+    // A lock that gave them a copy each heals from what it has: the locked 6.0.3 fits both.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "open": "^1" }, "devDependencies": { "capped": "^1" } }));
+    env.ok(&["install"]);
+    env.manifest(json!({ "dependencies": { "open": "^1", "capped": "^1" } }));
+    env.ok(&["install"]);
+    assert_eq!(ts(&env, "open@1.0.0"), "6.0.3");
+    assert_eq!(ts(&env, "capped@1.0.0"), "6.0.3");
+}
+
+#[test]
 fn skips_other_platforms_builds() {
     let r = registry();
     let env = Env::new(&r);

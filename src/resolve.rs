@@ -604,7 +604,8 @@ impl Walk<'_> {
     /// there. Only an unmet peer is fetched, and a fetch can bring peers of its own: a fixpoint.
     fn settle_peers(&self) -> Result<()> {
         loop {
-            let mut jobs = Vec::new();
+            // Unmet, by pool and name: a dev-only consumer never narrows what a shipped one gets.
+            let mut unmet: Vec<(bool, Vec<(String, Job)>)> = Vec::new();
             {
                 let mut s = lock(&self.state);
                 let mut todo = std::mem::take(&mut s.hard_peers);
@@ -641,11 +642,58 @@ impl Walk<'_> {
                             && !have.get(&name).is_some_and(|l| l.iter().any(|k| s.records[k].version == *o))
                     });
                     let fresh = again.is_none();
-                    let range = again.map_or(range, str::to_string);
-                    jobs.push(Job { from, name, range, optional: false, fresh });
+                    let ask = again.map_or_else(|| range.clone(), str::to_string);
+                    let ships = shipped.contains(&from);
+                    let job = (range, Job { from, name, range: ask, optional: false, fresh });
+                    match unmet.iter_mut().find(|(p, g)| *p == ships && g[0].1.name == job.1.name) {
+                        Some((_, group)) => group.push(job),
+                        None => unmet.push((ships, vec![job])),
+                    }
                 }
             }
+            let mut jobs = Vec::new();
+            // ponytail: one group at a time; a pool if many groups ever wait on the registry.
+            for (_, mut group) in unmet {
+                self.share_peer(&mut group);
+                jobs.extend(group.into_iter().map(|(_, j)| j));
+            }
             self.drain(jobs)?;
+        }
+    }
+
+    /// Consumers that miss the same peer share the newest of what each would get alone that
+    /// fits them all: typescript-eslint caps typescript where ts-api-utils does not, and a copy
+    /// each hands them two compilers. The picks are the ones their edges make anyway. With no
+    /// such version each keeps its own; on a tie a locked version wins, so the record is the lock's.
+    fn share_peer(&self, group: &mut [(String, Job)]) {
+        if group.len() < 2 {
+            return;
+        }
+        let answers: Vec<Option<String>> = group
+            .iter()
+            .map(|(_, j)| {
+                if !j.fresh {
+                    return Some(j.range.clone());
+                }
+                spec::parse_dep(&j.name, &j.range).and_then(|s| self.pick(&s, true)).ok().map(|m| m.version.clone())
+            })
+            .collect();
+        let fits_all = |v: &str| group.iter().zip(&answers).all(|((r, _), a)| a.is_none() || semver::satisfies(v, r));
+        let mut best: Option<(usize, Option<semver::Version>)> = None;
+        for (i, v) in answers.iter().enumerate() {
+            let Some(v) = v.as_deref().filter(|v| fits_all(v)) else { continue };
+            let version = semver::parse(v);
+            if best.as_ref().is_none_or(|(_, b)| version > *b || (version == *b && !group[i].1.fresh)) {
+                best = Some((i, version));
+            }
+        }
+        let Some((i, _)) = best else { return };
+        let (range, fresh) = (group[i].1.range.clone(), group[i].1.fresh);
+        for ((_, j), answer) in group.iter_mut().zip(&answers) {
+            if answer.is_some() {
+                j.range = range.clone();
+                j.fresh = fresh;
+            }
         }
     }
 
