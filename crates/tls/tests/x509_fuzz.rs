@@ -307,8 +307,10 @@ fn error_messages_mostly_agree() {
 #[test]
 fn robustness() {
     // Mutated chains and random bytes through verify_server alone: no panics, and each call
-    // quick. The bound is for release builds; debug builds get more room.
-    let limit = if cfg!(debug_assertions) { Duration::from_millis(1000) } else { Duration::from_millis(50) };
+    // quick. The bound catches runaway work, not slowness: release builds on 64-bit hardware get
+    // 50 ms, debug builds and 32-bit ARM (which CI runs under qemu, many times slower) a second.
+    let slow = cfg!(debug_assertions) || cfg!(target_arch = "arm");
+    let limit = if slow { Duration::from_millis(1000) } else { Duration::from_millis(50) };
     let corpus = corpus();
     let mut rng = Rng(0xdead_beef);
     let mut slowest = Duration::ZERO;
