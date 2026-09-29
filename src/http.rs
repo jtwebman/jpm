@@ -298,7 +298,7 @@ fn client() -> &'static Arc<Client> {
 /// The network settings of `.npmrc` and the environment, for every request from here on: the
 /// roots to trust, `strict-ssl` and the proxies. Called once, before the first request.
 pub fn configure(config: &Config) -> Result<()> {
-    let roots = roots(config, &env)?;
+    let roots = roots(config, &env, system())?;
     if config.insecure_tls {
         crate::ui::warn(
             "strict-ssl=false: certificates are not checked, so anyone on the network can pose as the registry",
@@ -333,10 +333,23 @@ fn mozilla() -> Vec<Anchor<'static>> {
         .collect()
 }
 
-/// The roots to trust. `cafile`, else `ca`, in place of Mozilla's: npm hands them to Node as
+/// The roots the operating system trusts: where a company installs the root of its
+/// TLS-inspecting proxy, which browsers then accept. A certificate jpm cannot read is left out.
+fn system() -> Vec<Anchor<'static>> {
+    let ders = crate::sys::system_roots();
+    // Leaked once per run, as the PEM anchors are: they borrow the bytes for the process's life.
+    ders.into_iter().filter_map(|der| Anchor::from_cert(Box::leak(der.into_boxed_slice())).ok()).collect()
+}
+
+/// The roots to trust. `cafile`, else `ca`, in place of the defaults: npm hands them to Node as
 /// its `ca` option, which replaces the default list (NODE_EXTRA_CA_CERTS included). Otherwise
-/// Mozilla's, plus the file NODE_EXTRA_CA_CERTS names, as Node adds it.
-fn roots(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<Anchor<'static>>> {
+/// Mozilla's and the system's (`system`), plus the file NODE_EXTRA_CA_CERTS names, as Node
+/// adds it.
+fn roots(
+    config: &Config,
+    env: &dyn Fn(&str) -> Option<String>,
+    system: Vec<Anchor<'static>>,
+) -> Result<Vec<Anchor<'static>>> {
     if let Some(file) = &config.cafile {
         return pem_file(file);
     }
@@ -344,6 +357,7 @@ fn roots(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<An
         return anchors(pem).map_err(|e| e.context("the ca setting"));
     }
     let mut roots = mozilla();
+    roots.extend(system);
     if let Some(file) = env("NODE_EXTRA_CA_CERTS") {
         roots.extend(pem_file(Path::new(&file))?);
     }
@@ -795,6 +809,20 @@ fn percent_decode(s: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trusts_the_linux_ca_bundle() {
+        if std::path::Path::new("/etc/ssl/certs/ca-certificates.crt").exists() {
+            assert!(system().len() > 50, "the distribution's bundle is read");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn trusts_the_windows_root_store() {
+        assert!(!system().is_empty(), "no readable roots in the current user's ROOT store");
+    }
+
     #[test]
     fn parses_urls() {
         let u = Url::parse("https://registry.npmjs.org/@a%2fb?x=1#frag").unwrap();
@@ -1028,24 +1056,31 @@ mod tests {
             crate::config::to_config(&[crate::config::parse_npmrc(&rc, &|_| None).unwrap()], None).unwrap()
         };
         let mozilla = mozilla().len();
-        assert_eq!(roots(&config(""), &|_| None).unwrap().len(), mozilla);
+        assert_eq!(roots(&config(""), &|_| None, Vec::new()).unwrap().len(), mozilla);
         // NODE_EXTRA_CA_CERTS adds to Mozilla's.
-        assert_eq!(roots(&config(""), &with_extra).unwrap().len(), mozilla + 1);
+        assert_eq!(roots(&config(""), &with_extra, Vec::new()).unwrap().len(), mozilla + 1);
+        // So do the system's; cafile replaces them as well.
+        let system = || roots(&config(&format!("cafile={}", b.display())), &|_| None, Vec::new()).unwrap();
+        assert_eq!(roots(&config(""), &with_extra, system()).unwrap().len(), mozilla + 1 + system().len());
+        assert_eq!(roots(&config("cafile={b}"), &with_extra, system()).unwrap().len(), 2);
         // cafile and ca replace them, NODE_EXTRA_CA_CERTS too; cafile wins over ca.
-        assert_eq!(roots(&config("cafile={b}"), &with_extra).unwrap().len(), 2);
+        assert_eq!(roots(&config("cafile={b}"), &with_extra, Vec::new()).unwrap().len(), 2);
         let inline = pem("c").trim_end().replace('\n', "\\n");
-        assert_eq!(roots(&config(&format!("ca=\"{inline}\"")), &with_extra).unwrap().len(), 1);
+        assert_eq!(roots(&config(&format!("ca=\"{inline}\"")), &with_extra, Vec::new()).unwrap().len(), 1);
         let two = format!("ca[]=\"{inline}\"\nca[]=\"{}\"", pem("d").trim_end().replace('\n', "\\n"));
-        assert_eq!(roots(&config(&two), &with_extra).unwrap().len(), 2);
-        assert_eq!(roots(&config(&format!("ca=\"{inline}\"\ncafile={{b}}")), &with_extra).unwrap().len(), 2);
+        assert_eq!(roots(&config(&two), &with_extra, Vec::new()).unwrap().len(), 2);
+        assert_eq!(
+            roots(&config(&format!("ca=\"{inline}\"\ncafile={{b}}")), &with_extra, Vec::new()).unwrap().len(),
+            2
+        );
         // A bad or missing file is an error that names it.
         std::fs::write(&a, "not a certificate").unwrap();
-        let e = roots(&config(""), &with_extra).unwrap_err();
+        let e = roots(&config(""), &with_extra, Vec::new()).unwrap_err();
         assert_eq!(e.message, format!("{}: no PEM certificates", a.display()));
         let missing = dir.join("missing.pem");
-        let e = roots(&config(&format!("cafile={}", missing.display())), &|_| None).unwrap_err();
+        let e = roots(&config(&format!("cafile={}", missing.display())), &|_| None, Vec::new()).unwrap_err();
         assert!(e.message.starts_with(&format!("cannot read CA certificates from {}", missing.display())));
-        let e = roots(&config("ca=junk"), &|_| None).unwrap_err();
+        let e = roots(&config("ca=junk"), &|_| None, Vec::new()).unwrap_err();
         assert_eq!(e.message, "the ca setting: no PEM certificates");
         std::fs::remove_dir_all(&dir).unwrap();
     }

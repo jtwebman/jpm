@@ -49,6 +49,47 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+#[repr(C)]
+struct CertContext {
+    encoding: u32,
+    encoded: *const u8,
+    len: u32,
+    info: *mut std::ffi::c_void,
+    store: *mut std::ffi::c_void,
+}
+
+#[link(name = "crypt32")]
+unsafe extern "system" {
+    fn CertOpenSystemStoreW(prov: usize, name: *const u16) -> *mut std::ffi::c_void;
+    fn CertEnumCertificatesInStore(store: *mut std::ffi::c_void, prev: *const CertContext) -> *const CertContext;
+    fn CertCloseStore(store: *mut std::ffi::c_void, flags: u32) -> i32;
+}
+
+/// The current user's `ROOT` store, which takes in the machine's and group policy's roots: where
+/// a company installs the root of its TLS-inspecting proxy.
+pub fn system_roots() -> Vec<Vec<u8>> {
+    let name: Vec<u16> = "ROOT\0".encode_utf16().collect();
+    let mut out = Vec::new();
+    // SAFETY: the store is opened, walked (each call frees the context before it) and closed
+    // here; each certificate's bytes are copied out while its context is live.
+    unsafe {
+        let store = CertOpenSystemStoreW(0, name.as_ptr());
+        if store.is_null() {
+            return out;
+        }
+        let mut cert = CertEnumCertificatesInStore(store, std::ptr::null());
+        while !cert.is_null() {
+            let c = &*cert;
+            if !c.encoded.is_null() {
+                out.push(std::slice::from_raw_parts(c.encoded, c.len as usize).to_vec());
+            }
+            cert = CertEnumCertificatesInStore(store, cert);
+        }
+        CertCloseStore(store, 0);
+    }
+    out
+}
+
 /// `BY_HANDLE_FILE_INFORMATION`. A `FILETIME` is two `u32`s, aligned as one: a `u64` here would
 /// pad the struct and shift every field after it.
 #[repr(C)]
