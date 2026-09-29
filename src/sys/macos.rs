@@ -5,7 +5,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-pub use super::unix::{alive, exec, links_to, read_link, symlink_dir};
+pub use super::unix::{alive, exec, leave_interrupts_to_children, links_to, read_link, symlink_dir};
 
 pub fn libc() -> Option<&'static str> {
     None

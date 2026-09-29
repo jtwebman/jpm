@@ -29,6 +29,8 @@ pub fn exec(command: &mut Command) -> io::Result<i32> {
     Err(command.exec())
 }
 
+pub fn leave_interrupts_to_children() {}
+
 #[allow(dead_code)] // used by unix targets that have no faster copy
 pub fn clone_dir(_src: &Path, _dst: &Path) -> io::Result<bool> {
     Ok(false)

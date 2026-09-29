@@ -207,8 +207,12 @@ pub fn stamp_of(file: &Path) -> Option<Stamp> {
         use std::os::unix::fs::MetadataExt;
         (m.ctime() as i128 * 1_000_000_000 + i128::from(m.ctime_nsec()), m.ino())
     };
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let (ctime, ino) =
+        crate::sys::file_info(file).map_or((ns(m.created()) as i128, 0u64), |i| (i128::from(i.changed), i.index));
+    #[cfg(not(any(unix, windows)))]
     let (ctime, ino) = (ns(m.created()) as i128, 0u64);
+
     Some([m.len().to_string(), ns(m.modified()).to_string(), ctime.to_string(), ino.to_string()])
 }
 
@@ -252,6 +256,13 @@ mod tests {
         std::fs::write(&f, "bb").unwrap();
         assert_ne!(stamp_of(&f).unwrap(), a);
         assert!(stamp_of(&dir.join("missing")).is_none());
+        // The same size, the mtime set back: only the change time tells.
+        let b = stamp_of(&f).unwrap();
+        let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(&f, "cc").unwrap();
+        std::fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
+        assert_ne!(stamp_of(&f).unwrap(), b);
     }
 
     #[test]
