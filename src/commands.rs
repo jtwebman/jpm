@@ -439,7 +439,20 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     let packages = wanted.len();
     let scripts = !ctx.ignore_scripts();
-    let chosen = if scripts { build::chosen(&resolution, &build::trusted(&project.manifest)) } else { HashSet::new() };
+    let mut chosen =
+        if scripts { build::chosen(&resolution, &build::trusted(&project.manifest)) } else { HashSet::new() };
+    // Only the package the registry serves under that name and version, or a tarball package.json
+    // names: a lockfile edit pointing an approved package at another tarball, or an alias
+    // wearing a trusted name, runs nothing.
+    let base = ctx.base_for();
+    chosen.retain(|id| {
+        let p = &resolution.packages[id];
+        let own = p.source.is_some() || p.resolved == crate::registry::tarball_url(&base(&p.name), &p.name, &p.version);
+        if !own {
+            warn(&format!("{id} is approved, but its tarball is not the registry's; its install scripts do not run"));
+        }
+        own
+    });
     let build_keys: HashMap<String, String> =
         chosen.iter().filter_map(|id| Some((id.clone(), keys.get(id)?.clone()))).collect();
     let options = link::Options {
@@ -526,6 +539,13 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
         let mut found = false;
         for (key, e) in &mut lock.packages {
             if e.scripts && crate::graph::split_key(key).is_some_and(|(n, _)| n == name) {
+                // An alias, or a tarball from elsewhere, is not the package the name says.
+                if let Some(from) = &e.resolved {
+                    return Err(fail(
+                        "ENOSCRIPTS",
+                        format!("{key} comes from {from}, not the registry; jpm will not approve it"),
+                    ));
+                }
                 found = true;
                 if !e.build {
                     e.build = true;
