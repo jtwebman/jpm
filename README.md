@@ -2,7 +2,7 @@
 
 A fast, small package manager for the npm registry, written in Rust.
 
-jpm is a port of [upm](https://github.com/unjs/upm) to Rust. It installs the same
+jpm started as a Rust port of [upm](https://github.com/unjs/upm). It installs the same
 isolated `node_modules` layout and takes the same commands and flags. It needs no Node.js
 to install packages; Node is only needed to run them.
 
@@ -406,4 +406,5 @@ bench/bench.sh -r jpm,upm,npm,pnpm12,bun -f nuxt
 
 ## License
 
-MIT. jpm is a port of upm, Copyright (c) Pooya Parsa.
+MIT, Copyright (c) 2026 JT Turner. jpm started as a port of upm, Copyright (c) Pooya Parsa,
+also MIT; `bench/` is upm's benchmark harness. See [LICENSE](LICENSE).
