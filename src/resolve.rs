@@ -547,6 +547,7 @@ impl Walk<'_> {
             on_pick(&found, from);
         }
         s.records.insert(key.clone(), found);
+        crate::ui::count(&crate::ui::RESOLVED, 1);
         for (n, r) in &m.dependencies {
             if !m.optional_dependencies.contains_key(n) {
                 queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: false, fresh: false });
@@ -580,6 +581,7 @@ impl Walk<'_> {
                 on_pick(&found, &from);
             }
             s.records.insert(key.clone(), found);
+            crate::ui::count(&crate::ui::RESOLVED, 1);
             let mut list = Vec::new();
             for (optional, map) in [(false, &pkg.dependencies), (true, &pkg.optional_dependencies)] {
                 for (name, version) in map {

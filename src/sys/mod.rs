@@ -17,6 +17,9 @@
 //!   where a process cannot be replaced, with the command's exit code.
 //! - `leave_interrupts_to_children()`: while children run, Ctrl+C is theirs to act on (Windows;
 //!   unix delivers it to the whole process group).
+//! - `vt()`: whether stderr takes escape sequences (turned on for a Windows console that can).
+//! - `on_interrupt(undo)`: Ctrl+C writes `undo` to stderr before ending the process as before;
+//!   `None` stops that.
 
 #[cfg(unix)]
 mod unix;
@@ -52,7 +55,9 @@ mod tests {
 pub use windows::*;
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-pub use unix::{alive, clone_dir, exec, leave_interrupts_to_children, links_to, read_link, symlink_dir};
+pub use unix::{
+    alive, clone_dir, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
+};
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn libc() -> Option<&'static str> {
     None

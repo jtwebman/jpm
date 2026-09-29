@@ -361,15 +361,15 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
     let ids: Vec<&String> = linker.wanted.keys().collect();
+    crate::ui::count(&crate::ui::TO_LINK, ids.len());
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
-        if !linker.present(entry) {
-            return;
-        }
         let placed = match linker.global_of(entry) {
+            _ if !linker.present(entry) => Ok(()),
             Some(global) => linker.materialize_global(entry, global),
             None => linker.materialize(entry, present.contains(&entry.key)),
         };
+        crate::ui::count(&crate::ui::LINKED, 1);
         if let Err(e) = placed {
             failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
         }
