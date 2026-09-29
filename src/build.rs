@@ -1,7 +1,7 @@
-//! Install scripts. A dependency's `preinstall`, `install` and `postinstall` run only when
-//! package.json trusts its name and jpm.lock approves its version (`jpm approve`), in a copy of
-//! the package with npm credentials taken out of the environment. The project's own lifecycle
-//! scripts run as npm runs them, once the tree is linked.
+//! Install scripts. A dependency's `preinstall`, `install` and `postinstall` (and a git one's
+//! `prepare`) run only when package.json trusts its name and jpm.lock approves its version
+//! (`jpm approve`), in a copy of the package with npm credentials taken out of the environment.
+//! The project's own lifecycle scripts run as npm runs them, once the tree is linked.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -13,7 +13,7 @@ use crate::graph::Resolution;
 use crate::json::Value;
 use crate::project::RootManifest;
 use crate::rules::Rules;
-use crate::{run, ui};
+use crate::{run, spec, ui};
 
 const INSTALL: [&str; 3] = ["preinstall", "install", "postinstall"];
 const LIFECYCLE: [&str; 6] = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];
@@ -86,6 +86,11 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
         if !events.iter().any(|(e, _)| *e != "postinstall") && pkg_dir.join("binding.gyp").is_file() {
             let at = events.iter().position(|(e, _)| *e == "postinstall").unwrap_or(events.len());
             events.insert(at, ("install", "node-gyp rebuild".into()));
+        }
+        // A git package's `prepare` builds what a registry tarball would ship built, so it runs
+        // first. Its devDependencies are not installed for it.
+        if let Some(line) = scripts.get("prepare").filter(|_| p.source.as_deref().is_some_and(spec::is_git)) {
+            events.insert(0, ("prepare", line.clone()));
         }
         for (event, line) in &events {
             let mut command = run::shell(line, &pkg_dir, &run::bin_dirs(&pkg_dir));

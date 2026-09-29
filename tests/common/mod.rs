@@ -108,6 +108,8 @@ pub fn b64(bytes: &[u8]) -> String {
 pub struct Registry {
     pub url: String,
     pkgs: Arc<Mutex<Vec<Pkg>>>,
+    /// Other paths it answers, such as a git host's archives: path -> body.
+    files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     /// Requests served, by path.
     pub hits: Arc<Mutex<Vec<String>>>,
     pub requests: Arc<AtomicUsize>,
@@ -118,16 +120,22 @@ impl Registry {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let pkgs = Arc::new(Mutex::new(pkgs));
+        let files = Arc::new(Mutex::new(BTreeMap::new()));
         let hits = Arc::new(Mutex::new(Vec::new()));
         let requests = Arc::new(AtomicUsize::new(0));
-        let (p, h, r, u) = (pkgs.clone(), hits.clone(), requests.clone(), url.clone());
+        let (p, f, h, r, u) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (p, h, r, u) = (p.clone(), h.clone(), r.clone(), u.clone());
-                std::thread::spawn(move || serve(stream, &p, &h, &r, &u));
+                let (p, f, h, r, u) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone());
+                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u));
             }
         });
-        Self { url, pkgs, hits, requests }
+        Self { url, pkgs, files, hits, requests }
+    }
+
+    /// Answers `path` with `body` from now on.
+    pub fn serve(&self, path: &str, body: Vec<u8>) {
+        self.files.lock().unwrap().insert(path.to_string(), body);
     }
 
     /// Adds a version, or replaces one already published.
@@ -155,24 +163,26 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("https://{}", listener.local_addr().unwrap());
     let pkgs = Arc::new(Mutex::new(pkgs));
+    let files = Arc::new(Mutex::new(BTreeMap::new()));
     let hits = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::new(AtomicUsize::new(0));
-    let (p, h, r, u) = (pkgs.clone(), hits.clone(), requests.clone(), url.clone());
+    let (p, f, h, r, u) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone());
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let (p, h, r, u, c) = (p.clone(), h.clone(), r.clone(), u.clone(), config.clone());
+            let (p, f, h, r, u, c) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), config.clone());
             std::thread::spawn(move || {
                 let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
-                serve(tls, &p, &h, &r, &u)
+                serve(tls, &p, &f, &h, &r, &u)
             });
         }
     });
-    Registry { url, pkgs, hits, requests }
+    Registry { url, pkgs, files, hits, requests }
 }
 
 fn serve(
     stream: impl Read + Write,
     pkgs: &Mutex<Vec<Pkg>>,
+    files: &Mutex<BTreeMap<String, Vec<u8>>>,
     hits: &Mutex<Vec<String>>,
     requests: &AtomicUsize,
     base: &str,
@@ -203,7 +213,11 @@ fn serve(
         requests.fetch_add(1, Ordering::Relaxed);
         // The path, then any credential it came with, for tests that check where tokens go.
         hits.lock().unwrap().push(format!("{path}{auth}"));
-        let (status, bytes) = answer(&path.replace("%2f", "/").replace("%2F", "/"), &pkgs.lock().unwrap(), base);
+        let file = files.lock().unwrap().get(&path).cloned();
+        let (status, bytes) = match file {
+            Some(body) => ("200 OK", body),
+            None => answer(&path.replace("%2f", "/").replace("%2F", "/"), &pkgs.lock().unwrap(), base),
+        };
         let head = format!(
             "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: keep-alive\r\n\r\n",
             bytes.len()
