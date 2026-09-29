@@ -3,11 +3,11 @@
 
 mod common;
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufRead, Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{KEY_TYPES, KeyType, Pki, pki};
 
@@ -44,13 +44,12 @@ impl Drop for Server {
     }
 }
 
-/// `openssl s_server -www` with `args`, and its port once it listens.
+/// `openssl s_server -www` with `args`, and its port once it listens. It picks a free port
+/// itself and prints it: a port chosen here could be taken by a parallel test's server first.
 fn s_server(pki: &Pki, args: &[&str]) -> (Server, u16) {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let [leaf, chain, key] = files(pki);
     let child = Command::new("openssl")
-        .args(["s_server", "-www", "-accept"])
-        .arg(port.to_string())
+        .args(["s_server", "-www", "-accept", "0"])
         .arg("-cert")
         .arg(&leaf)
         .arg("-cert_chain")
@@ -58,21 +57,20 @@ fn s_server(pki: &Pki, args: &[&str]) -> (Server, u16) {
         .arg("-key")
         .arg(&key)
         .args(args)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("openssl");
     let mut server = Server(child);
-    let start = Instant::now();
-    // Wait for it to listen. The probe's failed handshake does not stop it.
-    loop {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            break;
+    let mut lines = std::io::BufReader::new(server.0.stdout.take().expect("stdout")).lines();
+    let port = loop {
+        let line = lines.next().unwrap_or_else(|| panic!("s_server {args:?} exited")).expect("stdout");
+        if let Some(addr) = line.strip_prefix("ACCEPT ") {
+            break addr.rsplit(':').next().and_then(|p| p.parse().ok()).expect("port");
         }
-        assert!(server.0.try_wait().unwrap().is_none(), "s_server {args:?} exited");
-        assert!(start.elapsed() < Duration::from_secs(10), "s_server {args:?} did not start");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    };
+    // Keep draining its output, so it never blocks on a full pipe.
+    std::thread::spawn(move || lines.for_each(drop));
     (server, port)
 }
 
