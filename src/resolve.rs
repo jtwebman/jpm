@@ -116,6 +116,7 @@ struct Walk<'a> {
     locked_versions: HashMap<String, Vec<String>>,
     picks: Memo<Arc<Manifest>>,
     libcs: Memo<Option<Vec<String>>>,
+    runtimes: Memo<Package>,
 }
 
 /// Values computed once however many threads ask.
@@ -176,6 +177,7 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         locked_versions,
         picks: Mutex::default(),
         libcs: Mutex::default(),
+        runtimes: Mutex::default(),
     };
     walk.run()
 }
@@ -276,6 +278,16 @@ impl Walk<'_> {
         }
         if spec.kind == Kind::Directory {
             push(self.dir(from, &spec)?);
+            return Ok(());
+        }
+        if spec.kind == Kind::Runtime {
+            if !self.tops.contains_key(from) {
+                lock(&self.state)
+                    .warnings
+                    .insert(format!("{from} declares {name}@{range}; only the root and workspaces install a runtime"));
+                return Ok(());
+            }
+            push(self.runtime(from, &spec, fresh)?);
             return Ok(());
         }
         if spec.kind == Kind::Git {
@@ -423,6 +435,46 @@ impl Walk<'_> {
         let declared = specs?.groups().any(|(_, g)| g.and_then(|g| g.get(name)).is_some_and(|r| r == range));
         let edge = edge.filter(|e| declared && locked.packages.contains_key(&format!("{name}@{e}")))?;
         Some(edge.clone())
+    }
+
+    /// A runtime edge's version, `runtime:<version>`. The locked version stays while the top
+    /// declares the same range, or while the new range allows it; then a version another
+    /// manager's lockfile names; else the newest the range allows.
+    fn runtime(&self, from: &str, spec: &Spec, fresh: bool) -> Result<String> {
+        let (name, range) = (spec.name.as_str(), spec.fetch_spec.as_str());
+        let in_range = |versions: &mut dyn Iterator<Item = &str>| {
+            let list: Vec<&str> = versions.filter_map(|v| v.strip_prefix(crate::runtime::PROTOCOL)).collect();
+            semver::max_satisfying(list, if range.is_empty() { "*" } else { range }).map(str::to_string)
+        };
+        if !fresh {
+            if let Some(source) = self.kept_commit(from, name, &spec.raw[name.len() + 1..]) {
+                self.visit_locked(from, &format!("{name}@{source}"));
+                return Ok(source);
+            }
+            let locked = self.opts.locked.iter().flat_map(|l| l.packages.values()).filter(|p| p.name == name);
+            if let Some(v) = in_range(&mut locked.filter_map(|p| p.source.as_deref())) {
+                let source = format!("{}{v}", crate::runtime::PROTOCOL);
+                self.visit_locked(from, &format!("{name}@{source}"));
+                return Ok(source);
+            }
+        }
+        let preferred = self.opts.prefer.and_then(|p| in_range(&mut p.versions.get(name)?.iter().map(String::as_str)));
+        let memo = format!("{}{name}@{range}", crate::runtime::PROTOCOL);
+        let cell = self.runtimes.lock().unwrap_or_else(PoisonError::into_inner).entry(memo).or_default().clone();
+        let found = cell
+            .get_or_init(|| crate::runtime::resolve(name, range, preferred.as_deref(), self.opts.registry))
+            .clone()?;
+        let key = found.key();
+        let mut s = lock(&self.state);
+        if s.started.insert(key.clone()) {
+            if let Some(on_pick) = self.opts.on_pick {
+                on_pick(&found, from);
+            }
+            s.edges.insert(key.clone(), Vec::new());
+            s.records.insert(key, found.clone());
+            crate::ui::count(&crate::ui::RESOLVED, 1);
+        }
+        Ok(found.edge_version())
     }
 
     /// A directory edge's version, `link:<path>`: the top there when it goes by this name, else

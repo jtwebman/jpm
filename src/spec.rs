@@ -18,6 +18,8 @@ pub enum Kind {
     Directory,
     /// `fetch_spec` is a repository url as a lockfile spells it, `#`, and a ref (see `git`).
     Git,
+    /// `runtime:<range>` on node, bun or deno: `fetch_spec` is the range (see `runtime`).
+    Runtime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +118,19 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         return build(name, &range, raw);
     }
     unsupported(&s, raw)?;
+    if let Some(range) = s.strip_prefix(crate::runtime::PROTOCOL) {
+        if !crate::runtime::NAMES.contains(&name) {
+            return Err(invalid(format!("\"runtime:\" is for node, bun and deno, not \"{raw}\"")));
+        }
+        let range = range.trim().to_string();
+        return Ok(Spec {
+            raw: raw.to_string(),
+            name: name.into(),
+            fetch_name: name.into(),
+            kind: Kind::Runtime,
+            fetch_spec: range,
+        });
+    }
     let repo = git(&s, raw)?;
     let source = if repo.is_some() { None } else { path(&s, raw)? };
     let mut local = false;

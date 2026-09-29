@@ -167,6 +167,15 @@ impl Registry {
         self.cache.as_ref().map(|c| c.mode)
     }
 
+    pub fn offline(&self) -> bool {
+        self.mode() == Some(CacheMode::Only)
+    }
+
+    /// The credentials, each for the urls under its own prefix.
+    pub fn auth(&self) -> &BTreeMap<String, String> {
+        &self.auth
+    }
+
     /// A document's bytes: kept, revalidated or fetched, as the cache mode says.
     fn document(&self, name: &str, url: &str, accept: &str, ask: bool) -> Result<Vec<u8>> {
         let key = format!("{} {url}", if accept == CORGI { "corgi" } else { "full" });
@@ -447,7 +456,7 @@ fn wildcard(p: &[u8], s: &[u8]) -> bool {
 
 /// The node this tree will run on, for `engines.node`: `JPM_NODE_VERSION`, else `node --version`.
 /// Asked once, and only when a pick has to rank versions. No node means every engine passes.
-fn node_version() -> Option<&'static Version> {
+pub fn node_version() -> Option<&'static Version> {
     static NODE: OnceLock<Option<Version>> = OnceLock::new();
     NODE.get_or_init(|| {
         let text = std::env::var("JPM_NODE_VERSION").ok().or_else(|| {

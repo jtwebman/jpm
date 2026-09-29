@@ -102,7 +102,10 @@ pub fn mark(store: &Store) -> (HashSet<String>, HashSet<PathBuf>) {
         shared.extend(st.shared);
         // A lockfile that cannot be read marks nothing: store content costs only a download.
         if let Ok(Some((lock, _))) = lock::read_lockfile(&dir) {
-            used.extend(lock.packages.values().filter_map(|p| store.pkg_dir(&p.integrity).ok()));
+            // A runtime keeps each platform's build: a store shared across machines may hold several.
+            let all =
+                lock.packages.values().flat_map(|p| p.variants.iter().map(|v| &v.integrity).chain([&p.integrity]));
+            used.extend(all.filter_map(|i| store.pkg_dir(i).ok()));
         }
     }
     (shared, used)

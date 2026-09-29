@@ -455,7 +455,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         });
     ui::phase("planned");
     // A failed plan drops the fetcher, and with it what is still waiting.
-    let ((workspaces, locked, lock_hash, tarballs), keys, resolution) = planned?;
+    let ((workspaces, locked, lock_hash, tarballs), keys, mut resolution) = planned?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
@@ -466,6 +466,15 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ));
     }
     let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
+    // A runtime package.json only asks for, checked against the system's: a warning, never a stop.
+    let tops = std::iter::once((String::new(), &project.manifest))
+        .chain(project.workspaces.iter().map(|w| (format!("{}/", w.path), &w.manifest)));
+    for (at, m) in tops {
+        for (field, name, range) in &m.runtime_checks {
+            let file = format!("{at}package.json {field}.runtime");
+            resolution.warnings.extend(crate::runtime::check_system(name, range, &file));
+        }
+    }
     for w in &resolution.warnings {
         warn(w);
     }
@@ -475,7 +484,6 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
     }
     let elsewhere = locked.saturating_sub(resolution.packages.len() - workspaces);
-    let mut resolution = resolution;
     if !ctx.binless.is_empty() {
         read_bins(&mut resolution, &store, &ctx.binless, &dir)?;
     }
@@ -822,7 +830,8 @@ fn tarball_of(dir: &Path, resolved: &str, source: Option<&str>) -> Tarball {
 
 /// A tarball dependency whose bytes are not the ones the lockfile pinned.
 fn stale(e: Error, source: &str) -> Error {
-    if e.code != "EINTEGRITY" {
+    // A runtime's build is not the project's to replace: its error names the download.
+    if e.code != "EINTEGRITY" || source.starts_with(crate::runtime::PROTOCOL) {
         return e;
     }
     fail(
@@ -1415,6 +1424,18 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
             continue;
         }
         let Some(spec) = spec else { continue };
+        // A runtime keeps its range as typed: none is `^` the newest, `--exact` that version.
+        if spec.kind == Kind::Runtime {
+            let range = match spec.fetch_spec.as_str() {
+                r if !exact && !r.is_empty() => r.to_string(),
+                r => {
+                    let v = crate::runtime::resolve(&spec.name, r, None, &registry)?.version;
+                    if exact { v } else { format!("^{v}") }
+                }
+            };
+            added.push(Added { name: spec.name.clone(), range: format!("{}{range}", crate::runtime::PROTOCOL), group });
+            continue;
+        }
         let version = match local.get(&spec.fetch_name).filter(|v| project::links_to(spec, v)) {
             Some(v) => v.clone(),
             None => registry.pick(spec, None, false)?.version.clone(),
@@ -1759,7 +1780,9 @@ fn pick_all(ctx: &Ctx, store: &Store, specs: &[String]) -> Result<Vec<Arc<Manife
         return Err(fail("EOPTION", "needs at least one spec"));
     }
     let parsed: Vec<spec::Spec> = specs.iter().map(|s| spec::parse_spec(s)).collect::<Result<_>>()?;
-    if let Some(t) = parsed.iter().find(|s| matches!(s.kind, Kind::Tarball | Kind::Directory | Kind::Git)) {
+    if let Some(t) =
+        parsed.iter().find(|s| matches!(s.kind, Kind::Tarball | Kind::Directory | Kind::Git | Kind::Runtime))
+    {
         return Err(fail("EINVALIDSPEC", format!("{} is not a registry spec", t.raw)));
     }
     let registry = ctx.registry(store);

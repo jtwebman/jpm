@@ -28,6 +28,9 @@ pub struct RootManifest {
     pub overrides: Vec<crate::rules::Override>,
     /// The root's patches, each file read for its hash (`rules::Rules::apply`).
     pub patches: Vec<crate::patch::Patch>,
+    /// `devEngines.runtime` and `engines.runtime` entries that only check the system's runtime
+    /// (`onFail` other than `download` and `ignore`), as `(field, name, range)`.
+    pub runtime_checks: Vec<(&'static str, String, String)>,
     pub doc: Object,
 }
 
@@ -85,17 +88,39 @@ impl RootManifest {
                     .collect()
             })
             .unwrap_or_default();
+        let mut dependencies = group("dependencies")?.unwrap_or_default();
+        let mut dev_dependencies = group("devDependencies")?.unwrap_or_default();
+        let mut runtime_checks = Vec::new();
+        // pnpm's form of a runtime dependency, which `add` writes too: `onFail: "download"` makes
+        // it one, in the group its field stands for. A range in the group itself comes first.
+        for (field, deps) in [("engines", &mut dependencies), ("devEngines", &mut dev_dependencies)] {
+            for entry in runtime_entries(&doc, field) {
+                let text = |k: &str| entry.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let (name, version, on_fail) = (text("name"), text("version"), text("onFail"));
+                if !crate::runtime::NAMES.contains(&name.as_str()) {
+                    continue;
+                }
+                match on_fail.as_str() {
+                    "download" => {
+                        deps.entry(name).or_insert_with(|| format!("{}{version}", crate::runtime::PROTOCOL));
+                    }
+                    "ignore" => {}
+                    _ => runtime_checks.push((field, name, version)),
+                }
+            }
+        }
         Ok(Self {
             name: string("name"),
             version: string("version"),
-            dependencies: group("dependencies")?.unwrap_or_default(),
-            dev_dependencies: group("devDependencies")?.unwrap_or_default(),
+            dependencies,
+            dev_dependencies,
             optional_dependencies: group("optionalDependencies")?.unwrap_or_default(),
             peer_dependencies: group("peerDependencies")?,
             peer_optional,
             workspaces,
             overrides: Vec::new(),
             patches: Vec::new(),
+            runtime_checks,
             doc,
         })
     }
@@ -479,13 +504,28 @@ pub fn save_range(spec: &Spec, version: &str, exact: bool) -> String {
     if spec.fetch_name == spec.name { range } else { format!("npm:{}@{range}", spec.fetch_name) }
 }
 
-/// Put each dep in its group, out of any other. Groups stay sorted.
+/// Put each dep in its group, out of any other. Groups stay sorted. A runtime goes where pnpm
+/// puts it: `devEngines.runtime` for a dev dependency, else `engines.runtime`.
 pub fn add_deps(doc: &mut Object, added: &[Added]) {
     for dep in added {
+        let runtime = dep
+            .range
+            .strip_prefix(crate::runtime::PROTOCOL)
+            .filter(|_| crate::runtime::is_runtime(&dep.name, &dep.range));
+        let field = if dep.group == "devDependencies" { "devEngines" } else { "engines" };
         for group in GROUPS {
-            if group != dep.group {
+            if group != dep.group || runtime.is_some() {
                 drop_dep(doc, group, &dep.name);
             }
+        }
+        for f in ["engines", "devEngines"] {
+            if runtime.is_none() || f != field {
+                drop_runtime(doc, f, &dep.name);
+            }
+        }
+        if let Some(version) = runtime {
+            set_runtime(doc, field, &dep.name, version);
+            continue;
         }
         if !doc.get(dep.group).is_some_and(|g| g.as_object().is_some()) {
             doc.insert(dep.group, Value::Object(Object::new()));
@@ -497,9 +537,73 @@ pub fn add_deps(doc: &mut Object, added: &[Added]) {
     }
 }
 
-/// Take each name out of every group; the names in no group come back.
+/// Take each name out of every group, and a runtime out of `engines` and `devEngines`; the names
+/// in none come back.
 pub fn remove_deps(doc: &mut Object, names: &[String]) -> Vec<String> {
-    names.iter().filter(|name| GROUPS.iter().filter(|g| drop_dep(doc, g, name)).count() == 0).cloned().collect()
+    let mut missing = Vec::new();
+    for name in names {
+        let groups = GROUPS.iter().filter(|g| drop_dep(doc, g, name)).count();
+        let fields = ["engines", "devEngines"].iter().filter(|f| drop_runtime(doc, f, name)).count();
+        if groups + fields == 0 {
+            missing.push(name.clone());
+        }
+    }
+    missing
+}
+
+/// `<field>.runtime` as a list: one object, or an array of them.
+fn runtime_entries(doc: &Object, field: &str) -> Vec<Value> {
+    match doc.get(field).and_then(|f| f.get("runtime")) {
+        Some(Value::Array(list)) => list.clone(),
+        Some(one @ Value::Object(_)) => vec![one.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Write `<field>.runtime` back: one entry as an object, several as an array, none not at all.
+fn put_runtime(doc: &mut Object, field: &str, entries: Vec<Value>) {
+    if !doc.get(field).is_some_and(|f| f.as_object().is_some()) {
+        if entries.is_empty() {
+            return;
+        }
+        doc.insert(field, Value::Object(Object::new()));
+    }
+    let Some(Value::Object(f)) = doc.get_mut(field) else { return };
+    match entries.len() {
+        0 => {
+            f.remove("runtime");
+        }
+        1 => f.insert("runtime", entries.into_iter().next().unwrap_or(Value::Null)),
+        _ => f.insert("runtime", Value::Array(entries)),
+    }
+    if f.is_empty() {
+        doc.remove(field);
+    }
+}
+
+fn set_runtime(doc: &mut Object, field: &str, name: &str, version: &str) {
+    let entry = json::obj([("name", name.into()), ("version", version.into()), ("onFail", "download".into())]);
+    let mut entries = runtime_entries(doc, field);
+    match entries.iter_mut().find(|e| e.get("name").and_then(Value::as_str) == Some(name)) {
+        Some(e) => *e = entry,
+        None => entries.push(entry),
+    }
+    put_runtime(doc, field, entries);
+}
+
+/// Take out a runtime `field` downloads; an entry that only checks the system's is left.
+fn drop_runtime(doc: &mut Object, field: &str, name: &str) -> bool {
+    let mut entries = runtime_entries(doc, field);
+    let before = entries.len();
+    entries.retain(|e| {
+        e.get("name").and_then(Value::as_str) != Some(name)
+            || e.get("onFail").and_then(Value::as_str) != Some("download")
+    });
+    if entries.len() == before {
+        return false;
+    }
+    put_runtime(doc, field, entries);
+    true
 }
 
 fn drop_dep(doc: &mut Object, group: &str, name: &str) -> bool {

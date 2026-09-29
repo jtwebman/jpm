@@ -930,6 +930,7 @@ fn build(
             scripts: node.scripts,
             build: false,
             patch: None,
+            variants: Vec::new(),
         };
         packages.insert(key.clone(), entry);
     }

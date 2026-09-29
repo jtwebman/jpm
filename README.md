@@ -282,6 +282,69 @@ jpm.lock, and belong in git's credential helper or ssh. `gist:` is not read yet.
 Another manager's lockfile with a git dependency is brought over by resolving package.json
 with its versions preferred.
 
+## Runtimes
+
+A package can depend on the runtime its scripts run on, as in pnpm: jpm downloads Node.js, Bun
+or Deno, locks the version, keeps it in the store and links its binary into that package's
+`node_modules/.bin`.
+
+```sh
+jpm add --dev node@runtime:22        # saved to devEngines.runtime, as pnpm saves it
+jpm add bun@runtime:^1.2             # saved to engines.runtime
+```
+
+package.json can say it either way pnpm reads:
+
+```json
+"devEngines": { "runtime": { "name": "node", "version": "22", "onFail": "download" } },
+"devDependencies": { "deno": "runtime:^2.4" }
+```
+
+- **Versions.** The range is resolved once, to the newest release it allows, and `jpm.lock`
+  keeps that version: everyone installs the same one until package.json names a range it does
+  not meet. For Node the range can also be `lts`, an LTS codename (`jod`) or `latest`; only
+  releases are installed, never prereleases or nightlies. `add` saves the range as typed (pnpm
+  saves the exact version), no range as `^<newest>`, and `--exact` the version itself.
+- **Checks only.** A `devEngines.runtime` or `engines.runtime` entry whose `onFail` is `warn`,
+  `error` or missing is checked against the runtime on PATH: jpm warns when it is missing or
+  outside the range, and installs anyway. `ignore` turns the check off.
+- **Bins.** The runtime installs as the package `node` (`bun`, `deno`), with one bin of the same
+  name, as in pnpm: Node's `npm`, `npx` and `corepack` are not linked.
+- **Workspaces.** Each workspace can declare its own. `jpm run` puts `node_modules/.bin` of the
+  package's directory and of each directory above it first on PATH, so a script, and a bin whose
+  `#!` line runs `node`, gets the runtime its package declares, else the root's, else the
+  system's.
+
+Node comes from `https://nodejs.org/download/release`, or the mirror `node-mirror:release=<url>`
+(in `.npmrc`, as pnpm 10 reads it) or `NODEJS_ORG_MIRROR` names. The version is picked from its
+`index.json`, and each build is checked against the release's `SHASUMS256.txt`: the `.tar.gz` on
+Linux and macOS, and on Windows the bare `node.exe`. A musl build is the release's own (Node 26
+and later) or, from nodejs.org only, unofficial-builds.nodejs.org's. Bun and Deno come from npm:
+the package `bun` (`deno`) gives the version, and the platform packages it lists as optional
+dependencies (`@oven/bun-linux-x64`, `@deno/linux-x64-glibc`, …) are the builds, fetched through
+the registry like any package. pnpm takes Bun and Deno from their GitHub release zips instead.
+On arm64 macOS and Windows, a version with no arm64 build installs the x64 one.
+
+In `jpm.lock` the runtime is a package holding every platform's build:
+
+```
+root
+  spec devDependencies node runtime:22
+  dep node runtime:22.12.0
+package node@runtime:22.12.0
+  version 22.12.0
+  variant darwin-arm64 sha256-… node-v22.12.0-darwin-arm64.tar.gz
+  variant linux-x64 sha256-… node-v22.12.0-linux-x64.tar.gz
+  variant win32-x64 sha256-… win-x64/node.exe
+```
+
+A `variant` is a platform (`<os>-<cpu>`, `-musl` for a musl build), its integrity, and where the
+build is: a file of the release (or a url), or for Bun and Deno the platform package. An install
+takes this machine's and checks the download against it, so a lockfile made on Linux installs on
+macOS or Windows without asking the network what to trust. A new range makes the file out of
+date, as any other does. The build is unpacked into the store and linked like a package, and
+`jpm prune` removes it once no registered project's lockfile names it.
+
 ## How it works
 
 - **Resolve.** The dependency graph is walked on a pool of threads. Each package is picked
