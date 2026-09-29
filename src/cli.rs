@@ -31,6 +31,8 @@ Usage
   jpm lock
   jpm prune
   jpm approve [<name>...]
+  jpm patch <name>[@version] [--edit-dir <dir>]
+  jpm patch-commit <dir>
   jpm run [-w <workspace>... | --workspaces] [--if-present] [<script> [args...]]
                        (also run-script; t and tst are run test)
   jpm <script> [args...]
@@ -44,6 +46,8 @@ Options
   --before <date>      pick only versions published before this date
   --dir <path>         project directory (default: nearest package.json or workspace root)
   -E, --exact          add: save an exact version for names and tags
+  --edit-dir <dir>     patch: where to put the package to edit
+                       (default node_modules/.jpm_patches/<name>@<version>)
   --min-release-age <days>
                        pick only versions published at least this long ago (0: off)
   --min-release-age-exclude <name|glob>
@@ -101,6 +105,10 @@ Notes
   (or pnpm-workspace.yaml in allowBuilds) and {LOCKFILE} approves the version: approve adds both, and a new version needs approving
   again. approve with no names lists what waits. The project's own lifecycle scripts
   (preinstall to postprepare) run on installs that change the tree.
+  Patches: pnpm-workspace.yaml's, pnpm.patchedDependencies and bun's patchedDependencies, and
+  yarn's patch: ranges in the root package.json. patch copies the locked version (patched, if
+  it is) to a directory to edit; patch-commit writes the difference to patches/<name>@<version>.patch
+  (git diff), names it in patchedDependencies and installs.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
   TLS trusts Mozilla's roots plus NODE_EXTRA_CA_CERTS, or only .npmrc's cafile or ca; proxies
   come from https-proxy, proxy and noproxy in .npmrc, else HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
@@ -129,6 +137,7 @@ struct Cli {
     min_release_age: Option<f64>,
     store: Option<String>,
     dir: Option<String>,
+    edit_dir: Option<String>,
     production: bool,
     lock: bool,
     frozen: bool,
@@ -156,8 +165,21 @@ struct Cli {
     legacy_peer_deps: bool,
 }
 
-const COMMANDS: [&str; 11] =
-    ["install", "add", "remove", "dedupe", "resolve", "fetch", "lock", "prune", "run", "exec", "approve"];
+const COMMANDS: [&str; 13] = [
+    "install",
+    "add",
+    "remove",
+    "dedupe",
+    "resolve",
+    "fetch",
+    "lock",
+    "prune",
+    "run",
+    "exec",
+    "approve",
+    "patch",
+    "patch-commit",
+];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
 const NOOPS: [&str; 8] = ["--no-audit", "--no-fund", "--no-progress", "--force", "-S", "--save", "-P", "--save-prod"];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
@@ -222,6 +244,7 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--registry" => cli.registry = Some(value()?),
             "--store" => cli.store = Some(value()?),
             "--dir" | "--prefix" | "-C" => cli.dir = Some(value()?),
+            "--edit-dir" => cli.edit_dir = Some(value()?),
             "-w" | "--workspace" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
             "-c" | "--call" => cli.call = Some(value()?),
             "-p" | "--package" => cli.packages.get_or_insert_with(Vec::new).push(value()?),
@@ -398,7 +421,10 @@ pub fn main(argv0: &str, args: Vec<String>) -> i32 {
 
 fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option<String> {
     let selects = cli.workspace.is_some() || cli.workspaces;
-    let rules: [(bool, String); 18] = [
+    let patch = matches!(command, "patch" | "patch-commit");
+    let rules: [(bool, String); 20] = [
+        (patch && cli.specs.len() > 1, format!("{command} takes one package")),
+        (cli.edit_dir.is_some() && command != "patch", "--edit-dir only applies to patch".into()),
         (command == "exec" && cli.call.is_none() && cli.specs.is_empty(), "exec needs a command or --call".into()),
         (
             cli.call.is_some() && !cli.specs.is_empty(),
@@ -526,6 +552,22 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
                 lines.push(format!("{head}: {}", a.pending.join(", ")));
             }
             Ok(lines.join("\n"))
+        }
+        "patch" => {
+            let at = commands::patch(&cli.specs[0], cli.edit_dir.as_deref().map(std::path::Path::new), o)?;
+            if cli.json {
+                return Ok(pretty(&json::obj([("dir", at.display().to_string().into())])));
+            }
+            Ok(format!("edit the package in {}\nthen: jpm patch-commit {0}", at.display()))
+        }
+        "patch-commit" => {
+            let c = commands::patch_commit(std::path::Path::new(&cli.specs[0]), o)?;
+            if !cli.json {
+                ui::info(&format!("wrote {}", c.file));
+            }
+            let mut changes = Object::new();
+            changes.insert("patch", c.file.into());
+            Ok(installed(cli, &c.install, started, changes))
         }
         "prune" => {
             let p = commands::prune(o)?;

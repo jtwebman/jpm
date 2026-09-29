@@ -434,6 +434,21 @@ fn file_mode(_: &fs::Metadata) -> u32 {
     0o644
 }
 
+/// Copy a package's files into `to`, writable, leaving out any `node_modules` and links.
+pub fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for e in fs::read_dir(from)? {
+        let e = e?;
+        let (kind, at) = (e.file_type()?, to.join(e.file_name()));
+        if kind.is_dir() && e.file_name() != "node_modules" {
+            copy_tree(&e.path(), &at)?;
+        } else if kind.is_file() {
+            write(&at, &fs::read(e.path())?, file_mode(&e.metadata()?), false)?;
+        }
+    }
+    Ok(())
+}
+
 /// A new file where the old one was: removed first, never written through.
 fn write(at: &Path, data: &[u8], mode: u32, sealed: bool) -> std::io::Result<()> {
     match fs::remove_file(at) {
