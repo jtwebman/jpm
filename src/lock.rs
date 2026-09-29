@@ -17,11 +17,10 @@ use crate::util::write_atomic;
 
 pub const LOCKFILE: &str = "jpm.lock";
 /// upm's lockfile has the same format, and is read when there is no `jpm.lock`.
-pub const UPM_LOCKFILE: &str = "upm.lock";
 /// upm's format, which jpm still reads.
 const VERSION: u32 = 1;
 /// jpm's own text format.
-const TEXT_VERSION: u32 = 2;
+pub const TEXT_VERSION: u32 = 2;
 const TEXT_VERSION_TEXT: &str = "2";
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -122,24 +121,6 @@ impl LockEntry {
         put_list(&mut o, "libc", &self.libc);
         o.into()
     }
-
-    fn from_value(v: &Value, at: &str) -> Result<Self> {
-        let o = object(v, at)?;
-        Ok(Self {
-            version: opt_string(o, "version", at)?,
-            resolved: opt_string(o, "resolved", at)?,
-            integrity: opt_string(o, "integrity", at)?.unwrap_or_default(),
-            dependencies: map(o, "dependencies", at)?,
-            optional_dependencies: map(o, "optionalDependencies", at)?,
-            bin: map(o, "bin", at)?,
-            peer_dependencies: map(o, "peerDependencies", at)?,
-            peers: peers(o, at)?,
-            os: list(o, "os", at)?,
-            cpu: list(o, "cpu", at)?,
-            libc: list(o, "libc", at)?,
-            subgraph: None,
-        })
-    }
 }
 
 impl WorkspaceEntry {
@@ -154,23 +135,6 @@ impl WorkspaceEntry {
         put_map(&mut o, "peerDependencies", &self.peer_dependencies);
         put_peers(&mut o, &self.peers);
         o.into()
-    }
-
-    fn from_value(v: &Value, at: &str) -> Result<Self> {
-        let o = object(v, at)?;
-        let need = |key: &str| {
-            opt_string(o, key, at)?.ok_or_else(|| fail(format!("{at}.name and {at}.version must be strings")))
-        };
-        Ok(Self {
-            name: need("name")?,
-            version: need("version")?,
-            specs: specs(o, at)?,
-            dependencies: map(o, "dependencies", at)?,
-            optional_dependencies: map(o, "optionalDependencies", at)?,
-            bin: map(o, "bin", at)?,
-            peer_dependencies: map(o, "peerDependencies", at)?,
-            peers: peers(o, at)?,
-        })
     }
 }
 
@@ -200,90 +164,6 @@ impl Lockfile {
         }
         o.insert("packages", Value::Object(self.packages.iter().map(|(k, e)| (k.clone(), e.to_value())).collect()));
         o.into()
-    }
-
-    fn from_value(v: &Value) -> Result<Self> {
-        let o = v.as_object().ok_or_else(|| fail(format!("{LOCKFILE} must be an object")))?;
-        let version = o.get("lockfileVersion");
-        if version != Some(&Value::Number(VERSION.to_string())) {
-            let found = version.map_or_else(|| "undefined".to_string(), json::to_string);
-            return Err(fail(format!("unsupported lockfileVersion {found}, expected {VERSION}")));
-        }
-        let root = o.get("root").ok_or_else(|| fail("root must be an object"))?;
-        let r = object(root, "root")?;
-        let deps = r.get("dependencies").ok_or_else(|| fail("root.dependencies must be an object"))?;
-        let root = LockRoot {
-            name: opt_string(r, "name", "root")?,
-            version: opt_string(r, "version", "root")?,
-            specs: specs(r, "root")?,
-            dependencies: json::string_map(deps)
-                .ok_or_else(|| fail("root.dependencies must be an object of strings"))?,
-            workspaces: r.get("workspaces").map(|_| list(r, "workspaces", "root")).transpose()?,
-        };
-        let mut workspaces = BTreeMap::new();
-        if let Some(w) = o.get("workspaces") {
-            for (path, ws) in object(w, "workspaces")?.iter() {
-                workspaces.insert(path.clone(), WorkspaceEntry::from_value(ws, &format!("workspaces[{path:?}]"))?);
-            }
-        }
-        let mut packages = BTreeMap::new();
-        let p = o.get("packages").ok_or_else(|| fail("packages must be an object"))?;
-        for (key, entry) in object(p, "packages")?.iter() {
-            packages.insert(key.clone(), LockEntry::from_value(entry, &format!("packages[{key:?}]"))?);
-        }
-        Ok(Self { lockfile_version: VERSION, root, workspaces, packages, hash: None })
-    }
-}
-
-fn object<'a>(v: &'a Value, at: &str) -> Result<&'a Object> {
-    v.as_object().ok_or_else(|| fail(format!("{at} must be an object")))
-}
-
-fn opt_string(o: &Object, key: &str, at: &str) -> Result<Option<String>> {
-    match o.get(key) {
-        None => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(fail(format!("{at}.{key} must be a string"))),
-    }
-}
-
-fn map(o: &Object, key: &str, at: &str) -> Result<Deps> {
-    match o.get(key) {
-        None => Ok(Deps::new()),
-        Some(v) => json::string_map(v).ok_or_else(|| fail(format!("{at}.{key} must be an object of strings"))),
-    }
-}
-
-fn list(o: &Object, key: &str, at: &str) -> Result<Vec<String>> {
-    match o.get(key) {
-        None => Ok(Vec::new()),
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|i| {
-                i.as_str().map(str::to_string).ok_or_else(|| fail(format!("{at}.{key} must be an array of strings")))
-            })
-            .collect(),
-        Some(_) => Err(fail(format!("{at}.{key} must be an array of strings"))),
-    }
-}
-
-fn peers(o: &Object, at: &str) -> Result<Peers> {
-    map(o, "peers", at)?
-        .into_iter()
-        .map(|(k, v)| {
-            let kind =
-                PeerKind::parse(&v).ok_or_else(|| fail(format!("{at}.peers[{k:?}] must be required or optional")))?;
-            Ok((k, kind))
-        })
-        .collect()
-}
-
-fn specs(o: &Object, at: &str) -> Result<Option<Specs>> {
-    match o.get("specs") {
-        None => Ok(None),
-        Some(v) => {
-            Specs::from_value(v).map(Some).ok_or_else(|| fail(format!("{at}.specs must be an object of string maps")))
-        }
     }
 }
 
@@ -484,14 +364,8 @@ pub fn format_json(lock: &Lockfile) -> Result<String> {
     Ok(json::to_pretty(&lock.to_value(), "  "))
 }
 
-/// jpm's text format or upm's JSON, by the first character.
 pub fn parse_lockfile(text: &str, file: &str) -> Result<Lockfile> {
-    let lock = if text.trim_start().starts_with('{') {
-        let value = json::parse(text).map_err(|e| fail(format!("{file} is not valid JSON: {}", e.message)))?;
-        Lockfile::from_value(&value)?
-    } else {
-        parse_text(text).map_err(|e| e.context(file))?
-    };
+    let lock = parse_text(text).map_err(|e| e.context(file))?;
     validate(&lock)?;
     Ok(lock)
 }
@@ -839,17 +713,14 @@ pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String
         .collect()
 }
 
-/// The lockfile in `dir`: `jpm.lock`, else upm's. `None` when there is neither.
+/// `jpm.lock` in `dir`, or `None` when there is none.
 pub fn read_lockfile(dir: &Path) -> Result<Option<(Lockfile, &'static str)>> {
-    for name in [LOCKFILE, UPM_LOCKFILE] {
-        let file = dir.join(name);
-        match std::fs::read_to_string(&file) {
-            Ok(text) => return parse_lockfile(&text, name).map(|l| Some((l, name))),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io(&e, format!("cannot read {}", file.display())).with_code("ELOCK")),
-        }
+    let file = dir.join(LOCKFILE);
+    match std::fs::read_to_string(&file) {
+        Ok(text) => parse_lockfile(&text, LOCKFILE).map(|l| Some((l, LOCKFILE))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::io(&e, format!("cannot read {}", file.display())).with_code("ELOCK")),
     }
-    Ok(None)
 }
 
 /// Write `jpm.lock`; the lock then carries the hash of what was written.
@@ -1055,20 +926,27 @@ mod tests {
 
     fn sample() -> Lockfile {
         parse_lockfile(
-            r#"{
-  "lockfileVersion": 1,
-  "root": {
-    "name": "app",
-    "specs": { "dependencies": { "a": "^1" }, "devDependencies": { "d": "^1" } },
-    "dependencies": { "a": "1.0.0", "d": "1.0.0" }
-  },
-  "packages": {
-    "a@1.0.0": { "integrity": "sha512-a", "dependencies": { "b": "1.0.0" }, "optionalDependencies": { "c": "1.0.0" } },
-    "b@1.0.0": { "integrity": "sha512-b", "bin": { "b": "cli.js" } },
-    "c@1.0.0": { "integrity": "sha512-c", "os": ["darwin"] },
-    "d@1.0.0": { "integrity": "sha512-d", "dependencies": { "b": "1.0.0" } }
-  }
-}
+            r#"jpm-lock 2
+hash 0
+root
+  name app
+  spec dependencies a ^1
+  spec devDependencies d ^1
+  dep a 1.0.0
+  dep d 1.0.0
+package a@1.0.0
+  integrity sha512-a
+  dep b 1.0.0
+  optional c 1.0.0
+package b@1.0.0
+  integrity sha512-b
+  bin b cli.js
+package c@1.0.0
+  integrity sha512-c
+  os darwin
+package d@1.0.0
+  integrity sha512-d
+  dep b 1.0.0
 "#,
             LOCKFILE,
         )
@@ -1178,11 +1056,7 @@ mod bench {
             let _ = content_digest(&text);
             let digest = t0.elapsed();
             println!("tokenize {tokenize:?} ({n} tokens) digest {digest:?}");
-            let lock = if text.starts_with('{') {
-                Lockfile::from_value(&json::parse(&text).unwrap()).unwrap()
-            } else {
-                parse_text(&text).unwrap()
-            };
+            let lock = parse_text(&text).unwrap();
             let parse = t.elapsed();
             let t = Instant::now();
             validate(&lock).unwrap();
