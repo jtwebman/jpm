@@ -7,7 +7,9 @@ on:
 
 jobs:
   test:
-    # Linux only for now; macOS and Windows once they are stable.
+    # Linux x64 only for now. The ARM jobs (a native arm64 runner, and armv7 under qemu for
+    # 32-bit Raspberry Pi OS) come back once Linux, macOS and Windows are stable: the armv7 one
+    # took about 45 minutes.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,21 +19,3 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-
-  # The ARM crypto paths: AES, PMULL and SHA instructions on a native arm64 runner, and the
-  # portable code 32-bit Raspberry Pi OS runs, under qemu.
-  arm:
-    strategy:
-      matrix:
-        include:
-          - { os: ubuntu-24.04-arm, run: cargo test --workspace }
-          # Release: unoptimized crypto under qemu takes the better part of an hour.
-          - { os: ubuntu-latest, run: cross test --release -p jpm-crypto -p jpm-pk -p jpm-tls --target armv7-unknown-linux-musleabihf, cross: true }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - if: matrix.cross
-        uses: taiki-e/install-action@cross
-      - run: ${{ matrix.run }}
