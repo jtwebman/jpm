@@ -207,7 +207,7 @@ impl Walk<'_> {
                 self.visit_locked(from, &key);
             } else {
                 let m = self.read(&source, pinned.as_deref())?;
-                self.visit(from, &spec.name, &m, Some(&source), queue);
+                self.visit(from, &spec.name, &m, Some(&source), queue)?;
             }
             push(source);
             return Ok(());
@@ -228,7 +228,7 @@ impl Walk<'_> {
         m.integrity()?;
         let key = format!("{}@{}", spec.name, m.version);
         let libc = needs_libc(&m);
-        let first = self.visit(from, &spec.name, &m, None, queue);
+        let first = self.visit(from, &spec.name, &m, None, queue)?;
         if libc {
             // The read the walk above needs is this edge's to fail on.
             let read = self.libc_of(&m)?;
@@ -371,12 +371,22 @@ impl Walk<'_> {
         Ok(None)
     }
 
-    /// Record a picked package and queue its edges, unless it is already being walked.
-    fn visit(&self, from: &str, name: &str, m: &Manifest, source: Option<&str>, queue: &Queue<Job>) -> bool {
+    /// Record a picked package and queue its edges, unless it is already being walked. A key
+    /// is one package: `x@1.0.0` reached as the real `x` and as `npm:other@1.0.0` under the
+    /// name `x` would otherwise let whichever came first stand in for the other everywhere.
+    fn visit(&self, from: &str, name: &str, m: &Manifest, source: Option<&str>, queue: &Queue<Job>) -> Result<bool> {
         let key = format!("{name}@{}", source.unwrap_or(&m.version));
         let mut s = lock(&self.state);
         if !s.started.insert(key.clone()) {
-            return false;
+            let integrity = m.integrity().unwrap_or_default();
+            if let Some(held) = s.records.get(&key).filter(|p| p.local.is_none() && p.integrity != integrity) {
+                let (held, other) = (&held.resolved, m.dist.tarball.as_deref().unwrap_or(&m.name));
+                return Err(Error::new(
+                    "ECONFLICT",
+                    format!("{key} is two different packages ({held} and {other}); jpm keeps one per name and version"),
+                ));
+            }
+            return Ok(false);
         }
         s.edges.insert(key.clone(), Vec::new());
         let mut found = record(name, m, source);
@@ -402,7 +412,7 @@ impl Walk<'_> {
             queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: true, fresh: false });
         }
         settle(&mut s, &key, &peers, Some(&m.peer_dependencies));
-        true
+        Ok(true)
     }
 
     /// A locked package and everything under its own edges. Its peer edges are not replayed:
