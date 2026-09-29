@@ -1559,7 +1559,7 @@ pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> 
         let version = top.manifest.version.clone().unwrap_or_default();
         run::script_env(&mut cmd, &top.file, script, command, top.manifest.name.as_deref().unwrap_or(""), &version);
         let code = if replace && single && !logged {
-            crate::sys::exec(&mut cmd).map_err(|e| Error::io(&e, "cannot start the shell"))?
+            crate::sys::exec(&mut cmd).map_err(|e| run::start_error(&e, &cmd))?
         } else {
             run::wait(&mut cmd)?
         };
@@ -1647,7 +1647,7 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
         let mut all = dirs;
         all.extend(run::bin_dirs(&cwd));
         let mut cmd = run::shell(line, &cwd, &all);
-        crate::sys::exec(&mut cmd).map_err(|err| Error::io(&err, "cannot start the shell"))
+        crate::sys::exec(&mut cmd).map_err(|err| run::start_error(&err, &cmd))
     };
     let spawn = |words: &[String], dirs: Vec<PathBuf>| -> Result<i32> {
         let head: Vec<String> = words.iter().map(|w| run::quote(w, cfg!(windows), false)).collect();

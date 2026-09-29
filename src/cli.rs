@@ -327,7 +327,11 @@ fn help(stdout: bool) -> String {
 
 /// `jpx <cmd>` is `jpm exec <cmd>`.
 pub fn main(argv0: &str, args: Vec<String>) -> i32 {
-    let exec_bin = std::path::Path::new(argv0).file_stem().is_some_and(|s| s == "jpx" || s == "upx");
+    // Any case: cmd.exe passes `JPX` on as typed.
+    let exec_bin = std::path::Path::new(argv0)
+        .file_stem()
+        .is_some_and(|s| s.eq_ignore_ascii_case("jpx") || s.eq_ignore_ascii_case("upx"));
+
     let args = if exec_bin { std::iter::once("exec".to_string()).chain(args).collect() } else { args };
     let cli = match parse(&args) {
         Ok(cli) => cli,
