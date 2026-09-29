@@ -537,19 +537,22 @@ fn rejects_bad_usage() {
     assert!(env.ok(&["--help"]).contains("Usage"));
 }
 
-/// Packages with install scripts: `bld` counts its runs and records what token it could see.
+/// A package with an install script: it counts its runs and records what token it could see.
+#[cfg(unix)]
+fn bld(version: &str) -> common::Pkg {
+    pkg(
+        "bld",
+        version,
+        json!({
+            "dependencies": { "dep": "1.0.0" },
+            "scripts": { "postinstall": "echo run >> count.txt; echo \"[$NPM_TOKEN$npm_config__authToken]\" > token.txt" }
+        }),
+    )
+}
+
+/// Packages with install scripts, and ones whose scripts fail.
 #[cfg(unix)]
 fn scripted() -> Registry {
-    let bld = |v: &str| {
-        pkg(
-            "bld",
-            v,
-            json!({
-                "dependencies": { "dep": "1.0.0" },
-                "scripts": { "postinstall": "echo run >> count.txt; echo \"[$NPM_TOKEN$npm_config__authToken]\" > token.txt" }
-            }),
-        )
-    };
     let fails = |name: &str| pkg(name, "1.0.0", json!({ "scripts": { "install": "echo broken >&2; exit 3" } }));
     Registry::start(vec![
         bld("1.0.0"),
@@ -647,4 +650,28 @@ fn runs_the_projects_own_lifecycle_scripts() {
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
     env.ok(&["install", "--ignore-scripts"]);
     assert_eq!(env.read("order.txt"), "pre\npost\nprepare\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn finds_install_scripts_bun_lock_leaves_out() {
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "app", "dependencies": { "bld": "1.0.0" } }));
+    let integrity = |p: common::Pkg| common::sha512(&p.tarball());
+    // bun.lock names no install scripts: they are read from the packages themselves.
+    env.write(
+        "bun.lock",
+        &format!(
+            "{{\n  \"lockfileVersion\": 1,\n  \"workspaces\": {{ \"\": {{ \"name\": \"app\", \"dependencies\": {{ \"bld\": \"1.0.0\" }} }} }},\n  \"packages\": {{\n    \"bld\": [\"bld@1.0.0\", \"\", {{ \"dependencies\": {{ \"dep\": \"1.0.0\" }} }}, \"{}\"],\n    \"dep\": [\"dep@1.0.0\", \"\", {{}}, \"{}\"],\n  }}\n}}\n",
+            integrity(bld("1.0.0")),
+            integrity(pkg("dep", "1.0.0", json!({})))
+        ),
+    );
+    let out = env.ok(&["install"]);
+    assert!(out.contains("from bun.lock") && out.contains("install scripts not run for bld@1.0.0"), "{out}");
+    let lock = env.read("jpm.lock");
+    assert!(lock.contains("package bld@1.0.0") && lock.contains("  scripts\n"), "{lock}");
+    env.ok(&["approve", "bld"]);
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
 }
