@@ -217,7 +217,8 @@ impl Store {
     /// A tarball whose integrity is not known yet (a tarball dependency's first read): stored
     /// under the sha512 of its bytes, which is its integrity from then on.
     pub fn adopt(&self, tarball: &Tarball) -> Result<(Arc<Index>, String)> {
-        let (unpacked, temp, digest) = self.fetch(tarball, ring::digest::Context::new(&ring::digest::SHA512))?;
+        let (unpacked, temp, digest) =
+            self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512))?;
         let integrity = format!("sha512-{}", to_base64(&digest));
         let result = match self.index(&integrity) {
             Some(index) if self.intact(&integrity, &index) => Ok(index),
@@ -231,7 +232,7 @@ impl Store {
     /// the inflate and the writes overlap. What was unpacked comes back with the digest of every
     /// byte, read to the end even when unpacking failed, so a corrupt download is reported as
     /// one. A connection that drops mid-body is tried again.
-    fn fetch(&self, tarball: &Tarball, hasher: ring::digest::Context) -> Result<(Result<Index>, PathBuf, Vec<u8>)> {
+    fn fetch(&self, tarball: &Tarball, hasher: jpm_crypto::hash::Hasher) -> Result<(Result<Index>, PathBuf, Vec<u8>)> {
         let tmp_root = self.root.join("tmp");
         fs::create_dir_all(&tmp_root).map_err(|e| Error::io(&e, format!("cannot create {}", tmp_root.display())))?;
         let mut last = None;
@@ -260,7 +261,7 @@ impl Store {
                 remove_tree(&temp);
                 return Err(Error::io(&e, format!("cannot read {tarball}")));
             }
-            return Ok((unpacked, temp, input.hash.finish().as_ref().to_vec()));
+            return Ok((unpacked, temp, input.hash.finish().to_vec()));
         }
         Err(last.unwrap_or_else(|| Error::new("ENETWORK", format!("{tarball} failed"))))
     }
@@ -440,7 +441,7 @@ pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
 /// dropped, which is worth another try, where bad bytes are not.
 struct Hashing<R> {
     inner: R,
-    hash: ring::digest::Context,
+    hash: jpm_crypto::hash::Hasher,
     failed: Option<Error>,
 }
 

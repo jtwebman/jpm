@@ -84,7 +84,7 @@ pub fn gzip(data: &[u8]) -> Vec<u8> {
 }
 
 pub fn sha512(data: &[u8]) -> String {
-    let d = ring::digest::digest(&ring::digest::SHA512, data);
+    let d = jpm_crypto::hash::digest(jpm_crypto::hash::Alg::Sha512, data);
     format!("sha512-{}", b64(d.as_ref()))
 }
 
