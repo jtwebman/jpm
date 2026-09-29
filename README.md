@@ -275,7 +275,8 @@ with its versions preferred.
 - **Resolve.** The dependency graph is walked on a pool of threads. Each package is picked
   from the registry's abbreviated document, fetched once per run and kept on disk between
   runs (revalidated by ETag). Peer dependencies are settled against the tree after the walk,
-  so a plugin uses the host version the tree already has.
+  so a plugin uses the host version the tree already has. Consumers that miss the same peer
+  share one version when one fits them all.
 - **Store.** Each tarball is checked against its integrity and unpacked once into a shared
   store (`~/.jpm/store`, or `JPM_STORE`). Files there are read-only.
 - **Link.** Each package gets an entry, `<name>@<version>-<hash>/`, named by a hash of the
