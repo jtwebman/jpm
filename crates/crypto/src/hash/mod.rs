@@ -264,3 +264,95 @@ pub fn tls12_prf(alg: Alg, secret: &[u8], label: &[u8], seed: &[&[u8]], out: &mu
         }
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Set by tests to run the plain code instead of the CPU's SHA or AVX2 instructions.
+    static PORTABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether to skip the CPU's instructions; only tests ever do.
+#[cfg(test)]
+fn portable() -> bool {
+    PORTABLE.get()
+}
+
+#[cfg(not(test))]
+const fn portable() -> bool {
+    false
+}
+
+/// The CPU's code paths against the plain ones, through the whole hasher.
+#[cfg(test)]
+mod tests {
+    use super::{Alg, Hasher, PORTABLE, digest};
+
+    const ALGS: [Alg; 3] = [Alg::Sha256, Alg::Sha384, Alg::Sha512];
+
+    fn plain<T>(f: impl FnOnce() -> T) -> T {
+        PORTABLE.set(true);
+        let out = f();
+        PORTABLE.set(false);
+        out
+    }
+
+    fn data(n: usize, mut x: u64) -> Vec<u8> {
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_length_to_1100() {
+        let data = data(1100, 1);
+        for alg in ALGS {
+            for n in 0..=1100 {
+                let fast = digest(alg, &data[..n]);
+                assert_eq!(&fast[..], &plain(|| digest(alg, &data[..n]))[..], "{alg:?} {n}");
+            }
+        }
+    }
+
+    #[test]
+    fn split_updates() {
+        let data = data(5000, 2);
+        let mut x = 0x2545f4914f6cdd1du64;
+        for alg in ALGS {
+            for _ in 0..200 {
+                let mut splits = Vec::new();
+                let mut left = data.len();
+                while left > 0 {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    let n = (x as usize % 700).min(left);
+                    splits.push(n);
+                    left -= n;
+                }
+                let run = || {
+                    let mut h = Hasher::new(alg);
+                    let mut rest = &data[..];
+                    for &n in &splits {
+                        h.update(&rest[..n]);
+                        rest = &rest[n..];
+                    }
+                    h.finish()
+                };
+                assert_eq!(&run()[..], &plain(run)[..], "{alg:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn one_million_a() {
+        let a = vec![b'a'; 1_000_000];
+        for alg in ALGS {
+            assert_eq!(&digest(alg, &a)[..], &plain(|| digest(alg, &a))[..], "{alg:?}");
+        }
+    }
+}
