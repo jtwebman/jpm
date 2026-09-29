@@ -18,6 +18,7 @@ pub type Stamp = [String; 4];
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Summary {
     pub packages: usize,
+    pub workspaces: usize,
     pub other_platforms: usize,
     pub warnings: Vec<String>,
 }
@@ -32,6 +33,8 @@ pub struct RootLinks {
 pub struct Stamps {
     pub lock: Stamp,
     pub manifest: Stamp,
+    /// Each workspace's path and its package.json's stamp, hashed; empty without workspaces.
+    pub workspaces: String,
     pub settings: String,
 }
 
@@ -54,6 +57,8 @@ pub struct State {
     pub inputs: Option<String>,
     pub summary: Option<Summary>,
     pub root: Option<RootLinks>,
+    /// Each workspace's links and bins, by the workspace's path, as `root` has the root's.
+    pub workspaces: Vec<(String, RootLinks)>,
     pub stamps: Option<Stamps>,
 }
 
@@ -69,6 +74,22 @@ fn stamp_of_value(v: &Value) -> Option<Stamp> {
 
 fn strings(v: Option<&Value>) -> Option<Vec<String>> {
     v?.as_array()?.iter().map(|i| i.as_str().map(str::to_string)).collect()
+}
+
+fn links_value(r: &RootLinks) -> Value {
+    json::obj([("links", json::str_map(&r.links)), ("bins", Value::from(r.bins.clone()))])
+}
+
+fn links_of_value(v: &Value) -> Option<RootLinks> {
+    Some(RootLinks { links: json::string_map(v.get("links")?)?, bins: strings(v.get("bins"))? })
+}
+
+/// Paths and their values, in order; absent when empty.
+fn by_path<T>(v: Option<&Value>, each: impl Fn(&Value) -> Option<T>) -> Option<Vec<(String, T)>> {
+    match v {
+        None => Some(Vec::new()),
+        Some(v) => v.as_object()?.iter().map(|(k, v)| Some((k.clone(), each(v)?))).collect(),
+    }
 }
 
 impl State {
@@ -97,23 +118,30 @@ impl State {
                 "summary",
                 json::obj([
                     ("packages", s.packages.into()),
+                    ("workspaces", s.workspaces.into()),
                     ("otherPlatforms", s.other_platforms.into()),
                     ("warnings", Value::from(s.warnings.clone())),
                 ]),
             );
         }
         if let Some(r) = &self.root {
-            o.insert("root", json::obj([("links", json::str_map(&r.links)), ("bins", Value::from(r.bins.clone()))]));
+            o.insert("root", links_value(r));
+        }
+        if !self.workspaces.is_empty() {
+            o.insert(
+                "workspaces",
+                Value::Object(self.workspaces.iter().map(|(k, r)| (k.clone(), links_value(r))).collect()),
+            );
         }
         if let Some(s) = &self.stamps {
-            o.insert(
-                "stamps",
-                json::obj([
-                    ("lock", stamp_value(&s.lock)),
-                    ("manifest", stamp_value(&s.manifest)),
-                    ("settings", (&s.settings).into()),
-                ]),
-            );
+            let mut stamps = Object::new();
+            stamps.insert("lock", stamp_value(&s.lock));
+            stamps.insert("manifest", stamp_value(&s.manifest));
+            if !s.workspaces.is_empty() {
+                stamps.insert("workspaces", (&s.workspaces).into());
+            }
+            stamps.insert("settings", (&s.settings).into());
+            o.insert("stamps", stamps.into());
         }
         o.into()
     }
@@ -129,19 +157,21 @@ impl State {
             None => None,
             Some(s) => Some(Summary {
                 packages: count(s.get("packages"))?,
+                workspaces: count(s.get("workspaces")).unwrap_or(0),
                 other_platforms: count(s.get("otherPlatforms"))?,
                 warnings: strings(s.get("warnings"))?,
             }),
         };
         let root = match o.get("root") {
             None => None,
-            Some(r) => Some(RootLinks { links: json::string_map(r.get("links")?)?, bins: strings(r.get("bins"))? }),
+            Some(r) => Some(links_of_value(r)?),
         };
         let stamps = match o.get("stamps") {
             None => None,
             Some(s) => Some(Stamps {
                 lock: stamp_of_value(s.get("lock")?)?,
                 manifest: stamp_of_value(s.get("manifest")?)?,
+                workspaces: s.get("workspaces").and_then(Value::as_str).unwrap_or_default().to_string(),
                 settings: s.get("settings")?.as_str()?.to_string(),
             }),
         };
@@ -172,6 +202,7 @@ impl State {
             inputs: o.get("inputs").and_then(Value::as_str).map(str::to_string),
             summary,
             root,
+            workspaces: by_path(o.get("workspaces"), links_of_value)?,
             stamps,
         })
     }
@@ -234,11 +265,20 @@ pub fn state_hash(
     ))
 }
 
-/// One value over what the tree is a function of: the lockfile's bytes, the root manifest and
-/// the settings. Same value, same tree.
-pub fn inputs_hash(lock: &str, manifest: &Object, settings: &str) -> String {
+/// One value over what the tree is a function of: the lockfile's bytes, the root manifest, each
+/// workspace's path and manifest, and the settings. Same value, same tree.
+pub fn inputs_hash<'a>(
+    lock: &str,
+    manifest: &Object,
+    workspaces: impl IntoIterator<Item = (&'a str, &'a Object)>,
+    settings: &str,
+) -> String {
     let manifest = json::to_string(&Value::Object(manifest.clone()));
-    short_hash(&format!("jpm-inputs-1\n{manifest}\n{settings}\n{lock}"))
+    let mut text = format!("jpm-inputs-1\n{manifest}\n{settings}\n{lock}");
+    for (path, doc) in workspaces {
+        text.push_str(&format!("\nworkspace {path}\n{}", json::to_string(&Value::Object(doc.clone()))));
+    }
+    short_hash(&text)
 }
 
 #[cfg(test)]

@@ -284,6 +284,47 @@ fn links_workspaces() {
 }
 
 #[test]
+fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "workspaces": ["packages/*"], "dependencies": { "a": "1.1.0" } }));
+    env.write("packages/w/package.json", r#"{ "name": "w", "dependencies": { "cli": "1.0.0" } }"#);
+    // Matched by the glob, but no workspace until it has a package.json.
+    env.write("packages/u/index.js", "");
+    env.ok(&["install"]);
+    let bin =
+        if cfg!(windows) { "packages/w/node_modules/.bin/hello.cmd" } else { "packages/w/node_modules/.bin/hello" };
+    let up_to_date = || {
+        let out = env.ok(&["install"]);
+        out.contains("up to date") && out.contains("1 workspace")
+    };
+    // The state holds what the no-op checks without the graph: each workspace's links too.
+    let state = env.read("node_modules/.jpm.json");
+    assert!(state.contains("\"inputs\"") && state.contains("\"packages/w\""), "{state}");
+    assert!(up_to_date());
+    // A workspace's link or bin gone: linked again.
+    std::fs::remove_file(env.path("packages/w/node_modules/cli")).unwrap();
+    assert!(!up_to_date());
+    assert!(env.exists("packages/w/node_modules/cli"));
+    std::fs::remove_file(env.path(bin)).unwrap();
+    assert!(!up_to_date());
+    assert!(env.exists(bin) && up_to_date());
+    // A workspace's package.json edited: resolved again.
+    env.write("packages/w/package.json", r#"{ "name": "w", "dependencies": { "cli": "1.0.0", "b": "1.0.0" } }"#);
+    assert!(!up_to_date());
+    assert!(env.read("packages/w/node_modules/b/index.js").contains("b@1.0.0"));
+    // A directory the glob matched becomes a workspace, then goes.
+    env.write("packages/u/package.json", r#"{ "name": "u", "dependencies": { "b": "2.0.0" } }"#);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("2 workspaces") && !out.contains("up to date"), "{out}");
+    assert!(env.read("packages/u/node_modules/b/index.js").contains("b@2.0.0"));
+    std::fs::remove_dir_all(env.path("packages/u")).unwrap();
+    assert!(!up_to_date());
+    assert!(env.lock()["workspaces"].get("packages/u").is_none());
+    assert!(up_to_date());
+}
+
+#[test]
 fn links_the_root_listed_as_a_workspace() {
     let r = registry();
     let env = Env::new(&r);

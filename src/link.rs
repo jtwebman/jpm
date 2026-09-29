@@ -66,8 +66,7 @@ pub struct Options<'a> {
     /// store the scripts could write through, and stay in the project, as do entries that
     /// depend on them.
     pub built: HashSet<String>,
-    /// What the state records for the no-op check: only when the tree is a function of the
-    /// lockfile and root manifest alone (no workspaces).
+    /// What the state records for the no-op check.
     pub inputs: Option<Inputs>,
     pub tarballs: Option<BTreeMap<String, Option<Stamp>>>,
     /// The project's patches, found by their hash.
@@ -208,16 +207,19 @@ struct Entry<'a> {
 
 /// The root, or a workspace: a `node_modules` of its own holding what it declared.
 struct Top {
+    /// The workspace's path; empty for the root.
+    path: String,
     nm: PathBuf,
     dependencies: BTreeMap<String, String>,
 }
 
 fn tops_of(dir: &Path, res: &Resolution) -> Vec<Top> {
-    let mut tops = vec![Top { nm: dir.join("node_modules"), dependencies: res.root.dependencies.clone() }];
+    let root = Top { path: String::new(), nm: dir.join("node_modules"), dependencies: res.root.dependencies.clone() };
+    let mut tops = vec![root];
     for p in res.packages.values() {
         // The root listed as a workspace is already the first top; a linked directory is none.
         if let Some(path) = p.local.as_ref().filter(|path| *path != crate::project::ROOT_PATH && !p.linked) {
-            tops.push(Top { nm: dir.join(path).join("node_modules"), dependencies: p.all_deps() });
+            tops.push(Top { path: path.clone(), nm: dir.join(path).join("node_modules"), dependencies: p.all_deps() });
         }
     }
     tops
@@ -238,7 +240,6 @@ struct Linker<'a> {
     wanted: HashMap<String, Entry<'a>>,
     counts: Counts,
     copy_only: AtomicBool,
-    root_links: Mutex<RootLinks>,
     /// Optional packages settled while linking (project layout): whether each arrived.
     settled: Mutex<HashMap<String, bool>>,
 }
@@ -253,9 +254,11 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     inside(&opts.dir.join("node_modules"), &real_root)?;
     inside(&entries_dir, &real_root)?;
     let previous = state::read(opts.dir);
-    let state_of = |entries: Vec<String>, shared: Vec<String>, complete: bool, root: RootLinks| {
-        let single = tops.len() == 1;
-        let inputs = opts.inputs.as_ref().filter(|_| single);
+    // `links`: each top's, in the order of `tops`.
+    let state_of = |entries: Vec<String>, shared: Vec<String>, complete: bool, links: Vec<RootLinks>| {
+        let inputs = opts.inputs.as_ref();
+        let mut links = links.into_iter();
+        let root = links.next().unwrap_or_default();
         State {
             version: 1,
             hash: opts.hash.clone(),
@@ -268,6 +271,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             inputs: inputs.map(|i| i.hash.clone()),
             summary: inputs.map(|i| i.summary.clone()),
             root: inputs.map(|_| root),
+            workspaces: match inputs {
+                Some(_) => tops[1..].iter().map(|t| t.path.clone()).zip(links).collect(),
+                None => Vec::new(),
+            },
             stamps: inputs.and_then(|i| i.stamps.clone()),
         }
     };
@@ -275,7 +282,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         && let Some(root) = standing(opts.dir, &entries_dir, opts.global.as_deref(), &tops, res, prev, opts.production)
     {
         // The same tree from other inputs: the state learns them, so the next install is short.
-        let learned = opts.inputs.as_ref().is_some_and(|i| prev.inputs.as_ref() != Some(&i.hash)) && tops.len() == 1;
+        let learned = opts.inputs.as_ref().is_some_and(|i| prev.inputs.as_ref() != Some(&i.hash));
         if learned || prev.tarballs != opts.tarballs {
             state::write(opts.dir, &state_of(prev.entries.clone(), prev.shared.clone(), true, root))?;
         }
@@ -356,7 +363,6 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         wanted,
         counts: Counts::default(),
         copy_only: AtomicBool::new(false),
-        root_links: Mutex::default(),
         settled: Mutex::default(),
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
@@ -392,15 +398,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         inside(&top.nm, &real_root)?;
     }
     // Each top is a `node_modules` of its own: a workspace's are linked side by side.
-    let failures: Mutex<Vec<Error>> = Mutex::default();
-    pool::run(pool::disk_threads(), tops.iter().enumerate(), |(i, top), _| {
-        if let Err(e) = linker.link_top(top, i == 0) {
-            failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
-        }
-    });
-    if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
-        return Err(e);
-    }
+    let links: Vec<RootLinks> = pool::map(pool::disk_threads(), tops.iter().collect(), |top| linker.link_top(top))
+        .into_iter()
+        .collect::<Result<_>>()?;
     linker.sweep_temp();
     let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
     dropped.extend(settled.iter().filter(|(_, arrived)| !**arrived).map(|(id, _)| id.clone()));
@@ -413,8 +413,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         out.dedup();
         out
     };
-    let root = linker.root_links.lock().map(|r| r.clone()).unwrap_or_default();
-    state::write(opts.dir, &state_of(names(false), names(true), dropped.is_empty(), root))?;
+    state::write(opts.dir, &state_of(names(false), names(true), dropped.is_empty(), links))?;
     Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false })
 }
 
@@ -762,8 +761,8 @@ impl Linker<'_> {
     }
 
     /// Only direct deps get a top-level name. A registry dep links into `.jpm`; a workspace dep
-    /// links to the workspace's own directory.
-    fn link_top(&self, top: &Top, is_root: bool) -> Result<()> {
+    /// links to the workspace's own directory. What it linked, for the state.
+    fn link_top(&self, top: &Top) -> Result<RootLinks> {
         let nm = &top.nm;
         fs::create_dir_all(nm)
             .map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())).with_code("ELINK"))?;
@@ -816,13 +815,10 @@ impl Linker<'_> {
             }
             Counts::add(&self.counts.bins, 1);
         }
-        if is_root && let Ok(mut r) = self.root_links.lock() {
-            *r = RootLinks { links, bins: bins.keys().cloned().collect() };
-        }
         let names: HashSet<String> = direct.into_iter().map(|(n, _)| n).collect();
         self.sweep(nm, &names, "");
         self.sweep(&bin_dir, &bins.keys().cloned().collect(), "");
-        Ok(())
+        Ok(RootLinks { links, bins: bins.keys().cloned().collect() })
     }
 
     /// Converge one `node_modules` (or `.bin`) to what was just linked: every link `keep` does
@@ -1071,11 +1067,10 @@ fn standing(
     res: &Resolution,
     st: &State,
     production: bool,
-) -> Option<RootLinks> {
-    let mut root = None;
+) -> Option<Vec<RootLinks>> {
+    let mut found = Vec::with_capacity(tops.len());
     for top in tops {
-        let found = standing_top(dir, global, top, res, production)?;
-        root.get_or_insert(found);
+        found.push(standing_top(dir, global, top, res, production)?);
     }
     let present: HashSet<String> = fs::read_dir(entries_dir)
         .ok()?
@@ -1084,7 +1079,7 @@ fn standing(
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     let shared = st.shared.is_empty() || global.is_some_and(|g| st.shared.iter().all(|k| g.join(k).is_dir()));
-    (shared && entries_standing(st, &present)).then_some(root?)
+    (shared && entries_standing(st, &present)).then_some(found)
 }
 
 fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, production: bool) -> Option<RootLinks> {
@@ -1136,25 +1131,15 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
     Some(read)
 }
 
-/// The no-op check, read off the state alone: every recorded root link pointing where it was
-/// made to, every bin placed, every entry a directory. No graph needed.
+/// The no-op check, read off the state alone: every recorded link of the root and each workspace
+/// pointing where it was made to, every bin placed, every entry a directory. No graph needed.
 pub fn tree_standing(dir: &Path, st: &State) -> bool {
     let nm = dir.join("node_modules");
     let Some(root) = st.root.as_ref().filter(|_| st.complete) else { return false };
-    if !root.links.iter().all(|(name, target)| sys::links_to(&nm.join(name), target)) {
-        return false;
-    }
-    if !root.bins.is_empty() {
-        let Ok(dir) = fs::read_dir(nm.join(".bin")) else { return false };
-        let placed: HashSet<String> = dir.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-        if !root.bins.iter().all(|b| placed.contains(&if WIN { format!("{b}.cmd") } else { b.clone() })) {
-            return false;
-        }
-    }
-    // Links into the global store stand only while their entries do: a store can be wiped or
-    // pruned. The direct ones are enough: an entry's name covers everything below it, so a
-    // prune that keeps it keeps its dependencies too.
-    if !st.shared.is_empty() && !root.links.keys().all(|name| nm.join(name).is_dir()) {
+    let shared = !st.shared.is_empty();
+    if !top_standing(&nm, root, shared)
+        || !st.workspaces.iter().all(|(path, top)| top_standing(&dir.join(path).join("node_modules"), top, shared))
+    {
         return false;
     }
     let Ok(entries) = fs::read_dir(nm.join(".jpm")) else { return false };
@@ -1164,6 +1149,17 @@ pub fn tree_standing(dir: &Path, st: &State) -> bool {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     entries_standing(st, &present)
+}
+
+/// One top's recorded links and bins, still in `nm`.
+fn top_standing(nm: &Path, top: &RootLinks, shared: bool) -> bool {
+    let bin_dir = nm.join(".bin");
+    top.links.iter().all(|(name, target)| sys::links_to(&nm.join(name), target))
+        && top.bins.iter().all(|b| fs::symlink_metadata(bin_dir.join(if WIN { format!("{b}.cmd") } else { b.clone() })).is_ok())
+        // Links into the global store stand only while their entries do: a store can be wiped
+        // or pruned. The direct ones are enough: an entry's name covers everything below it, so
+        // a prune that keeps it keeps its dependencies too.
+        && (!shared || top.links.keys().all(|name| nm.join(name).is_dir()))
 }
 
 /// Every entry built in the project is there, and so is the hoist: a tree from before there was
