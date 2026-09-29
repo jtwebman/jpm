@@ -24,8 +24,18 @@ const UNSUPPORTED_EXTENSION: u8 = 110;
 fn try_connect(script: Script, alpn: &[&[u8]]) -> (std::io::Result<jpm_tls::Stream<std::net::TcpStream>>, Outcome) {
     let key = script.key;
     let (tcp, h) = fake::run(script);
+    let keep = tcp.try_clone().unwrap();
     let r = connect(tcp, "localhost", &pki(key).config(alpn));
-    (r, h.join().unwrap())
+    (r, finish(keep, h))
+}
+
+/// The server's outcome, once the client is done with the socket `keep` is a clone of. A client
+/// that refuses a message closes its socket with the rest of the server's flight unread, and
+/// the kernel answers that with a reset, which can throw away the alert before the server reads
+/// it. Holding `keep` open makes that close a no-op; the shutdown then sends a plain FIN.
+fn finish(keep: std::net::TcpStream, h: std::thread::JoinHandle<Outcome>) -> Outcome {
+    let _ = keep.shutdown(std::net::Shutdown::Write);
+    h.join().unwrap()
 }
 
 /// The handshake must fail with `msg` in the error, and the server must get alert `alert`.
@@ -47,6 +57,7 @@ fn refused_alpn(script: Script, alpn: &[&[u8]], msg: &str, alert: Option<u8>) {
 fn read_fails(script: Script, msg: &str, alert: Option<u8>) {
     let key = script.key;
     let (tcp, h) = fake::run(watch_alert(script));
+    let keep = tcp.try_clone().unwrap();
     let mut s = connect(tcp, "localhost", &pki(key).config(&[])).unwrap();
     let mut buf = Vec::new();
     let e = err_msg(s.read_to_end(&mut buf));
@@ -54,7 +65,7 @@ fn read_fails(script: Script, msg: &str, alert: Option<u8>) {
     // Reads after a failure fail too.
     assert!(s.read(&mut [0; 10]).is_err());
     drop(s);
-    let out = h.join().unwrap();
+    let out = finish(keep, h);
     assert!(out.finished, "the handshake was fine");
     assert_eq!(out.alert, alert, "alert for {e:?}");
 }
