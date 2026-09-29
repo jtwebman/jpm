@@ -178,6 +178,52 @@ fn links_workspaces() {
 }
 
 #[test]
+fn links_the_root_listed_as_a_workspace() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({
+        "name": "root", "version": "1.0.0", "workspaces": [".", "a", "play/**"],
+        "bin": { "root-cli": "cli.js" }, "dependencies": { "b": "1.0.0" }
+    }));
+    env.write("cli.js", "#!/bin/sh\necho root\n");
+    env.write("a/package.json", r#"{ "name": "a", "dependencies": { "root": "workspace:*" } }"#);
+    // A fixture under its parent's name is left out while nothing links to that name.
+    env.write("play/x/package.json", r#"{ "name": "x" }"#);
+    env.write("play/x/dir/package.json", r#"{ "name": "x" }"#);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("workspaces play/x and play/x/dir are both named x; jpm installs only play/x"), "{out}");
+    assert_eq!(link_of(&env.project().join("a"), "root"), "../..");
+    assert!(env.exists("a/node_modules/.bin/root-cli"));
+    // Installed once, as the root.
+    assert!(env.exists("node_modules/b") && !env.exists("node_modules/root") && !env.exists("play/x/dir/node_modules"));
+    let lock = env.lock();
+    assert_eq!(lock["workspaces"]["a"]["dependencies"]["root"], "link:.");
+    assert_eq!(lock["workspaces"]["."]["name"], "root");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
+    // Once something links to the name, which copy it means is ambiguous.
+    env.write("a/package.json", r#"{ "name": "a", "dependencies": { "root": "workspace:*", "x": "*" } }"#);
+    let out = env.jpm(&["install"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a dependency on x could mean either"));
+}
+
+#[test]
+fn names_the_dependency_forms_it_does_not_read() {
+    let r = registry();
+    let env = Env::new(&r);
+    for (spec, says) in [
+        ("catalog:", r#""catalog:" dependencies are not supported yet"#),
+        ("github:watson/ci-info#v1", "git dependencies are not supported yet: github:watson/ci-info#v1"),
+        ("file:../dir", "directory dependencies are not supported yet: file:../dir"),
+    ] {
+        env.manifest(json!({ "dependencies": { "x": spec } }));
+        let out = env.jpm(&["install"]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && err.contains(says), "{spec}: {err}");
+    }
+}
+
+#[test]
 fn installs_local_tarballs() {
     let r = registry();
     let env = Env::new(&r);

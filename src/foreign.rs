@@ -10,6 +10,7 @@ use crate::json::{self, Object as Map, Value};
 use crate::bin::{self, Bins};
 use crate::error::{Error, Result};
 use crate::graph::{Deps, PeerKind, Peers, Specs};
+use crate::integrity::Integrity;
 use crate::lock::{self, LockEntry, LockRoot, Lockfile};
 use crate::project::{GROUPS, RootManifest};
 use crate::registry::tarball_url;
@@ -711,8 +712,9 @@ fn strip_trailing_commas(text: &str) -> String {
 // --- shared -----------------------------------------------------------------------------
 
 /// Fold the nodes onto one per `name@version`, keep what the root reaches, and check the result
-/// as `read_lockfile` would. A copy with other edges is a peer settled two ways, which jpm's one
-/// node cannot hold: the highest version the peer range allows wins, as the resolver would pick.
+/// as `read_lockfile` would. A copy with other edges (a peer settled two ways, or a dependency
+/// npm resolved at two times) is one jpm's one node cannot hold: the highest version wins, the
+/// highest the peer range allows for a peer, as the resolver would pick.
 fn build(
     file: &str,
     source: Source,
@@ -727,8 +729,11 @@ fn build(
             nodes.insert(key, node);
             continue;
         };
-        if have.integrity != node.integrity {
+        if !same_integrity(&have.integrity, &node.integrity) {
             return Err(fail(format!("{file} holds two packages as {key}; jpm keeps one per name and version")));
+        }
+        if strength(&node.integrity) > strength(&have.integrity) {
+            have.integrity = node.integrity;
         }
         let theirs = [
             (node.dependencies, &mut have.dependencies),
@@ -736,15 +741,26 @@ fn build(
         ];
         for (edges, mine) in theirs {
             for (dep, version) in edges {
-                let range = have.peer_dependencies.get(&dep).map_or("*", String::as_str);
-                let pick = match mine.get(&dep) {
+                let peer = have.peer_dependencies.get(&dep);
+                let was = match mine.get(&dep) {
                     Some(m) if *m == version => continue,
-                    Some(m) if !m.is_empty() => {
-                        max_satisfying([m.as_str(), version.as_str()], range).unwrap_or(m).to_string()
-                    }
-                    _ => version,
+                    Some(m) if !m.is_empty() => m.clone(),
+                    _ => String::new(),
                 };
-                twice.insert(key.clone());
+                let pick = if was.is_empty() {
+                    version.clone()
+                } else {
+                    max_satisfying([was.as_str(), version.as_str()], peer.map_or("*", String::as_str))
+                        .unwrap_or(&was)
+                        .to_string()
+                };
+                let other = if pick == version { &was } else { &version };
+                let other = if other.is_empty() { "none" } else { other };
+                let what = match peer {
+                    Some(_) => format!("settles peer {dep} of {key}"),
+                    None => format!("resolves {dep}, a dependency of {key},"),
+                };
+                twice.insert((key.clone(), format!("{what} two ways ({other} and {pick}); jpm links {pick}")));
                 mine.insert(dep, pick);
             }
         }
@@ -790,6 +806,8 @@ fn build(
         if node.integrity.is_empty() {
             return Err(fail(format!("{file} gives {key} no integrity")));
         }
+        // npm may list a sha1 beside the sha512; jpm.lock keeps the strongest alone.
+        let integrity = Integrity::parse(&node.integrity).map_or_else(|_| node.integrity.clone(), |i| i.text());
         if node.bin.is_empty() && node.has_bin {
             binless.push(key.clone());
         }
@@ -803,7 +821,7 @@ fn build(
         let entry = LockEntry {
             version: None,
             resolved,
-            integrity: node.integrity,
+            integrity,
             dependencies: node.dependencies,
             optional_dependencies: node.optional_dependencies,
             bin: node.bin,
@@ -831,10 +849,27 @@ fn build(
     lock::validate(&lock).map_err(|e| fail(format!("{file} does not map onto jpm: {}", e.message)))?;
     let warnings = twice
         .into_iter()
-        .filter(|key| seen.contains(key))
-        .map(|key| format!("{file} settles a peer of {key} two ways; jpm links the highest"))
+        .filter(|(key, _)| seen.contains(key))
+        .map(|(_, what)| format!("{file} {what} for every copy"))
         .collect();
     Ok(ForeignLock { lock, binless, scriptless: false, warnings })
+}
+
+/// Whether two integrity fields name one tarball: equal, or their strongest shared algorithm's
+/// digests agree. npm writes `sha1-… sha512-…` for some copies of a package and not others.
+fn same_integrity(a: &str, b: &str) -> bool {
+    let hashes = |s: &str| s.split_whitespace().filter_map(|h| Integrity::parse(h).ok()).collect::<Vec<_>>();
+    let theirs = hashes(b);
+    let shared = hashes(a)
+        .into_iter()
+        .filter_map(|mine| Some((theirs.iter().find(|t| t.algorithm == mine.algorithm)?.digest == mine.digest, mine)))
+        .max_by_key(|(_, mine)| mine.digest.len());
+    a == b || shared.is_some_and(|(agree, _)| agree)
+}
+
+/// A longer digest is a stronger algorithm; 0 when nothing parses.
+fn strength(integrity: &str) -> usize {
+    Integrity::parse(integrity).map_or(0, |i| i.digest.len())
 }
 
 /// The key an edge reaches, refused when the file has it from no registry.
@@ -1226,10 +1261,66 @@ package tool@1.0.0
         assert_eq!(plugin.peers, Peers::from([("host".into(), PeerKind::Required)]));
         let b = &read.lock.packages["b@1.0.0"].dependencies;
         assert_eq!(b, &Deps::from([("plugin".into(), "1.0.0".into()), ("host".into(), "1.0.0".into())]));
-        assert_eq!(read.warnings, ["package-lock.json settles a peer of plugin@1.0.0 two ways; jpm links the highest"]);
+        assert_eq!(
+            read.warnings,
+            [
+                "package-lock.json settles peer host of plugin@1.0.0 two ways (1.0.0 and 2.0.0); jpm links 2.0.0 for every copy"
+            ]
+        );
         assert_eq!(
             read.lock.packages["str@4.2.3"].resolved.as_deref(),
             Some("https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz")
+        );
+    }
+
+    #[test]
+    fn reads_two_hashes_as_one_package() {
+        let sha512 = crate::integrity::sha512(b"ms");
+        let both = format!("sha1-{} {sha512}", crate::util::to_base64(&[7; 20]));
+        let deps = json!({ "ms": "2.0.0", "a": "1.0.0" });
+        let text = json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": deps },
+                "node_modules/ms": { "version": "2.0.0", "integrity": both },
+                "node_modules/a": { "version": "1.0.0", "integrity": crate::integrity::sha512(b"a"), "dependencies": { "ms": "2.0.0" } },
+                "node_modules/a/node_modules/ms": { "version": "2.0.0", "integrity": sha512 },
+            }
+        })
+        .to_string();
+        let read = read("package-lock.json", &text, json!({ "dependencies": deps })).unwrap();
+        assert_eq!(read.lock.packages["ms@2.0.0"].integrity, sha512);
+        // Another sha512 is another package, whatever sha1 rides along.
+        let other = format!("sha1-{} {}", crate::util::to_base64(&[7; 20]), crate::integrity::sha512(b"other"));
+        let text = text.replace(&both, &other);
+        assert!(
+            err("package-lock.json", &text, json!({ "dependencies": deps })).contains("holds two packages as ms@2.0.0")
+        );
+    }
+
+    #[test]
+    fn says_which_dependency_went_two_ways() {
+        let at = |name: &str, version: &str, deps: Value| json!({ "version": version, "integrity": format!("sha512-{name}{version}"), "dependencies": deps });
+        let deps = json!({ "through2": "^2", "b": "^1" });
+        let text = json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": deps },
+                "node_modules/through2": at("through2", "2.0.5", json!({ "readable-stream": "~2.3.6" })),
+                "node_modules/readable-stream": at("readable-stream", "2.3.8", json!({})),
+                "node_modules/b": at("b", "1.0.0", json!({ "through2": "^2" })),
+                "node_modules/b/node_modules/through2": at("through2", "2.0.5", json!({ "readable-stream": "~2.3.6" })),
+                "node_modules/b/node_modules/readable-stream": at("readable-stream", "2.3.7", json!({})),
+            }
+        })
+        .to_string();
+        let read = read("package-lock.json", &text, json!({ "dependencies": deps })).unwrap();
+        assert_eq!(read.lock.packages["through2@2.0.5"].dependencies["readable-stream"], "2.3.8");
+        assert_eq!(
+            read.warnings,
+            [
+                "package-lock.json resolves readable-stream, a dependency of through2@2.0.5, two ways (2.3.7 and 2.3.8); jpm links 2.3.8 for every copy"
+            ]
         );
     }
 
