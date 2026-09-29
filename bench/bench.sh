@@ -242,9 +242,8 @@ fetch_tools() {
 		if [ $DRY = 0 ]; then
 			wipe "$t/proj"
 			mkdir -p "$t/proj" && printf '{ "private": true, "dependencies": { %s } }\n' "$deps" >"$t/proj/package.json"
-			# The latest, even one published minutes ago: no minimum release age.
-			(cd "$t/proj" && JPM_STORE=$t/store "$JPM" install --ignore-scripts --min-release-age 0 \
-				>"$W/logs/tools.log" 2>&1) ||
+			# jpm's default minimum release age applies: nothing under a day old.
+			(cd "$t/proj" && JPM_STORE=$t/store "$JPM" install --ignore-scripts >"$W/logs/tools.log" 2>&1) ||
 				die "could not fetch the managers; see $W/logs/tools.log"
 		fi
 	fi
@@ -256,9 +255,13 @@ fetch_aube() {
 	echo "fetching the latest aube"
 	[ $DRY = 0 ] || return
 	url=https://github.com/aubepkg/aube/releases
-	tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url/latest") || { echo "skip fetching aube: curl failed"; return; }
-	tag=${tag##*/}
-	case $tag in v[0-9]*) ;; *) echo "skip fetching aube: no release found"; return ;; esac
+	# The newest release at least a day old, as jpm's minimum release age would pick.
+	cut=$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)
+	tag=$(curl -fsS "https://api.github.com/repos/aubepkg/aube/releases?per_page=20" | awk -F '"' -v cut="$cut" '
+		/"tag_name":/ { tag = $4; skip = 0 }
+		/"(draft|prerelease)": true/ { skip = 1 }
+		/"published_at":/ && !skip && $4 <= cut { print tag; exit }')
+	case $tag in v[0-9]*) ;; *) echo "skip fetching aube: no release a day old found"; return ;; esac
 	d=$W/tools/aube/$tag
 	if [ ! -d "$d" ]; then
 		wipe "$d.part"
