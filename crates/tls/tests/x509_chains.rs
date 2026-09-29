@@ -949,4 +949,11 @@ fn loops_and_budgets() {
     let got = check(&chain, "example.com", NOW, &[impostor.anchor()]);
     eprintln!("12 same-name CAs, impostor anchor: {got:?} in {:?}", start.elapsed());
     assert!(got.is_err());
+    // Each search step scans every certificate sent, so a chain is 64 certificates at most.
+    let c = Chain::new(1, &["example.com"], &[Kind::P256]);
+    let mut chain = c.ders();
+    chain.resize(64, b"junk");
+    assert_eq!(check(&chain, "example.com", NOW, &c.anchors()), Ok(()));
+    chain.push(b"junk");
+    assert_eq!(check(&chain, "example.com", NOW, &c.anchors()), Err("certificate path too complex"));
 }
