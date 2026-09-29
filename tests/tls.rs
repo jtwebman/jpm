@@ -86,6 +86,11 @@ fn trusts_a_private_ca() {
     // NODE_EXTRA_CA_CERTS adds the CA to Mozilla's roots.
     let extra = pem.to_str().unwrap();
     installed(&env, &install(&env, &[("NODE_EXTRA_CA_CERTS", extra)]));
+    // So do the system's, read at the first connection: on Linux, SSL_CERT_FILE names them.
+    if cfg!(target_os = "linux") {
+        let (env, _) = project(&r, &corp);
+        installed(&env, &install(&env, &[("SSL_CERT_FILE", extra)]));
+    }
 
     // cafile in .npmrc, from the project, from ~/.npmrc by a ~/ path, and relative to jpm's cwd.
     let (env, pem) = project(&r, &corp);
