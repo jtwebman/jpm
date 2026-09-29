@@ -24,6 +24,16 @@ pub struct Anchor<'a> {
     pub name_constraints: Option<&'a [u8]>,
 }
 
+impl<'a> Anchor<'a> {
+    /// The anchor a CA certificate (DER) makes: its subject, key and name constraints, as
+    /// webpki's `anchor_from_trusted_cert` takes them. Nothing else in it is checked: a root is
+    /// trusted because it was configured, not for what it says about itself.
+    pub fn from_cert(der: &'a [u8]) -> Result<Self, Error> {
+        let c = cert::parse(der)?;
+        Ok(Self { subject: c.subject, spki: c.spki, name_constraints: c.name_constraints })
+    }
+}
+
 /// A public key a signature is checked against.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicKey<'a> {
@@ -133,6 +143,12 @@ pub fn verify_server<'a>(chain: &[&'a [u8]], host: &str, now: u64, anchors: &[An
     search.build(0)?;
     name::check_host(leaf.san, &Host::new(host))?;
     Ok(cert::leaf_key(leaf.spki)?)
+}
+
+/// The server certificate's key, with nothing checked but that the certificate reads: for
+/// `Config::insecure_skip_verify`.
+pub fn leaf_key(der: &[u8]) -> Result<PublicKey<'_>, Error> {
+    Ok(cert::leaf_key(cert::parse(der)?.spki)?)
 }
 
 /// Whether `signature` over `message` is `key`'s under `scheme`. A key and scheme that do not

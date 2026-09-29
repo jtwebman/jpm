@@ -30,6 +30,16 @@ pub struct Config {
     pub ignore_scripts: bool,
     /// `legacy-peer-deps`: install no peers; link one only to what the tree already has.
     pub legacy_peer_deps: bool,
+    /// `cafile`: a PEM file of certificates to trust in place of Mozilla's roots.
+    pub cafile: Option<PathBuf>,
+    /// `ca`: the same as PEM text, `\n` for its line breaks; `ca[]=` once per certificate.
+    pub ca: Option<String>,
+    /// `strict-ssl=false`: take any certificate. The one way to turn the checks off.
+    pub insecure_tls: bool,
+    /// `proxy`, `https-proxy` and `noproxy`, over the environment's.
+    pub proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub noproxy: Option<String>,
 }
 
 /// What the command line says, over every file.
@@ -212,6 +222,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         .get("min-release-age-exclude")
         .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
         .unwrap_or_default();
+    // `null` and `false` are npm's ways to write "not set".
+    let set = |key: &str| merged.get(key).filter(|v| !matches!(v.as_str(), "null" | "false")).cloned();
     let mut dedup = Vec::new();
     for e in exclude {
         if !dedup.contains(&e) {
@@ -232,6 +244,13 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         // must not undo the user's own `ignore-scripts=true`.
         ignore_scripts: layers.iter().any(|l| l.get("ignore-scripts").is_some_and(|v| v == "true")),
         legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
+        cafile: set("cafile").map(PathBuf::from),
+        // npm's ini reads `\n` in a quoted value as a line break.
+        ca: set("ca").map(|v| v.replace("\\n", "\n")),
+        insecure_tls: merged.get("strict-ssl").is_some_and(|v| v == "false"),
+        proxy: set("proxy"),
+        https_proxy: set("https-proxy"),
+        noproxy: set("noproxy"),
     })
 }
 
@@ -317,7 +336,11 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     if let Some(l) = flags.legacy_peer_deps {
         cli.insert("legacy-peer-deps".into(), l.to_string());
     }
-    to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())
+    let mut config = to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())?;
+    // A relative cafile is from where jpm runs, as npm takes it.
+    config.cafile = config.cafile.map(|f| path(&f.to_string_lossy()));
+    crate::http::configure(&config)?;
+    Ok(config)
 }
 
 /// npm's global file is `<prefix>/etc/npmrc`, the prefix being where node is installed.
@@ -399,6 +422,37 @@ mod tests {
         let date: Layer = [("before".into(), "2020-01-01".into())].into();
         assert_eq!(to_config(&[off, date], None).unwrap().before, parse_date("2020-01-01"));
         assert!(to_config(&[], None).unwrap().before.is_some());
+    }
+
+    #[test]
+    fn reads_tls_and_proxy_settings() {
+        let config = |rc: &str| to_config(&[parse_npmrc(rc, &no_env).unwrap()], None).unwrap();
+        let none = config("");
+        assert!(!none.insecure_tls, "certificates are checked unless asked otherwise");
+        assert!(none.ca.is_none() && none.cafile.is_none() && none.proxy.is_none() && none.noproxy.is_none());
+        let c = config(
+            "cafile=/etc/corp.pem\nca=\"-----BEGIN CERTIFICATE-----\\nAAAA\\n-----END CERTIFICATE-----\"\nstrict-ssl=false\nproxy=http://p.test:1\nhttps-proxy=http://u:p@s.test:2\nnoproxy=a.test,b.test",
+        );
+        assert_eq!(c.cafile.as_deref(), Some(Path::new("/etc/corp.pem")));
+        assert_eq!(c.ca.as_deref(), Some("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----"));
+        assert!(c.insecure_tls);
+        assert_eq!(c.proxy.as_deref(), Some("http://p.test:1"));
+        assert_eq!(c.https_proxy.as_deref(), Some("http://u:p@s.test:2"));
+        assert_eq!(c.noproxy.as_deref(), Some("a.test,b.test"));
+        // Lists, and npm's spellings of "not set".
+        let c = config("ca[]=\"x\\ny\"\nca[]=z\nnoproxy[]=a.test\nnoproxy[]=b.test\nproxy=false\nhttps-proxy=null");
+        assert_eq!(c.ca.as_deref(), Some("x\ny,z"));
+        assert_eq!(c.noproxy.as_deref(), Some("a.test,b.test"));
+        assert!(c.proxy.is_none() && c.https_proxy.is_none());
+        assert!(!config("strict-ssl=true").insecure_tls);
+        // A later layer turns the checks back on; the environment's spelling works too.
+        let off = parse_npmrc("strict-ssl=false", &no_env).unwrap();
+        let on = env_config([("npm_config_strict_ssl".to_string(), "true".to_string())].into_iter());
+        assert!(!to_config(&[off.clone(), on], None).unwrap().insecure_tls);
+        let env = env_config([("npm_config_https_proxy".to_string(), "http://e.test".to_string())].into_iter());
+        let c = to_config(&[off, env], None).unwrap();
+        assert!(c.insecure_tls);
+        assert_eq!(c.https_proxy.as_deref(), Some("http://e.test"));
     }
 
     #[test]

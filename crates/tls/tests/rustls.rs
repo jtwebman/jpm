@@ -284,7 +284,8 @@ fn certificate_checks() {
             }
             Ok::<_, std::io::Error>(())
         });
-        let r = connect(tcp, host, &jpm_tls::Config { roots, alpn: Vec::new() }).map(|_| ());
+        let r =
+            connect(tcp, host, &jpm_tls::Config { roots, alpn: Vec::new(), insecure_skip_verify: false }).map(|_| ());
         (r, server.join().unwrap())
     };
     let good = pki(KeyType::P256);

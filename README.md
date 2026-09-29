@@ -155,7 +155,28 @@ or `ignore-scripts=true` in .npmrc turns every script off.
 `.npmrc` is read from the project, the user's home and npm's global location, plus
 `npm_config_*` variables. jpm reads `registry`, `@scope:registry`, credentials
 (`//host/:_authToken`, `_auth`, `username` and `_password`), `save-exact`, `offline`,
-`prefer-offline`, `min-release-age`, `before` and `min-release-age-exclude`.
+`prefer-offline`, `min-release-age`, `before` and `min-release-age-exclude`, and the network
+settings below.
+
+jpm has its own TLS and trusts Mozilla's root certificates. Behind a proxy that inspects TLS,
+or for a registry with a private CA, tell it which certificates to trust, as with npm:
+
+- `NODE_EXTRA_CA_CERTS=/path/ca.pem` adds the certificates in a PEM file to Mozilla's roots, as
+  Node does.
+- `cafile=/path/ca.pem` in `.npmrc` trusts the certificates in the file *instead of* Mozilla's
+  roots (and of `NODE_EXTRA_CA_CERTS`), as it does in npm. `ca="-----BEGIN CERTIFICATE-----\n…"`
+  does the same with the PEM text on one line, `\n` for its line breaks; `ca[]=` once per
+  certificate lists several. `cafile` wins when both are set.
+- The system's own bundle works as either: `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt`.
+- `strict-ssl=false` turns the certificate checks off, and jpm warns on every run that it is
+  off. The connection is still encrypted, but anyone on the network can pose as the registry.
+
+A file that cannot be read, or holds no certificate, is an error that names it.
+
+`https-proxy` (else `proxy`) in `.npmrc` sends requests through a proxy, `http://user:pass@host:port`
+for one that wants credentials, and `noproxy` lists the hosts (and domains under them) that go
+direct. They take the place of `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, which jpm reads when
+`.npmrc` names none. https goes through the proxy by CONNECT, so TLS runs end to end.
 
 New versions are held back for one day by default (`min-release-age`). Set it to `0` to
 turn this off.

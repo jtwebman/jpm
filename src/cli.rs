@@ -94,6 +94,8 @@ Notes
   again. approve with no names lists what waits. The project's own lifecycle scripts
   (preinstall to postprepare) run on installs that change the tree.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
+  TLS trusts Mozilla's roots plus NODE_EXTRA_CA_CERTS, or only .npmrc's cafile or ca; proxies
+  come from https-proxy, proxy and noproxy in .npmrc, else HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
 
   run installs the tree first (a no-op when it is current), then runs the script in a shell
