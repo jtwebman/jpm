@@ -18,6 +18,14 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
         .collect()
 }
 
+/// An entry directory's package name and version, as `store_keys` wrote them.
+pub fn name_version(key: &str) -> Option<(String, &str)> {
+    // The hash is 22 characters of base64url, which may hold a `-`.
+    let id = key.get(..key.len().checked_sub(23)?).filter(|_| key.as_bytes()[key.len() - 23] == b'-')?;
+    let at = id.get(1..)?.find('@')? + 1;
+    Some((id[..at].replace('+', "/"), &id[at + 1..]))
+}
+
 /// Identity, content and what it resolves its deps to. Integrity, not the url: a republished
 /// tarball is new content, and a mirror serving the same bytes is not.
 fn line_of(p: &Package) -> String {
@@ -174,5 +182,20 @@ mod tests {
         let mut g = BTreeMap::new();
         g.insert("@s/a@1.0.0".to_string(), pkg("@s/a", &[]));
         assert!(store_keys(&g)["@s/a@1.0.0"].starts_with("@s+a@1.0.0-"));
+    }
+
+    #[test]
+    fn reads_name_and_version_back() {
+        let mut g = graph(&[("a", &[])]);
+        let mut scoped = pkg("@s/b", &[]);
+        scoped.version = "2.0.0-beta.1".into();
+        g.insert("@s/b@2.0.0-beta.1".into(), scoped);
+        for (id, key) in store_keys(&g) {
+            let (name, version) = name_version(&key).unwrap();
+            assert_eq!(format!("{name}@{version}"), id);
+        }
+        assert_eq!(name_version("@babel+core@7.29.7-PEUj-xSY3KB71f6RKBUtQw"), Some(("@babel/core".into(), "7.29.7")));
+        assert_eq!(name_version("a@1.0.0-short"), None);
+        assert_eq!(name_version(".hoist"), None);
     }
 }
