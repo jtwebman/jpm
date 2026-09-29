@@ -340,6 +340,7 @@ impl Linker<'_> {
         if !fin.is_dir() {
             let temp = global.join(format!(".tmp-{}", temp_suffix()));
             let built = self.build(entry, &temp).and_then(|()| {
+                seal(&temp);
                 fs::rename(&temp, &fin)
                     .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
             });
@@ -369,6 +370,9 @@ impl Linker<'_> {
         if let Err(e) = self.build(entry, &temp) {
             remove_tree(&temp);
             return Err(e);
+        }
+        if entry.shared {
+            seal(&temp);
         }
         let retired = root.join(format!(".tmp-{}", temp_suffix()));
         let moved = fs::rename(fin, &retired).is_ok();
@@ -757,6 +761,23 @@ fn bins_of(deps: &[(String, &Entry)]) -> BTreeMap<String, (String, String)> {
 /// A bin link's text from an entry's `.bin`: `../<name>/<target>`.
 fn bin_link(name: &str, target: &str) -> String {
     sep(&format!("../{name}/{}", target.trim_end_matches('/')))
+}
+
+/// A shared entry is read-only all the way down, its directories as its files already are: no
+/// script in one project can add, remove or rename what another project links to.
+fn seal(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                seal(&e.path());
+            }
+        }
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o555));
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 /// A copy the owner may write: the store's files are read-only.

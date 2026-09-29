@@ -348,10 +348,15 @@ impl Client {
         headers: &[(&str, &str)],
         authorization: Option<&str>,
     ) -> io::Result<Streaming> {
-        let proxy = proxy_for(url);
+        let proxy = proxy_for(url)?;
         let absolute = proxy.is_some() && !url.tls;
         let path = if absolute { format!("{}{}", url.origin(), url.target) } else { url.target.clone() };
-        let head = request_head(url, &path, headers, authorization)?;
+        // A plain-http request goes to the proxy itself, which takes its credentials here.
+        let mut all = headers.to_vec();
+        if absolute && let Some(auth) = proxy.as_ref().and_then(|p| p.auth.as_deref()) {
+            all.push(("proxy-authorization", auth));
+        }
+        let head = request_head(url, &path, &all, authorization)?;
         let key: PoolKey = (url.tls, url.host.clone(), url.port);
         // A pooled connection the server has since closed fails at once: then a fresh one.
         if let Some(mut conn) = self.take(&key) {
@@ -402,18 +407,19 @@ impl Client {
         Err(last)
     }
 
-    fn connect(&self, url: &Url, proxy: Option<&Url>) -> io::Result<Conn> {
+    fn connect(&self, url: &Url, proxy: Option<&Proxy>) -> io::Result<Conn> {
         if std::env::var_os("JPM_HTTP_LOG").is_some() {
             eprintln!("connect {}", url.host);
         }
         let tcp = match proxy {
             Some(p) => {
-                let mut s = self.tcp(&p.host, p.port)?;
+                let mut s = self.tcp(&p.url.host, p.url.port)?;
                 if url.tls {
                     // A tunnel through the proxy; TLS then runs end to end with the registry.
                     let host = if url.host.contains(':') { format!("[{}]", url.host) } else { url.host.clone() };
                     let authority = format!("{host}:{}", url.port);
-                    write!(s, "CONNECT {authority} HTTP/1.1\r\nhost: {authority}\r\n\r\n")?;
+                    let auth = p.auth.as_ref().map(|a| format!("proxy-authorization: {a}\r\n")).unwrap_or_default();
+                    write!(s, "CONNECT {authority} HTTP/1.1\r\nhost: {authority}\r\n{auth}\r\n")?;
                     let mut reader = BufReader::new(s.try_clone()?);
                     let (status, _) = read_head(&mut reader)?;
                     if status != 200 {
@@ -626,22 +632,60 @@ impl Read for Body {
 
 /// The proxy a url goes through: `HTTPS_PROXY` for https, `HTTP_PROXY` for http (either case),
 /// unless `NO_PROXY` names its host or a domain above it.
-fn proxy_for(url: &Url) -> Option<Url> {
+/// The proxy for a url, and the `Basic` credentials its own url carries (`http://user:pass@host`).
+struct Proxy {
+    url: Url,
+    auth: Option<String>,
+}
+
+/// A set but unreadable proxy is an error: going around it would be a surprise.
+fn proxy_for(url: &Url) -> io::Result<Option<Proxy>> {
     let var = |names: &[&str]| names.iter().find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty()));
-    let raw = if url.tls { var(&["HTTPS_PROXY", "https_proxy"]) } else { var(&["HTTP_PROXY", "http_proxy"]) }?;
+    let raw = if url.tls { var(&["HTTPS_PROXY", "https_proxy"]) } else { var(&["HTTP_PROXY", "http_proxy"]) };
+    let Some(raw) = raw else { return Ok(None) };
     let skip = var(&["NO_PROXY", "no_proxy"]).unwrap_or_default();
     for entry in skip.split(',').map(str::trim).filter(|e| !e.is_empty()) {
         if entry == "*" {
-            return None;
+            return Ok(None);
         }
         let domain = entry.trim_start_matches('*').trim_start_matches('.');
         let domain = domain.split(':').next().unwrap_or(domain);
         if url.host == domain || url.host.ends_with(&format!(".{domain}")) {
-            return None;
+            return Ok(None);
         }
     }
     let raw = if raw.contains("://") { raw } else { format!("http://{raw}") };
-    Url::parse(&raw).ok()
+    let (scheme, rest) = raw.split_once("://").unwrap_or(("http", &raw));
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (userinfo, host) = match rest[..end].rsplit_once('@') {
+        Some((u, h)) => (Some(u), h),
+        None => (None, &rest[..end]),
+    };
+    let bad = || io::Error::new(io::ErrorKind::InvalidInput, "the proxy setting is not a url");
+    let url = Url::parse(&format!("{scheme}://{host}")).map_err(|_| bad())?;
+    let auth = userinfo.map(|u| format!("Basic {}", crate::util::to_base64(&percent_decode(u))));
+    Ok(Some(Proxy { url, auth }))
+}
+
+/// `%xx` escapes, as a proxy url's user and password may use for `@` or `:`.
+fn percent_decode(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        match (b[i], b.get(i + 1).copied().and_then(hex), b.get(i + 2).copied().and_then(hex)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -784,9 +828,17 @@ mod tests {
             std::env::set_var("HTTPS_PROXY", "proxy.test:3128");
             std::env::set_var("NO_PROXY", "localhost,.npmjs.org");
         }
-        assert!(proxy_for(&u).is_none());
+        assert!(proxy_for(&u).unwrap().is_none());
         unsafe { std::env::set_var("NO_PROXY", "other.test") };
-        assert_eq!(proxy_for(&u).map(|p| (p.host, p.port)), Some(("proxy.test".to_string(), 3128)));
+        let p = proxy_for(&u).unwrap().unwrap();
+        assert_eq!((p.url.host.as_str(), p.url.port, p.auth), ("proxy.test", 3128, None));
+        // Credentials in the proxy url become a Basic header, escapes decoded.
+        unsafe { std::env::set_var("HTTPS_PROXY", "http://me%40corp:p%3Ass@proxy.test:8080") };
+        let p = proxy_for(&u).unwrap().unwrap();
+        assert_eq!((p.url.host.as_str(), p.url.port), ("proxy.test", 8080));
+        assert_eq!(p.auth.as_deref(), Some(format!("Basic {}", crate::util::to_base64(b"me@corp:p:ss")).as_str()));
+        unsafe { std::env::set_var("HTTPS_PROXY", "http://proxy test:x") };
+        assert!(proxy_for(&u).is_err(), "an unreadable proxy is an error, not a way around it");
         unsafe {
             std::env::remove_var("HTTPS_PROXY");
             std::env::remove_var("NO_PROXY");
