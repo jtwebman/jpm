@@ -33,6 +33,17 @@ Linux, a POSIX shell, coreutils, curl and tar (for aube), GNU time at `/usr/bin/
 (`apt install time` on Debian and Ubuntu), cargo, and Node.js on `PATH` for npm, yarn and
 upm.
 
+On Windows it runs under Git Bash, which brings the shell, coreutils, curl and unzip.
+GNU time has no Windows build, so the script compiles `measure.cs` with the C# compiler
+that ships with Windows (.NET Framework 4) and times with that. It runs each install in a
+job object, so every process the manager starts is counted. Windows keeps no peak RSS for
+a tree of processes, so the memory column there is the tree's peak committed memory. That
+is a different measure from RSS, so compare it only with other Windows runs. Keep
+`BENCH_WORK` on a short path such as `C:\bench`, because npm's nested trees can exceed
+the 260-character path limit. Windows Defender scans every file an install writes, and
+this is most of a cold install's cost. Say whether real-time protection was on when
+quoting results.
+
 ## Options
 
 ```
