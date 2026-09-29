@@ -84,7 +84,9 @@ Notes
   lock saves all platforms and dev packages; install selects this platform.
   add (also install <spec>...) and remove edit package.json, then install, keeping other locks.
   add moves groups; remove clears all groups. Explicit ranges stay; names, * and tags
-  save ^version unless --exact. dedupe favors locked versions; delete {LOCKFILE} for a fresh resolve.
+  save ^version unless --exact. dedupe favors locked versions.
+  With no {LOCKFILE}, install keeps the versions node_modules has where the ranges allow them.
+  For a fresh resolve, delete {LOCKFILE} and run lock, or delete node_modules too.
   A url or a path to a .tgz is a tarball dependency, locked by where it is.
   link:<dir> links a directory as it is. file:<dir> (or ./<dir>) inside the project is linked
   and its dependencies installed, as a workspace's are; outside the project it is linked as

@@ -80,6 +80,40 @@ fn no_command_installs() {
 }
 
 #[test]
+fn keeps_installed_versions_without_a_lockfile() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0", "b": "^1.0.0" } }));
+    env.ok(&["install"]);
+    r.publish(pkg("a", "1.2.0", json!({ "dependencies": { "b": "^1.1.0" } })));
+    r.publish(pkg("b", "1.2.0", json!({})));
+    let versions = |env: &Env| {
+        let lock = env.lock();
+        (lock["root"]["dependencies"]["a"].clone(), lock["root"]["dependencies"]["b"].clone())
+    };
+    // Deleting jpm.lock keeps what node_modules has, where the ranges allow it.
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    let out = env.ok(&["install"]);
+    assert!(out.contains("versions in node_modules preferred"), "{out}");
+    assert_eq!(versions(&env), (json!("1.1.0"), json!("1.1.0")));
+    assert!(env.read("node_modules/a/index.js").contains("a@1.1.0"));
+    // A range the installed version no longer satisfies is resolved again.
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0", "b": "^2.0.0" } }));
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(versions(&env), (json!("1.1.0"), json!("2.0.0")));
+    assert!(env.read("node_modules/b/index.js").contains("b@2.0.0"));
+    // `jpm lock` resolves afresh, as does an install with no node_modules.
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    env.ok(&["lock"]);
+    assert_eq!(versions(&env).0, json!("1.2.0"));
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(versions(&env).0, json!("1.2.0"));
+}
+
+#[test]
 fn links_bins_and_runs_scripts() {
     let r = registry();
     let env = Env::new(&r);
