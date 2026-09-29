@@ -174,6 +174,50 @@ A linked directory is a `package <name>@link:<path>` entry holding only its vers
 A lockfile edge to a linked directory must match the spec package.json gives it, so an edit to
 the lockfile alone cannot point a name at another directory.
 
+## Git dependencies
+
+```json
+"dependencies": {
+  "a": "github:user/repo#v1.2.0",
+  "b": "user/repo#semver:^2",
+  "c": "git+ssh://git@example.com/team/c.git#main",
+  "d": "gitlab:group/d#9f2c4e1b7a0d3c5e8f6a2b4c1d3e5f7a9b0c2d4e"
+}
+```
+
+`github:`, `gitlab:`, `bitbucket:` and `user/repo` shorthands are read, and `git+https://`,
+`git+ssh://` (and scp-like `git@host:path`) and `git://` urls, each with `#<commit>`,
+`#<branch or tag>` or `#semver:<range>` (the highest tag in the range; none means the default
+branch). `git+http://` is refused, as are credentials in a url: they would be written to
+jpm.lock, and belong in git's credential helper or ssh. `gist:` is not read yet.
+
+- **Resolving.** A ref becomes a commit through `git ls-remote`, so git must be installed. A
+  commit is given as its full id; a short one is refused. jpm.lock keys the package by its
+  commit (`a@git+https://github.com/user/repo.git#<commit>`), and keeps that commit until
+  package.json names another ref: a branch is not followed by a later install.
+- **Fetching.** A GitHub, GitLab or Bitbucket repository over https is downloaded as the host's
+  archive of the commit, through jpm's own client; if there is none (a private repository), and
+  for every other url, jpm fetches the one commit into a temporary repository
+  (`git fetch --depth 1`) and reads it with `git archive`. Only the files `npm pack` would keep
+  under package.json's `files` are stored, with package.json, the readme, the licence, `main`
+  and the bins always kept and `node_modules` never; `.npmignore` and `.gitignore` are not read.
+- **Integrity.** A host's archive is not the same bytes from one year to the next (GitHub's
+  compression changed in 2023), so the integrity jpm locks is not of the archive: it is the
+  sha512 of the stored tree, each file's path, mode, size and bytes in path order. A download
+  that unpacks to other files under the locked commit fails, however it was compressed.
+- **Scripts.** A git package's `prepare`, which npm runs to build it, counts as an install
+  script: it runs only once approved (`jpm approve <name>`), before its other install scripts,
+  in the package's copy. Its devDependencies are not installed for it.
+- **Security.** git runs with only https, ssh and git:// allowed (`GIT_ALLOW_PROTOCOL`: never
+  `ext::` or `file://`), without prompting for credentials when there is no terminal, with every
+  url after `--` and without the repository variables (`GIT_DIR` and the like) of a git that ran
+  jpm. A url, host or user starting with `-`, a ref starting with `-`, or a url with a space or
+  a control character in it is refused when package.json or jpm.lock is read. Registry tokens
+  are never sent to a git host.
+
+Another manager's lockfile with a git dependency is brought over by resolving package.json
+with its versions preferred.
+
 ## How it works
 
 - **Resolve.** The dependency graph is walked on a pool of threads. Each package is picked
@@ -276,6 +320,10 @@ cargo build --profile fast       # every crate at full speed, for comparing
 
 Platform-specific code lives in `src/sys/`, one file per OS; only the target's file is
 compiled.
+
+The git tests use bare repositories on disk and a local server for GitHub's archives, through
+two switches meant for tests only: `JPM_GIT_ALLOW_FILE=1` lets git fetch `file://` urls, and
+`JPM_CODELOAD_URL` replaces `https://codeload.github.com`.
 
 jpm has its own TLS and cryptography, in three crates:
 

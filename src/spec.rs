@@ -16,6 +16,8 @@ pub enum Kind {
     /// `fetch_spec` is `link:` or `file:` and a clean relative `/` path, which may start with
     /// `../`: a directory, linked where it is.
     Directory,
+    /// `fetch_spec` is a repository url as a lockfile spells it, `#`, and a ref (see `git`).
+    Git,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,9 +43,13 @@ fn ends_as_tarball(s: &str) -> bool {
     TARBALL_EXT.iter().any(|ext| lower.ends_with(ext))
 }
 
-/// A CLI argument that names no package, only where one is (a url, a `file:`, `link:`, `./` or
-/// `../` path, or a file name ending as a tarball does), as its spec's `fetch_spec`.
+/// A CLI argument that names no package, only where one is (a git repository, a url, a `file:`,
+/// `link:`, `./` or `../` path, or a file name ending as a tarball does), as its spec's
+/// `fetch_spec`.
 pub fn bare_source(arg: &str) -> Result<Option<String>> {
+    if let Some(repo) = git(arg, arg)? {
+        return Ok(Some(repo));
+    }
     let pathish = arg.starts_with("file:")
         || arg.starts_with("link:")
         || arg.starts_with("./")
@@ -101,7 +107,8 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     let mut fetch_name = name.to_string();
     let mut s = spec.trim().to_string();
     unsupported(&s, raw)?;
-    let source = path(&s, raw)?;
+    let repo = git(&s, raw)?;
+    let source = if repo.is_some() { None } else { path(&s, raw)? };
     let mut local = false;
     if let Some(rest) = s.strip_prefix("workspace:") {
         local = true;
@@ -125,6 +132,9 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         kind,
         fetch_spec,
     };
+    if let Some(repo) = repo {
+        return Ok(make(Kind::Git, repo));
+    }
     if let Some(source) = source {
         let dir = source.starts_with("link:") || source.starts_with("file:") && !ends_as_tarball(&source);
         return Ok(make(if dir { Kind::Directory } else { Kind::Tarball }, source));
@@ -147,33 +157,102 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 5] = ["patch:", "portal:", "catalog:", "jsr:", "exec:"];
-    const GIT: [&str; 10] = [
-        "git:",
-        "git+https:",
-        "git+http:",
-        "git+ssh:",
-        "git+file:",
-        "git@",
-        "github:",
-        "gitlab:",
-        "bitbucket:",
-        "gist:",
-    ];
+    const PROTOCOLS: [&str; 6] = ["patch:", "portal:", "catalog:", "jsr:", "exec:", "gist:"];
     let lower = s.to_ascii_lowercase();
     if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
         return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
     }
-    // `user/repo` is github shorthand, with an optional `#ref`.
-    let repo = s.split('#').next().unwrap_or(s);
-    let shorthand = repo.split_once('/').is_some_and(|(user, name)| {
-        let ok = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
-        ok(user) && ok(name) && !user.starts_with(['.', '-'])
-    });
-    if shorthand || GIT.iter().any(|p| lower.starts_with(p)) {
-        return Err(invalid(format!("git dependencies are not supported yet: {s} (in package \"{raw}\")")));
-    }
     Ok(())
+}
+
+/// The hosts whose https repositories are fetched as an archive of a commit, with the prefix
+/// of their shorthand.
+pub const HOSTS: [(&str, &str); 3] =
+    [("github:", "github.com"), ("gitlab:", "gitlab.com"), ("bitbucket:", "bitbucket.org")];
+
+/// A git spec's `fetch_spec`, or `None` when `s` is not one: the repository as a lockfile spells
+/// it, `#`, and the ref as written. A hosted repository over https or `git://` (`github:u/r`,
+/// `u/r`, `git+https://github.com/u/r`) is always `git+https://<host>/u/r.git`; any other url
+/// keeps its spelling, the scheme lowercased. The ref is empty for the default branch, a
+/// commit, a branch or tag, or `semver:<range>` over the tags. Nothing here reaches git as an
+/// option: a url, host or user starting with `-` is refused, and so are credentials in a url
+/// that is not ssh, which would end up in jpm.lock.
+fn git(s: &str, raw: &str) -> Result<Option<String>> {
+    let (repo, committish) = s.split_once('#').unwrap_or((s, ""));
+    let lower = repo.to_ascii_lowercase();
+    let bad = |why: &str| Err(invalid(format!("Invalid git spec \"{s}\" of package \"{raw}\": {why}")));
+    let short = HOSTS.iter().find(|(p, _)| lower.starts_with(p)).map(|(p, host)| (*host, &repo[p.len()..]));
+    let github = !lower.contains(':') && !ends_as_tarball(repo) && user_repo(repo).is_some();
+    let short = short.or_else(|| github.then_some(("github.com", repo)));
+    let url = if let Some((host, path)) = short {
+        let Some(path) = user_repo(path) else { return bad("give the repository as user/repo") };
+        format!("git+https://{host}/{path}.git")
+    } else if lower.starts_with("git@") {
+        format!("git+ssh://{repo}") // scp-like: `git@host:path`
+    } else if lower.starts_with("git+http://") {
+        return bad("fetch it over https");
+    } else if ["git+https://", "git+ssh://", "git://", "git+file://"].iter().any(|p| lower.starts_with(p)) {
+        let at = lower.find("://").unwrap_or(0) + 3;
+        format!("{}{}", &lower[..at], &repo[at..])
+    } else {
+        return Ok(None);
+    };
+    let at = url.find("://").unwrap_or(0) + 3;
+    let (scheme, rest) = (&url[..at], &url[at..]);
+    let (authority, _) = rest.split_once('/').unwrap_or((rest, ""));
+    let (user, host) = authority.rsplit_once('@').unwrap_or(("", authority));
+    // `host:path` is ssh's scp-like form; `host:22` a port.
+    let (host, after) = host.split_once(':').unwrap_or((host, ""));
+    let scp = scheme == "git+ssh://" && !after.is_empty() && !after.bytes().all(|b| b.is_ascii_digit());
+    let path = if scp { &rest[rest.find(':').unwrap_or(0) + 1..] } else { rest.split_once('/').map_or("", |p| p.1) };
+    let file = scheme == "git+file://";
+    if url.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'\\') || path.is_empty() || path.starts_with('-') {
+        return bad("not a repository url");
+    }
+    if host.starts_with('-') || user.starts_with('-') || host.is_empty() != file {
+        return bad("not a repository host");
+    }
+    if !user.is_empty() && (scheme != "git+ssh://" || user.contains(':')) {
+        return bad("credentials belong in git's credential helper or ssh, not package.json");
+    }
+    // A hosted repository over https or git:// is the host's own https url, however written.
+    let hosted = HOSTS.iter().find(|(_, h)| host.eq_ignore_ascii_case(h)).map(|(_, h)| *h);
+    let url = match (hosted, user_repo(path)) {
+        (Some(h), Some(p)) if !scp && (scheme == "git+https://" || scheme == "git://") => {
+            format!("git+https://{h}/{p}.git")
+        }
+        _ => url,
+    };
+    let committish = match committish.strip_prefix("semver:") {
+        Some(range) if !semver::valid_range(range) => return bad("not a semver range"),
+        Some(_) => committish.to_string(),
+        None if committish.starts_with('-') || committish.bytes().any(|b| !b.is_ascii_graphic()) => {
+            return bad("not a ref");
+        }
+        None if is_commit(committish) => committish.to_ascii_lowercase(),
+        None => committish.to_string(),
+    };
+    Ok(Some(format!("{url}#{committish}")))
+}
+
+/// `u/r` out of `u/r`, `u/r.git` or `u/r/`: a user and repository as hosts spell them.
+fn user_repo(path: &str) -> Option<String> {
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (user, name) = path.split_once('/')?;
+    let ok = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+    (ok(user) && ok(name) && !user.starts_with(['.', '-']) && name != "." && name != "..")
+        .then(|| format!("{user}/{name}"))
+}
+
+/// A full commit id: 40 hex digits, or 64 for a SHA-256 repository.
+pub fn is_commit(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A git source (`git+https://…#…`, `git://…#…`), as a lockfile key's tail or a `fetch_spec`.
+pub fn is_git(source: &str) -> bool {
+    source.starts_with("git+") || source.starts_with("git://")
 }
 
 /// A tarball's or a directory's `fetch_spec`, or `None` when `s` is neither: a url, or a path
@@ -366,28 +445,96 @@ mod tests {
         assert!(parse_dep("foo", "not/a tag").unwrap_err().message.starts_with("Invalid tag"));
     }
 
+    const C: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn reads_git_specs() {
+        let git = |spec: &str| {
+            let s = parse_dep("x", spec).unwrap_or_else(|e| panic!("{spec}: {}", e.message));
+            assert_eq!(s.kind, Kind::Git, "{spec}");
+            s.fetch_spec
+        };
+        // Every spelling of a hosted repository over https is one url, the ref kept as written.
+        let hub = "git+https://github.com/u/r.git#";
+        for spec in [
+            "github:u/r",
+            "u/r",
+            "u/r.git",
+            "git+https://github.com/u/r",
+            "git+https://github.com/u/r.git",
+            "git+https://GitHub.com/u/r/",
+            "git://github.com/u/r.git",
+            "GIT+HTTPS://github.com/u/r",
+        ] {
+            assert_eq!(git(spec), hub, "{spec}");
+        }
+        assert_eq!(git("u/r#v1.2.3"), format!("{hub}v1.2.3"));
+        assert_eq!(git("u/r#feature/x"), format!("{hub}feature/x"));
+        assert_eq!(git("github:u/r#semver:^1.2 || ^2"), format!("{hub}semver:^1.2 || ^2"));
+        assert_eq!(git(&format!("u/r#{}", C.to_uppercase())), format!("{hub}{C}"), "a commit is lowercase");
+        assert_eq!(git("gitlab:g/p#main"), "git+https://gitlab.com/g/p.git#main");
+        assert_eq!(git("bitbucket:t/p"), "git+https://bitbucket.org/t/p.git#");
+        // Over ssh it stays ssh: its keys are how a private repository is reached.
+        assert_eq!(git("git+ssh://git@github.com/u/r.git"), "git+ssh://git@github.com/u/r.git#");
+        assert_eq!(git("git@github.com:u/r.git#dev"), "git+ssh://git@github.com:u/r.git#dev");
+        assert_eq!(git("git+ssh://git@host:2222/p/r.git"), "git+ssh://git@host:2222/p/r.git#");
+        assert_eq!(git("git+https://example.com/a/b/c.git#x"), "git+https://example.com/a/b/c.git#x");
+        assert_eq!(git("git://example.com/r"), "git://example.com/r#");
+        assert_eq!(git("git+file:///srv/r.git"), "git+file:///srv/r.git#");
+        assert!(is_git(&git("u/r")) && is_commit(C) && !is_commit(&C[..39]));
+        // A bare CLI argument names one too.
+        assert_eq!(bare_source("u/r").unwrap().as_deref(), Some(hub));
+        assert_eq!(bare_source("@s/p").unwrap(), None);
+        // A path or a tarball name is not github shorthand.
+        assert_eq!(parse_dep("x", "./u/r").unwrap().kind, Kind::Directory);
+        assert!(parse_dep("x", "vendor/x.tgz").is_err());
+    }
+
+    #[test]
+    fn refuses_git_specs_that_would_reach_git_as_options() {
+        for bad in [
+            "git+https://-oProxyCommand=touch%20x/r",
+            "git+ssh://-oProxyCommand=touch%20x/r",
+            "git+ssh://git@-oProxyCommand=x:r",
+            "git@-oProxyCommand=x:r",
+            "git+ssh://-git@host/r",
+            "git+ssh://git@host:--upload-pack=touch x",
+            "git+ssh://git@host:-u/r",
+            "git+https://host/r#--upload-pack=touch",
+            "u/r#-x",
+            "git+https:// host/r",
+            "git+https://host",
+            "git+https://host/",
+            "git+https://host/r\\x",
+            "git+https://user:token@github.com/u/r",
+            "git+https://token@host/r",
+            "git://user@host/r",
+            "git+ssh://user:pass@host/r",
+            "git+http://github.com/u/r",
+            "git+file://host/r",
+            "github:u",
+            "github:u/r/x",
+            "github:../r",
+            "u/r#semver:not a range",
+            "u/r#a b",
+        ] {
+            assert!(parse_dep("x", bad).is_err(), "{bad}");
+        }
+        // Not git at all, and so never handed to it: ext:: and file:: transports, bare urls.
+        for other in ["ext::sh -c touch% /tmp/x", "file::/etc", "--upload-pack=x"] {
+            assert!(parse_dep("x", other).map_or(true, |s| s.kind != Kind::Git), "{other}");
+        }
+    }
+
     #[test]
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in ["patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js"] {
+        for spec in
+            ["patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"]
+        {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
-        }
-        assert_eq!(
-            msg("github:watson/ci-info#v1"),
-            r#"git dependencies are not supported yet: github:watson/ci-info#v1 (in package "x@github:watson/ci-info#v1")"#
-        );
-        let git = [
-            "watson/ci-info",
-            "watson/ci-info#semver:^3",
-            "git+https://github.com/a/b.git",
-            "git+ssh://git@github.com/a/b",
-            "git://github.com/a/b",
-            "git@github.com:a/b.git",
-        ];
-        for spec in git {
-            assert!(msg(spec).starts_with("git dependencies are not supported yet"), "{spec}");
         }
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {

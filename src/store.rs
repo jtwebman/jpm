@@ -71,12 +71,15 @@ impl Index {
 pub enum Tarball {
     Url(String),
     File(PathBuf),
+    /// A git commit, `<url>#<commit>`. Its integrity is the tree's (see `tree_integrity`), not
+    /// an archive's bytes, which a host may compress differently from one day to the next.
+    Git(String),
 }
 
 impl std::fmt::Display for Tarball {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Url(u) => f.write_str(u),
+            Self::Url(u) | Self::Git(u) => f.write_str(u),
             Self::File(p) => write!(f, "{}", p.display()),
         }
     }
@@ -201,7 +204,10 @@ impl Store {
             return Ok(index.clone());
         }
         let expected = Integrity::parse(integrity)?;
-        let (unpacked, temp, digest) = self.fetch(tarball, expected.hasher())?;
+        let (unpacked, temp, digest) = match tarball {
+            Tarball::Git(source) => self.fetch_git(source)?,
+            _ => self.fetch(tarball, expected.hasher())?,
+        };
         // The bytes are checked before anything they said is trusted, or kept.
         let checked = expected.check(&digest).map_err(|e| e.context(tarball)).and(unpacked);
         let index = match checked {
@@ -217,8 +223,10 @@ impl Store {
     /// A tarball whose integrity is not known yet (a tarball dependency's first read): stored
     /// under the sha512 of its bytes, which is its integrity from then on.
     pub fn adopt(&self, tarball: &Tarball) -> Result<(Arc<Index>, String)> {
-        let (unpacked, temp, digest) =
-            self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512))?;
+        let (unpacked, temp, digest) = match tarball {
+            Tarball::Git(source) => self.fetch_git(source)?,
+            _ => self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512))?,
+        };
         let integrity = format!("sha512-{}", to_base64(&digest));
         // Only a broken entry is replaced: one with no index yet may be another adopt's, mid-publish.
         let result = match self.index(&integrity) {
@@ -243,7 +251,7 @@ impl Store {
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
             let unpacked = match small_head(&mut input, length) {
-                Ok(head) => extract(head.as_slice().chain(&mut input), &temp),
+                Ok(head) => extract(&mut head.as_slice().chain(&mut input), &temp),
                 Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
             };
             // The rest still counts toward the hash; a source that never ends is refused.
@@ -265,8 +273,28 @@ impl Store {
         Err(last.unwrap_or_else(|| Error::new("ENETWORK", format!("{tarball} failed"))))
     }
 
+    /// A git commit's files in a temp directory, only those `npm pack` would keep (see `pack`),
+    /// with the digest of that tree: what its integrity is, however the files came.
+    fn fetch_git(&self, source: &str) -> Result<(Result<Index>, PathBuf, Vec<u8>)> {
+        if self.offline {
+            return Err(Error::new("EOFFLINE", format!("offline: {source} is not in the store")));
+        }
+        let tmp_root = self.root.join("tmp");
+        fs::create_dir_all(&tmp_root).map_err(|e| Error::io(&e, format!("cannot create {}", tmp_root.display())))?;
+        let (temp, work) = (tmp_root.join(temp_suffix()), tmp_root.join(temp_suffix()));
+        let packed = crate::git::fetch(source, &work, &temp).and_then(|index| pack(&temp, index));
+        match packed.and_then(|index| Ok((tree_digest(&temp, &index)?, index))) {
+            Ok((digest, index)) => Ok((Ok(index), temp, digest)),
+            Err(e) => {
+                remove_tree(&temp);
+                Err(e)
+            }
+        }
+    }
+
     fn open(&self, tarball: &Tarball) -> Result<(Box<dyn Read + Send>, Option<u64>)> {
         match tarball {
+            Tarball::Git(_) => Err(Error::new("EGIT", format!("{tarball} is a git commit, not a tarball"))),
             Tarball::File(path) => {
                 let cannot = |e: io::Error| Error::io(&e, format!("Tarball {} cannot be read", path.display()));
                 if !fs::metadata(path).map_err(cannot)?.is_file() {
@@ -382,11 +410,14 @@ fn writable(p: &Path) {
 }
 
 /// Gunzip (when gzipped) and write every regular file under `dest`, read-only, the
-/// executables and declared bins executable.
-pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
+/// executables and declared bins executable. One copy of this for every kind of source.
+pub fn extract(source: &mut dyn Read, dest: &Path) -> Result<Index> {
     fs::create_dir_all(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
     let mut head = Vec::with_capacity(2);
-    (&mut source).take(2).read_to_end(&mut head).map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
+    (&mut *source)
+        .take(2)
+        .read_to_end(&mut head)
+        .map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
     let gz = head.starts_with(&[0x1f, 0x8b]);
     let raw = io::BufReader::with_capacity(256 * 1024, io::Cursor::new(head).chain(source));
     let input: Box<dyn Read + '_> = if gz { Box::new(GzDecoder::new(raw)) } else { Box::new(raw) };
@@ -441,6 +472,78 @@ pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
     }
     let unpacked_size = files.values().map(|f| f.size).sum();
     Ok(Index { files: files.into_values().collect(), unpacked_size })
+}
+
+/// Take out of an unpacked repository what `npm pack` would leave out under package.json's
+/// `files`: a pattern keeps a file it names, or everything under a directory it names, and a `!`
+/// pattern takes it out again, the last to match winning. package.json, the readme, the licence,
+/// `main` and the bins are always kept, and a `node_modules` never is. With no `files`, all is
+/// kept: `.npmignore` and `.gitignore` are not read.
+fn pack(dir: &Path, index: Index) -> Result<Index> {
+    let doc = fs::read_to_string(dir.join("package.json")).ok().and_then(|t| crate::json::parse(&t).ok());
+    let doc = doc.unwrap_or(crate::json::Value::Null);
+    let files: Option<Vec<&str>> = doc.get("files").and_then(|f| f.as_array()).map(|l| {
+        l.iter().filter_map(|v| v.as_str()).map(|p| p.trim_start_matches("./").trim_end_matches('/')).collect()
+    });
+    let main = doc.get("main").and_then(|m| m.as_str()).unwrap_or("").trim_start_matches("./");
+    let bins = bin::normalize(doc.get("name").and_then(|n| n.as_str()), doc.get("bin"));
+    let always = |path: &str| {
+        let lower = path.to_ascii_lowercase();
+        let top = !path.contains('/')
+            && ["package.json", "readme", "license", "licence"].iter().any(|p| lower.starts_with(p));
+        top || path == main || path.strip_suffix(".js") == Some(main) || bins.values().any(|b| b == path)
+    };
+    let kept = |path: &str| {
+        let Some(files) = &files else { return true };
+        let mut kept = always(path);
+        for pattern in files {
+            let (out, pattern) = match pattern.strip_prefix('!') {
+                Some(p) => (true, p.trim_start_matches("./")),
+                None => (false, *pattern),
+            };
+            let mut at = Some(path);
+            while let Some(p) = at {
+                if !pattern.is_empty() && crate::glob::matches(pattern, p) {
+                    kept = !out;
+                    break;
+                }
+                at = p.rsplit_once('/').map(|(d, _)| d);
+            }
+        }
+        kept
+    };
+    let mut out = Index::default();
+    for f in index.files {
+        if f.path.split('/').all(|p| p != "node_modules") && kept(&f.path) {
+            out.unpacked_size += f.size;
+            out.files.push(f);
+            continue;
+        }
+        let file = dir.join(&f.path);
+        let _ = make_writable(&file);
+        fs::remove_file(&file).map_err(|e| Error::io(&e, format!("cannot remove {}", file.display())))?;
+    }
+    Ok(out)
+}
+
+/// The sha512 of a tree: each file in path order as `<path>\0<x or ->\<size>\n` and its bytes.
+/// The same files give the same digest whatever archive or clone they came out of.
+fn tree_digest(dir: &Path, index: &Index) -> Result<Vec<u8>> {
+    let mut hash = jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512);
+    let mut buf = vec![0; 64 * 1024];
+    for f in &index.files {
+        hash.update(format!("{}\0{}{}\n", f.path, if f.exec { 'x' } else { '-' }, f.size).as_bytes());
+        let file = dir.join(&f.path);
+        let mut input = fs::File::open(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
+        loop {
+            match input.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => hash.update(&buf[..n]),
+                Err(e) => return Err(Error::io(&e, format!("cannot read {}", file.display()))),
+            }
+        }
+    }
+    Ok(hash.finish().to_vec())
 }
 
 /// A small tarball is read whole first: its connection goes back to the pool at network speed,
@@ -596,7 +699,7 @@ pub mod tests {
         let head = small_head(&mut input, Some(100)).unwrap();
         assert_eq!(head.len() as u64, STREAM_MIN + 1);
         let dir = scratch("head");
-        let index = extract(head.as_slice().chain(input), &dir.join("x")).unwrap();
+        let index = extract(&mut head.as_slice().chain(input), &dir.join("x")).unwrap();
         assert_eq!(index.unpacked_size, big.len() as u64 + 1);
         remove_tree(&dir);
     }
