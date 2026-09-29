@@ -6,7 +6,11 @@ license = "MIT"
 description = "A fast, small package manager for the npm registry"
 rust-version = "1.89"
 
+[workspace]
+members = ["crates/*"]
+
 [dependencies]
+jpm-crypto = { path = "crates/crypto" }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 ring = "0.17.14"
 # No logging; src/http.rs picks the suites. TLS 1.2 stays: registry.npmjs.org does not speak 1.3.
@@ -31,6 +35,10 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Hashing and AES sit on the download path: full speed there, size everywhere else.
+[profile.release.package.jpm-crypto]
+opt-level = 3
 
 [profile.release.package.zlib-rs]
 opt-level = 3
