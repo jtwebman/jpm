@@ -1,6 +1,6 @@
 //! Known answers (FIPS-197, the GCM spec, RFC 8439, Wycheproof), differential tests against ring,
-//! and the benchmarks. Every AES test runs the portable code and, when the CPU has it, the
-//! hardware code.
+//! and the benchmarks. Every test runs each code path the CPU has: portable and hardware AES,
+//! and scalar, SSE2/NEON and AVX2 ChaCha20.
 
 use super::*;
 use ring::aead as rg;
@@ -14,26 +14,53 @@ fn hex(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }
 
-/// The key on each code path: portable, then hardware if there is any. ChaCha20 has one.
-fn keys(alg: Alg, key: &[u8]) -> Vec<Key> {
-    let mut v = vec![Key::with(alg, key, false).unwrap()];
-    if alg != Alg::ChaCha20Poly1305 {
-        assert!(matches!(v[0].0, Inner::Soft(_)));
-        if aes_hardware() {
-            let k = Key::with(alg, key, true).unwrap();
-            assert!(!matches!(k.0, Inner::Soft(_)));
-            v.push(k);
-        }
+/// The ChaCha20 code paths this CPU runs.
+fn chacha_imps() -> Vec<chacha::Imp> {
+    #[allow(unused_mut)]
+    let mut v = vec![chacha::Imp::Scalar];
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    v.push(chacha::Imp::Simd);
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") {
+        v.push(chacha::Imp::Avx2);
     }
     v
 }
 
-fn path(k: &Key) -> &'static str {
-    match k.0 {
-        Inner::Soft(_) => "portable",
-        Inner::ChaCha(_) => "chacha",
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        Inner::Hw(_) => "hardware",
+/// The key on each code path.
+fn keys(alg: Alg, key: &[u8]) -> Vec<Key> {
+    if alg == Alg::ChaCha20Poly1305 {
+        return chacha_imps().into_iter().map(|i| Key(Inner::ChaCha(chacha::Key::new(key, i)))).collect();
+    }
+    let mut v = vec![Key::with(alg, key, false).unwrap()];
+    assert!(matches!(v[0].0, Inner::Soft(_)));
+    if aes_hardware() {
+        let k = Key::with(alg, key, true).unwrap();
+        assert!(!matches!(k.0, Inner::Soft(_)));
+        // With VAES, also the 128-bit AES-NI code.
+        #[cfg(target_arch = "x86_64")]
+        if let Inner::Hw(g) = &k.0
+            && g.vaes
+        {
+            let mut k = Key::with(alg, key, true).unwrap();
+            if let Inner::Hw(g) = &mut k.0 {
+                g.vaes = false;
+            }
+            v.push(k);
+        }
+        v.push(k);
+    }
+    v
+}
+
+fn path(k: &Key) -> String {
+    match &k.0 {
+        Inner::Soft(_) => "portable".into(),
+        Inner::ChaCha(c) => format!("{:?}", c.imp()),
+        #[cfg(target_arch = "x86_64")]
+        Inner::Hw(g) => if g.vaes { "vaes" } else { "aes-ni" }.into(),
+        #[cfg(target_arch = "aarch64")]
+        Inner::Hw(_) => "hardware".into(),
     }
 }
 
@@ -153,22 +180,27 @@ fn gcm_spec() {
 #[test]
 fn chacha20_rfc8439() {
     // Sections 2.3.2 and A.1: keystream blocks.
-    for (key, nonce, ctr, ks) in CHACHA_BLOCKS {
-        let mut b = [0; 64];
-        chacha::apply(&chacha::Key::new(&hex(key)), &hex(nonce).try_into().unwrap(), *ctr, &mut b);
-        assert_eq!(b.to_vec(), hex(ks));
-    }
-    // Sections 2.4.2 and A.2: encryption.
-    for (key, nonce, ctr, pt, ct) in CHACHA_ENCRYPT {
-        let mut b = hex(pt);
-        chacha::apply(&chacha::Key::new(&hex(key)), &hex(nonce).try_into().unwrap(), *ctr, &mut b);
-        assert_eq!(b, hex(ct));
-    }
-    // Section A.4: the Poly1305 key is the first 32 bytes of block 0.
-    for (key, nonce, otk) in POLY1305_KEYGEN {
-        let mut b = [0; 32];
-        chacha::apply(&chacha::Key::new(&hex(key)), &hex(nonce).try_into().unwrap(), 0, &mut b);
-        assert_eq!(b.to_vec(), hex(otk));
+    for imp in chacha_imps() {
+        let run = |key: &str, nonce: &str, ctr: u32, data: &mut [u8]| {
+            chacha::Key::new(&hex(key), imp).apply(&hex(nonce).try_into().unwrap(), ctr, data)
+        };
+        for (key, nonce, ctr, ks) in CHACHA_BLOCKS {
+            let mut b = [0; 64];
+            run(key, nonce, *ctr, &mut b);
+            assert_eq!(b.to_vec(), hex(ks), "{imp:?}");
+        }
+        // Sections 2.4.2 and A.2: encryption.
+        for (key, nonce, ctr, pt, ct) in CHACHA_ENCRYPT {
+            let mut b = hex(pt);
+            run(key, nonce, *ctr, &mut b);
+            assert_eq!(b, hex(ct), "{imp:?}");
+        }
+        // Section A.4: the Poly1305 key is the first 32 bytes of block 0.
+        for (key, nonce, otk) in POLY1305_KEYGEN {
+            let mut b = [0; 32];
+            run(key, nonce, 0, &mut b);
+            assert_eq!(b.to_vec(), hex(otk), "{imp:?}");
+        }
     }
 }
 
@@ -200,25 +232,31 @@ fn poly1305_rfc8439() {
 fn chacha20_poly1305_rfc8439() {
     // Sections 2.8.2 and A.5.
     for (key, nonce, aad, pt, ct, tag) in CHACHA_POLY {
-        let k = Key::new(Alg::ChaCha20Poly1305, &hex(key)).unwrap();
         let (nonce, aad, tag) = (hex(nonce).try_into().unwrap(), hex(aad), hex(tag).try_into().unwrap());
-        let mut data = hex(pt);
-        assert_eq!(k.seal(&nonce, &aad, &mut data), tag);
-        assert_eq!(data, hex(ct));
-        assert!(k.open(&nonce, &aad, &mut data, &tag));
-        assert_eq!(data, hex(pt));
+        for k in keys(Alg::ChaCha20Poly1305, &hex(key)) {
+            let mut data = hex(pt);
+            assert_eq!(k.seal(&nonce, &aad, &mut data), tag, "{}", path(&k));
+            assert_eq!(data, hex(ct), "{}", path(&k));
+            assert!(k.open(&nonce, &aad, &mut data, &tag), "{}", path(&k));
+            assert_eq!(data, hex(pt), "{}", path(&k));
+        }
     }
 }
 
 #[test]
-fn wycheproof_both_paths() {
-    let (cases, _) = wycheproof::load("aes_gcm_test.json.gz", &[128, 256]);
-    for hw in [false, true] {
-        let key = |k: &[u8]| Key::with(if k.len() == 16 { Alg::Aes128Gcm } else { Alg::Aes256Gcm }, k, hw).unwrap();
-        wycheproof::run(&cases, key, Key::seal, Key::open);
+fn wycheproof_every_path() {
+    let aes = |k: &[u8]| if k.len() == 16 { Alg::Aes128Gcm } else { Alg::Aes256Gcm };
+    let chacha = |_: &[u8]| Alg::ChaCha20Poly1305;
+    for (file, bits, alg) in [
+        ("aes_gcm_test.json.gz", &[128, 256][..], &aes as &dyn Fn(&[u8]) -> Alg),
+        ("chacha20_poly1305_test.json.gz", &[256], &chacha),
+    ] {
+        let (cases, _) = wycheproof::load(file, bits);
+        let paths = keys(alg(&cases[0].key), &cases[0].key).len();
+        for p in 0..paths {
+            wycheproof::run(&cases, |k| keys(alg(k), k).swap_remove(p), Key::seal, Key::open);
+        }
     }
-    let (cases, _) = wycheproof::load("chacha20_poly1305_test.json.gz", &[256]);
-    wycheproof::run(&cases, |k| Key::new(Alg::ChaCha20Poly1305, k).unwrap(), Key::seal, Key::open);
 }
 
 /// Seal must match ring; open must undo it and must fail after flipping any one bit (sampled
@@ -227,9 +265,13 @@ fn wycheproof_both_paths() {
 fn matches_ring() {
     let mut rng = Rng(1);
     for alg in ALGS {
-        for i in 0..1500 {
-            // Mostly short, with every length up to 600 likely, and now and then a big one.
-            let len = if i % 250 == 0 { 65536 + rng.below(70000) } else { rng.below(601) };
+        for i in 0..1800 {
+            // Every length up to 600, then random ones, with a big one now and then.
+            let len = match i {
+                0..=600 => i,
+                _ if i % 250 == 0 => 65536 + rng.below(70000),
+                _ => rng.below(601),
+            };
             let key = rng.bytes(alg.key_len());
             let nonce = rng.nonce();
             let aad_len = rng.below(50);
@@ -250,6 +292,8 @@ fn matches_ring() {
                     let bit = rng.below(ct.len() * 8);
                     ct[bit / 8] ^= 1 << (bit % 8);
                     assert!(!k.open(&nonce, &aad, &mut ct, &tag), "{alg:?} {p} case {i} ct bit {bit}");
+                    // Nothing decrypted is left behind.
+                    assert!(ct.iter().all(|&b| b == 0), "{alg:?} {p} case {i} not zeroed");
                 }
                 let mut t = tag;
                 t[rng.below(16)] ^= 1 << rng.below(8);
@@ -397,6 +441,22 @@ fn bench_aead() {
             eprintln!("{line}");
         }
     }
+}
+
+/// ChaCha20 and Poly1305 apart, to see which one limits the AEAD.
+/// `cargo test -p jpm-crypto --release -- --ignored --nocapture bench_chacha_parts`
+#[test]
+#[ignore]
+fn bench_chacha_parts() {
+    let mut buf = vec![0u8; 16384];
+    for imp in chacha_imps() {
+        let k = chacha::Key::new(&[7; 32], imp);
+        eprintln!("chacha20 {imp:?}: {:.0} MB/s", rate(buf.len(), || k.apply(&[1; 12], 1, &mut buf)));
+    }
+    let poly = rate(buf.len(), || {
+        std::hint::black_box(poly1305(&[3; 32], &buf));
+    });
+    eprintln!("poly1305: {poly:.0} MB/s");
 }
 
 // RFC 8439 test vectors, copied from the RFC text by script.

@@ -1,7 +1,8 @@
 //! AES-GCM on the ARMv8 crypto extensions (AESE/AESMC and PMULL). The GHASH arithmetic is the
 //! same as on x86_64 (see x86.rs): blocks as byte-reversed 128-bit integers, the key twisted by
 //! x^-1, Karatsuba over up to eight blocks and one reduction by two carry-less multiplies; here on
-//! u128 values, PMULL giving the 64x64-bit products.
+//! u128 values, PMULL giving the 64x64-bit products. As there, encryption and GHASH run in one
+//! pass, one GHASH block per AES round.
 
 use std::arch::aarch64::*;
 
@@ -37,6 +38,11 @@ impl super::Gcm for Gcm {
     fn ghash(&self, y: &mut [u8; 16], data: &[u8]) {
         // SAFETY: as above.
         unsafe { ghash(self, y, data) }
+    }
+
+    fn crypt(&self, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+        // SAFETY: as above.
+        unsafe { crypt(self, nonce, y, data, seal) }
     }
 }
 
@@ -103,12 +109,16 @@ fn counter(base: uint8x16_t, ctr: u32) -> uint8x16_t {
     vreinterpretq_u8_u32(vsetq_lane_u32::<3>(ctr.swap_bytes(), vreinterpretq_u32_u8(base)))
 }
 
+fn base(nonce: &[u8; 12]) -> uint8x16_t {
+    let mut n = [0; 16];
+    n[..12].copy_from_slice(nonce);
+    load(&n)
+}
+
 #[target_feature(enable = "aes")]
 fn ctr8(g: &Gcm, nonce: &[u8; 12], ctr: u32, data: &mut [u8]) {
     let rk = &g.rk[..=g.nr];
-    let mut n = [0; 16];
-    n[..12].copy_from_slice(nonce);
-    let base = load(&n);
+    let base = base(nonce);
     let mut ctr = ctr;
     let (groups, rest) = data.as_chunks_mut::<128>();
     for group in groups {
@@ -136,7 +146,13 @@ fn ctr8(g: &Gcm, nonce: &[u8; 12], ctr: u32, data: &mut [u8]) {
 
 #[target_feature(enable = "aes")]
 fn ghash(g: &Gcm, y: &mut [u8; 16], data: &[u8]) {
-    let mut acc = u128::from_be_bytes(*y);
+    *y = ghash_acc(g, u128::from_be_bytes(*y), data).to_be_bytes();
+}
+
+#[target_feature(enable = "aes")]
+#[inline]
+fn ghash_acc(g: &Gcm, acc: u128, data: &[u8]) -> u128 {
+    let mut acc = acc;
     let (groups, rest) = data.as_chunks::<128>();
     for group in groups {
         acc = mul_add(g, acc, group.as_chunks::<16>().0);
@@ -146,7 +162,78 @@ fn ghash(g: &Gcm, y: &mut [u8; 16], data: &[u8]) {
         t[..rest.len()].copy_from_slice(rest);
         acc = mul_add(g, acc, &t.as_chunks::<16>().0[..rest.len().div_ceil(16)]);
     }
+    acc
+}
+
+/// CTR and GHASH in one pass, as `crypt` in x86.rs.
+#[target_feature(enable = "aes")]
+fn crypt(g: &Gcm, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+    let rk = &g.rk[..=g.nr];
+    let base = base(nonce);
+    let mut ctr = 2u32;
+    let mut acc = u128::from_be_bytes(*y);
+    let (groups, rest) = data.as_chunks_mut::<128>();
+    for i in 0..groups.len() {
+        let mut b = [base; 8];
+        for x in &mut b {
+            *x = counter(base, ctr);
+            ctr = ctr.wrapping_add(1);
+        }
+        let prev = match (seal, i) {
+            (false, _) => Some(&groups[i]),
+            (true, 0) => None,
+            (true, _) => Some(&groups[i - 1]),
+        };
+        acc = aes_ghash(g, rk, &mut b, acc, prev.map(|p| p.as_chunks::<16>().0.try_into().unwrap()));
+        for (d, k) in groups[i].as_chunks_mut::<16>().0.iter_mut().zip(b) {
+            store(d, veorq_u8(load(d), k));
+        }
+    }
+    if seal && let Some(last) = groups.last() {
+        acc = mul_add(g, acc, last.as_chunks::<16>().0);
+    }
+    if !seal {
+        acc = ghash_acc(g, acc, rest);
+    }
+    ctr8(g, nonce, ctr, rest);
+    if seal {
+        acc = ghash_acc(g, acc, rest);
+    }
     *y = acc.to_be_bytes();
+}
+
+/// Encrypt eight blocks and fold eight others (if any) into `acc`, one GHASH block in each AES
+/// round.
+#[target_feature(enable = "aes")]
+#[inline]
+fn aes_ghash(g: &Gcm, rk: &[uint8x16_t], b: &mut [uint8x16_t; 8], acc: u128, blocks: Option<&[[u8; 16]; 8]>) -> u128 {
+    let (last, rest) = rk.split_last().unwrap();
+    let (second, mid) = rest.split_last().unwrap();
+    let (mut lo, mut hi, mut md) = (0, 0, 0);
+    for (r, k) in mid.iter().enumerate() {
+        for x in b.iter_mut() {
+            *x = vaesmcq_u8(vaeseq_u8(*x, *k));
+        }
+        if let Some(blocks) = blocks
+            && r < 8
+        {
+            let mut x = u128::from_be_bytes(blocks[r]);
+            if r == 0 {
+                x ^= acc;
+            }
+            let h = g.h[7 - r];
+            lo ^= clmul(x as u64, h as u64);
+            hi ^= clmul((x >> 64) as u64, (h >> 64) as u64);
+            md ^= clmul((x ^ (x >> 64)) as u64, (h ^ (h >> 64)) as u64);
+        }
+    }
+    for x in b.iter_mut() {
+        *x = veorq_u8(vaeseq_u8(*x, *second), *last);
+    }
+    if blocks.is_none() {
+        return acc;
+    }
+    reduce(lo, hi, md)
 }
 
 #[target_feature(enable = "aes")]
