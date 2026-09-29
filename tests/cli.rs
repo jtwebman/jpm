@@ -313,7 +313,7 @@ fn entries(dir: &std::path::Path) -> Vec<String> {
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.starts_with('.') && n != "node_modules") // the hidden hoist
+        .filter(|n| !n.starts_with('.') && n != "node_modules" && n != "hoist.cjs") // the hidden hoist and its hook
         .collect();
     out.sort();
     out
@@ -1117,9 +1117,65 @@ fn hoists_one_of_every_package_for_undeclared_imports() {
     std::fs::remove_dir_all(env.path("node_modules/.jpm/node_modules")).unwrap();
     env.ok(&["install", "--no-global-store"]);
     assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"));
-    // Entries in the global store resolve from the store: no hoist there.
+    // Entries in the global store resolve from the store: the hook points Node at the hoist.
     env.ok(&["install"]);
-    assert!(!env.exists("node_modules/.jpm/node_modules"));
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"));
+    assert!(env.exists("node_modules/.jpm/hoist.cjs"));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(!env.exists("node_modules/.jpm/hoist.cjs"), "Node finds the hoist itself");
+}
+
+#[test]
+fn packages_in_the_global_store_find_undeclared_imports_under_run_and_exec() {
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipped: no node on PATH");
+        return;
+    }
+    // Neither `uses` (require) nor `esm` (import) declares b; a brings it into the hoist.
+    let bin = |name: &str, body: &str| {
+        let module = if name == "esm" { "module" } else { "commonjs" };
+        pkg(name, "1.0.0", json!({ "type": module, "bin": { name: "main.js" } })).file(
+            "main.js",
+            0o755,
+            &format!("#!/usr/bin/env node\n{body}\n"),
+        )
+    };
+    let r = Registry::start(vec![
+        pkg("a", "1.1.0", json!({ "dependencies": { "b": "^1.1.0" } })),
+        pkg("b", "1.1.0", json!({})),
+        pkg("c", "1.0.0", json!({})),
+        bin("uses", "console.log('cjs ' + require('b') + ' ' + require('c'))"),
+        bin("esm", "import b from 'b';\nimport c from 'c';\nconsole.log('esm ' + b + ' ' + c)"),
+    ]);
+    let env = Env::new(&r);
+    // c is the root's own: Node reaches it past the hoist, as it does in the project layout.
+    env.manifest(json!({
+        "scripts": { "both": "uses && esm", "env": "node -p process.env.NODE_OPTIONS+process.env.NODE_PATH" },
+        "dependencies": { "a": "1.1.0", "c": "1.0.0", "uses": "1.0.0", "esm": "1.0.0" }
+    }));
+    let want = "cjs b@1.1.0 c@1.0.0\nesm b@1.1.0 c@1.0.0";
+    for flag in [None, Some("--no-global-store")] {
+        env.ok(&["install"].into_iter().chain(flag).collect::<Vec<_>>());
+        let global = flag.is_none();
+        assert_eq!(link_of(&env.project(), "uses").contains("v1"), global);
+        assert!(env.ok(&["run", "-s", "both"]).contains(want), "{flag:?}");
+        let out = env.ok(&["exec", "uses"]) + &env.ok(&["exec", "esm"]);
+        assert!(out.contains(want), "{flag:?}: {out}");
+    }
+    // The user's own NODE_OPTIONS and NODE_PATH stay, first.
+    env.ok(&["install"]);
+    let mine = env.path("mine");
+    let out = env
+        .command(&["run", "-s", "env"])
+        .env("NODE_OPTIONS", "--no-deprecation")
+        .env("NODE_PATH", &mine)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let hoist = env.project().join("node_modules").join(".jpm").join("node_modules");
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    assert!(text.starts_with("--no-deprecation --require "), "{text}");
+    assert!(text.contains(&format!("{}{sep}{}", mine.display(), hoist.display())), "{text}");
 }
 
 #[test]

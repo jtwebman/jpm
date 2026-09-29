@@ -18,7 +18,8 @@
 //! which Node reaches from any entry in the project after the entry's own `node_modules`. A
 //! package that imports what it did not declare (`@nuxt/vite-builder` imports `unplugin`) still
 //! finds it, as under pnpm's `.pnpm/node_modules`. Entries in the global store resolve from the
-//! store and cannot see it, so it is made only when the project builds entries of its own.
+//! store and cannot see it: for them, `.jpm/hoist.cjs` beside it lets `jpm run` and `jpm exec`
+//! point Node at it (see `run::hoist_env`).
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -36,6 +37,8 @@ use crate::{pool, sys};
 const WIN: bool = cfg!(windows);
 /// The hidden hoist, under `.jpm`: no entry key is spelled like it.
 pub const HOIST: &str = "node_modules";
+/// Under `.jpm` when entries are in the global store: Node's fallback to the hoist for `import`.
+pub const HOOK: &str = "hoist.cjs";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
 
@@ -372,11 +375,12 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
         return Err(e);
     }
-    let hoist = entries_dir.join(HOIST);
-    if linker.wanted.values().any(|e| !e.shared) {
-        linker.hoist(&hoist)?;
-    } else if hoist.exists() {
-        remove_tree(&hoist);
+    linker.hoist(&entries_dir.join(HOIST))?;
+    let hook = entries_dir.join(HOOK);
+    if linker.wanted.values().any(|e| e.shared) {
+        crate::util::write_atomic(&hook, include_bytes!("hoist.cjs"))?;
+    } else {
+        let _ = fs::remove_file(&hook);
     }
     for top in &tops {
         if let Some(parent) = top.nm.parent() {
@@ -1152,8 +1156,9 @@ pub fn tree_standing(dir: &Path, st: &State) -> bool {
     entries_standing(st, &present)
 }
 
-/// Every entry built in the project is there, and so is the hoist made with them: a tree from
-/// before there was one gets it on its next install.
+/// Every entry built in the project is there, and so is the hoist: a tree from before there was
+/// one gets it on its next install.
 fn entries_standing(st: &State, present: &HashSet<String>) -> bool {
-    st.entries.iter().all(|k| present.contains(k)) && (st.entries.is_empty() || present.contains(HOIST))
+    st.entries.iter().all(|k| present.contains(k))
+        && ((st.entries.is_empty() && st.shared.is_empty()) || present.contains(HOIST))
 }

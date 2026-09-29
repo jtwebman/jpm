@@ -359,11 +359,17 @@ cannot be written. It is also off, with a note, for a project that depends on `n
 Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
 declare. `global-store=true` overrides that.
 
-Packages built in the project also get a hidden hoist, `node_modules/.jpm/node_modules`: the
-highest version of every package the root does not link itself, which Node reaches when a
-package imports something it did not declare, as pnpm does with `.pnpm/node_modules`. Packages
-in the global store resolve from the store and cannot see it, so there an undeclared import
-fails.
+Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: the highest version
+of every package the root does not link itself, which Node reaches when a package imports
+something it did not declare, as pnpm does with `.pnpm/node_modules`. Packages in the global
+store resolve from the store and cannot reach it on their own, so under the global store
+`jpm run`, `jpm exec` and install scripts point Node at it: `NODE_PATH` gets the hoist and the
+project's `node_modules` (for `require`), and `NODE_OPTIONS` gets
+`--require node_modules/.jpm/hoist.cjs`, a resolve hook that retries a missing `import` from
+the project. The hook needs Node 18.19, 20.6 or later; before 22.15 it runs on a thread of its
+own and adds about 20 ms to each Node process. Both add to what is already set. Plain
+`node app.js`, outside jpm, gets neither: an undeclared import fails there unless the project
+is installed with `--no-global-store`.
 
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects
