@@ -16,7 +16,7 @@ fn config() -> Config {
             name_constraints: ta.name_constraints.as_ref().map(|n| n.as_ref()),
         })
         .collect();
-    Config { roots, alpn: vec![b"http/1.1".to_vec()] }
+    Config { roots, alpn: vec![b"http/1.1".to_vec()], insecure_skip_verify: false }
 }
 
 fn connect(host: &str, port: u16) -> std::io::Result<Stream<TcpStream>> {

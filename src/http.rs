@@ -1,17 +1,22 @@
 //! A small HTTP/1.1 client over jpm-tls: pooled keep-alive connections, one DNS lookup per host,
 //! chunked and gzip bodies, redirects that keep credentials on their own host, retries with
-//! backoff, and `HTTPS_PROXY` / `HTTP_PROXY` (with `NO_PROXY`). TLS 1.3, and 1.2 with modern suites.
+//! backoff, and proxies. TLS 1.3, and 1.2 with modern suites, trusting Mozilla's roots or the
+//! certificates `.npmrc` and NODE_EXTRA_CA_CERTS name.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use flate2::read::GzDecoder;
+use jpm_tls::Anchor;
 
+use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::registry::auth_for;
+use crate::util::from_base64;
 
 const ATTEMPTS: u32 = 5;
 const BACKOFF_MS: u64 = 100;
@@ -278,26 +283,104 @@ type PoolKey = (bool, String, u16);
 
 struct Client {
     tls: jpm_tls::Config,
+    proxies: Proxies,
     pool: Mutex<HashMap<PoolKey, Vec<Conn>>>,
     dns: Mutex<HashMap<String, Vec<SocketAddr>>>,
 }
 
+static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
+
+/// The client `configure` set up, else one with Mozilla's roots and the proxy environment.
 fn client() -> &'static Arc<Client> {
-    static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
-    CLIENT.get_or_init(|| Arc::new(Client { tls: tls_config(), pool: Mutex::default(), dns: Mutex::default() }))
+    CLIENT.get_or_init(|| Arc::new(Client::new(mozilla(), &Config::default(), &env)))
 }
 
-/// Mozilla's roots, as webpki-roots carries them, and HTTP/1.1 by ALPN.
-fn tls_config() -> jpm_tls::Config {
-    let roots = webpki_roots::TLS_SERVER_ROOTS
+/// The network settings of `.npmrc` and the environment, for every request from here on: the
+/// roots to trust, `strict-ssl` and the proxies. Called once, before the first request.
+pub fn configure(config: &Config) -> Result<()> {
+    let roots = roots(config, &env)?;
+    if config.insecure_tls {
+        crate::ui::warn(
+            "strict-ssl=false: certificates are not checked, so anyone on the network can pose as the registry",
+        );
+    }
+    let _ = CLIENT.set(Arc::new(Client::new(roots, config, &env)));
+    Ok(())
+}
+
+fn env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+impl Client {
+    /// HTTP/1.1 by ALPN.
+    fn new(roots: Vec<Anchor<'static>>, config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Self {
+        let tls =
+            jpm_tls::Config { roots, alpn: vec![b"http/1.1".to_vec()], insecure_skip_verify: config.insecure_tls };
+        Self { tls, proxies: Proxies::new(config, env), pool: Mutex::default(), dns: Mutex::default() }
+    }
+}
+
+/// Mozilla's roots, as webpki-roots carries them.
+fn mozilla() -> Vec<Anchor<'static>> {
+    webpki_roots::TLS_SERVER_ROOTS
         .iter()
-        .map(|ta| jpm_tls::Anchor {
+        .map(|ta| Anchor {
             subject: ta.subject.as_ref(),
             spki: ta.subject_public_key_info.as_ref(),
             name_constraints: ta.name_constraints.as_ref().map(|n| n.as_ref()),
         })
-        .collect();
-    jpm_tls::Config { roots, alpn: vec![b"http/1.1".to_vec()] }
+        .collect()
+}
+
+/// The roots to trust. `cafile`, else `ca`, in place of Mozilla's: npm hands them to Node as
+/// its `ca` option, which replaces the default list (NODE_EXTRA_CA_CERTS included). Otherwise
+/// Mozilla's, plus the file NODE_EXTRA_CA_CERTS names, as Node adds it.
+fn roots(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<Anchor<'static>>> {
+    if let Some(file) = &config.cafile {
+        return pem_file(file);
+    }
+    if let Some(pem) = &config.ca {
+        return anchors(pem).map_err(|e| e.context("the ca setting"));
+    }
+    let mut roots = mozilla();
+    if let Some(file) = env("NODE_EXTRA_CA_CERTS") {
+        roots.extend(pem_file(Path::new(&file))?);
+    }
+    Ok(roots)
+}
+
+/// A bad or unreadable file is an error: going on without it would fail later, and less clearly.
+fn pem_file(file: &Path) -> Result<Vec<Anchor<'static>>> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| Error::new("ECONFIG", format!("cannot read CA certificates from {}: {e}", file.display())))?;
+    anchors(&text).map_err(|e| e.context(file.display()))
+}
+
+/// The certificates in PEM text, as trust anchors. Their bytes are leaked, once per run: the
+/// anchors borrow them for as long as the process lives, as they do Mozilla's.
+fn anchors(pem: &str) -> Result<Vec<Anchor<'static>>> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let bad = |why: String| Error::new("ECONFIG", why);
+    let mut out = Vec::new();
+    let mut rest = pem;
+    while let Some(at) = rest.find(BEGIN) {
+        rest = &rest[at + BEGIN.len()..];
+        let end = rest.find(END).ok_or_else(|| bad(format!("certificate {} has no END line", out.len() + 1)))?;
+        let body = &rest[..end];
+        if !body.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b) || b.is_ascii_whitespace()) {
+            return Err(bad(format!("certificate {} is not base64", out.len() + 1)));
+        }
+        let der: &'static [u8] = Box::leak(from_base64(body).into_boxed_slice());
+        let anchor = Anchor::from_cert(der).map_err(|e| bad(format!("certificate {}: {e}", out.len() + 1)))?;
+        out.push(anchor);
+        rest = &rest[end + END.len()..];
+    }
+    if out.is_empty() {
+        return Err(bad("no PEM certificates".into()));
+    }
+    Ok(out)
 }
 
 /// A response whose body has not been read yet.
@@ -348,7 +431,7 @@ impl Client {
         headers: &[(&str, &str)],
         authorization: Option<&str>,
     ) -> io::Result<Streaming> {
-        let proxy = proxy_for(url)?;
+        let proxy = proxy_for(url, &self.proxies)?;
         let absolute = proxy.is_some() && !url.tls;
         let path = if absolute { format!("{}{}", url.origin(), url.target) } else { url.target.clone() };
         // A plain-http request goes to the proxy itself, which takes its credentials here.
@@ -631,21 +714,40 @@ impl Read for Body {
 
 // --- proxies ----------------------------------------------------------------------------------
 
-/// The proxy a url goes through: `HTTPS_PROXY` for https, `HTTP_PROXY` for http (either case),
-/// unless `NO_PROXY` names its host or a domain above it.
+/// The proxies, read once as npm reads them: `.npmrc`'s `https-proxy`, else its `proxy`, for
+/// every url; else `HTTPS_PROXY` then `HTTP_PROXY` for https and `HTTP_PROXY` for http (either
+/// case). `noproxy`, else `NO_PROXY`, lists the hosts that go direct.
+#[derive(Debug, Default)]
+struct Proxies {
+    https: Option<String>,
+    http: Option<String>,
+    skip: String,
+}
+
+impl Proxies {
+    fn new(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Self {
+        let var = |names: &[&str]| names.iter().find_map(|n| env(n));
+        let own = config.https_proxy.clone().or_else(|| config.proxy.clone());
+        Self {
+            https: own.clone().or_else(|| var(&["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"])),
+            http: own.or_else(|| var(&["HTTP_PROXY", "http_proxy"])),
+            skip: config.noproxy.clone().or_else(|| var(&["NO_PROXY", "no_proxy"])).unwrap_or_default(),
+        }
+    }
+}
+
 /// The proxy for a url, and the `Basic` credentials its own url carries (`http://user:pass@host`).
 struct Proxy {
     url: Url,
     auth: Option<String>,
 }
 
-/// A set but unreadable proxy is an error: going around it would be a surprise.
-fn proxy_for(url: &Url) -> io::Result<Option<Proxy>> {
-    let var = |names: &[&str]| names.iter().find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty()));
-    let raw = if url.tls { var(&["HTTPS_PROXY", "https_proxy"]) } else { var(&["HTTP_PROXY", "http_proxy"]) };
-    let Some(raw) = raw else { return Ok(None) };
-    let skip = var(&["NO_PROXY", "no_proxy"]).unwrap_or_default();
-    for entry in skip.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+/// The proxy a url goes through, unless the skip list names its host or a domain above it. A
+/// set but unreadable proxy is an error: going around it would be a surprise.
+fn proxy_for(url: &Url, proxies: &Proxies) -> io::Result<Option<Proxy>> {
+    let raw = if url.tls { &proxies.https } else { &proxies.http };
+    let Some(raw) = raw.clone() else { return Ok(None) };
+    for entry in proxies.skip.split(',').map(str::trim).filter(|e| !e.is_empty()) {
         if entry == "*" {
             return Ok(None);
         }
@@ -825,28 +927,126 @@ mod tests {
         assert_eq!(get(&format!("{base}/start"), &[], &BTreeMap::new()).unwrap().body, b"{\"ok\":true}");
     }
 
+    /// The proxies for an environment of `vars` and an .npmrc of `rc`.
+    fn proxies(vars: &[(&str, &str)], rc: &str) -> Proxies {
+        let layer = crate::config::parse_npmrc(rc, &|_| None).unwrap();
+        let config = crate::config::to_config(&[layer], None).unwrap();
+        Proxies::new(&config, &|n| vars.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string()))
+    }
+
     #[test]
     fn honors_no_proxy() {
         let u = Url::parse("https://registry.npmjs.org/x").unwrap();
-        // SAFETY: tests in this module do not read these variables concurrently.
-        unsafe {
-            std::env::set_var("HTTPS_PROXY", "proxy.test:3128");
-            std::env::set_var("NO_PROXY", "localhost,.npmjs.org");
-        }
-        assert!(proxy_for(&u).unwrap().is_none());
-        unsafe { std::env::set_var("NO_PROXY", "other.test") };
-        let p = proxy_for(&u).unwrap().unwrap();
+        let skip = proxies(&[("HTTPS_PROXY", "proxy.test:3128"), ("NO_PROXY", "localhost,.npmjs.org")], "");
+        assert!(proxy_for(&u, &skip).unwrap().is_none());
+        let env = proxies(&[("HTTPS_PROXY", "proxy.test:3128"), ("NO_PROXY", "other.test")], "");
+        let p = proxy_for(&u, &env).unwrap().unwrap();
         assert_eq!((p.url.host.as_str(), p.url.port, p.auth), ("proxy.test", 3128, None));
         // Credentials in the proxy url become a Basic header, escapes decoded.
-        unsafe { std::env::set_var("HTTPS_PROXY", "http://me%40corp:p%3Ass@proxy.test:8080") };
-        let p = proxy_for(&u).unwrap().unwrap();
+        let auth = proxies(&[("HTTPS_PROXY", "http://me%40corp:p%3Ass@proxy.test:8080")], "");
+        let p = proxy_for(&u, &auth).unwrap().unwrap();
         assert_eq!((p.url.host.as_str(), p.url.port), ("proxy.test", 8080));
         assert_eq!(p.auth.as_deref(), Some(format!("Basic {}", crate::util::to_base64(b"me@corp:p:ss")).as_str()));
-        unsafe { std::env::set_var("HTTPS_PROXY", "http://proxy test:x") };
-        assert!(proxy_for(&u).is_err(), "an unreadable proxy is an error, not a way around it");
-        unsafe {
-            std::env::remove_var("HTTPS_PROXY");
-            std::env::remove_var("NO_PROXY");
+        let bad = proxies(&[("HTTPS_PROXY", "http://proxy test:x")], "");
+        assert!(proxy_for(&u, &bad).is_err(), "an unreadable proxy is an error, not a way around it");
+    }
+
+    #[test]
+    fn npmrc_proxies_win_over_the_environment() {
+        let https = Url::parse("https://registry.npmjs.org/x").unwrap();
+        let http = Url::parse("http://r.test/x").unwrap();
+        let host = |p: &Proxies, u: &Url| proxy_for(u, p).unwrap().map(|p| format!("{}:{}", p.url.host, p.url.port));
+        let env = [("HTTPS_PROXY", "env.test:1"), ("HTTP_PROXY", "plain.test:2"), ("NO_PROXY", "npmjs.org")];
+        // The environment alone: https falls back to HTTP_PROXY, as npm's agent does.
+        let p = proxies(&env[..2], "");
+        assert_eq!(host(&p, &https).as_deref(), Some("env.test:1"));
+        assert_eq!(host(&p, &http).as_deref(), Some("plain.test:2"));
+        assert_eq!(host(&proxies(&env[1..2], ""), &https).as_deref(), Some("plain.test:2"));
+        assert_eq!(host(&proxies(&env, ""), &https), None);
+        // https-proxy, else proxy, for every url; noproxy in place of NO_PROXY.
+        let p = proxies(&env, "https-proxy=http://rc.test:3\nproxy=http://other.test:4\nnoproxy=r.test");
+        assert_eq!(host(&p, &https).as_deref(), Some("rc.test:3"));
+        assert_eq!(host(&p, &http), None);
+        let p = proxies(&env, "proxy=http://u:p%40ss@rc.test:4\nnoproxy[]=a.test\nnoproxy[]=b.test");
+        let got = proxy_for(&https, &p).unwrap().unwrap();
+        assert_eq!((got.url.host.as_str(), got.url.port), ("rc.test", 4));
+        assert_eq!(got.auth, Some(format!("Basic {}", crate::util::to_base64(b"u:p@ss"))));
+        assert_eq!(host(&p, &Url::parse("https://x.b.test/").unwrap()), None);
+        assert_eq!(host(&p, &http).as_deref(), Some("rc.test:4"));
+        // An unset or `false` setting leaves the environment's.
+        let p = proxies(&env[..2], "proxy=false\nhttps-proxy=");
+        assert_eq!(host(&p, &https).as_deref(), Some("env.test:1"));
+    }
+
+    /// PEM text of a certificate made for the purpose.
+    fn pem(cn: &str) -> String {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.distinguished_name.push(rcgen::DnType::CommonName, cn);
+        p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        p.self_signed(&key).unwrap().pem()
+    }
+
+    #[test]
+    fn reads_pem_bundles() {
+        let (a, b) = (pem("a"), pem("b"));
+        assert_eq!(anchors(&a).unwrap().len(), 1);
+        // A bundle, with text around and between its certificates and CRLF line ends.
+        let bundle = format!("# corp roots\r\n{}\nsubject=b\n{}", a.replace('\n', "\r\n"), b);
+        let got = anchors(&bundle).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_ne!(got[0].subject, got[1].subject);
+        // Other PEM blocks are passed over.
+        let key = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n";
+        assert_eq!(anchors(&format!("{key}{a}")).unwrap().len(), 1);
+        for (text, why) in [
+            ("", "no PEM certificates"),
+            (key, "no PEM certificates"),
+            ("-----BEGIN CERTIFICATE-----\nMIIB", "certificate 1 has no END line"),
+            (&format!("{a}{}", &b[..b.len() - 30]), "certificate 2 has no END line"),
+            ("-----BEGIN CERTIFICATE-----\nMII*\n-----END CERTIFICATE-----", "certificate 1 is not base64"),
+            ("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "certificate 1: invalid certificate"),
+            (&a.replacen("MI", "MA", 1), "certificate 1: "),
+        ] {
+            let e = anchors(text).unwrap_err();
+            assert_eq!(e.code, "ECONFIG");
+            assert!(e.message.starts_with(why), "{text:?}: {}", e.message);
         }
+    }
+
+    #[test]
+    fn chooses_the_roots() {
+        let dir = std::env::temp_dir().join(format!("jpm-http-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.pem"), dir.join("b.pem"));
+        std::fs::write(&a, pem("a")).unwrap();
+        std::fs::write(&b, format!("{}{}", pem("b1"), pem("b2"))).unwrap();
+        let extra = a.to_string_lossy().into_owned();
+        let with_extra = |n: &str| (n == "NODE_EXTRA_CA_CERTS").then(|| extra.clone());
+        let config = |rc: &str| {
+            let rc = rc.replace("{b}", &b.to_string_lossy());
+            crate::config::to_config(&[crate::config::parse_npmrc(&rc, &|_| None).unwrap()], None).unwrap()
+        };
+        let mozilla = mozilla().len();
+        assert_eq!(roots(&config(""), &|_| None).unwrap().len(), mozilla);
+        // NODE_EXTRA_CA_CERTS adds to Mozilla's.
+        assert_eq!(roots(&config(""), &with_extra).unwrap().len(), mozilla + 1);
+        // cafile and ca replace them, NODE_EXTRA_CA_CERTS too; cafile wins over ca.
+        assert_eq!(roots(&config("cafile={b}"), &with_extra).unwrap().len(), 2);
+        let inline = pem("c").trim_end().replace('\n', "\\n");
+        assert_eq!(roots(&config(&format!("ca=\"{inline}\"")), &with_extra).unwrap().len(), 1);
+        let two = format!("ca[]=\"{inline}\"\nca[]=\"{}\"", pem("d").trim_end().replace('\n', "\\n"));
+        assert_eq!(roots(&config(&two), &with_extra).unwrap().len(), 2);
+        assert_eq!(roots(&config(&format!("ca=\"{inline}\"\ncafile={{b}}")), &with_extra).unwrap().len(), 2);
+        // A bad or missing file is an error that names it.
+        std::fs::write(&a, "not a certificate").unwrap();
+        let e = roots(&config(""), &with_extra).unwrap_err();
+        assert_eq!(e.message, format!("{}: no PEM certificates", a.display()));
+        let missing = dir.join("missing.pem");
+        let e = roots(&config(&format!("cafile={}", missing.display())), &|_| None).unwrap_err();
+        assert!(e.message.starts_with(&format!("cannot read CA certificates from {}", missing.display())));
+        let e = roots(&config("ca=junk"), &|_| None).unwrap_err();
+        assert_eq!(e.message, "the ca setting: no PEM certificates");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

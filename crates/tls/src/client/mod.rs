@@ -16,6 +16,11 @@ use record::{ALERT, APPLICATION_DATA, Conn, HANDSHAKE, MAX_PLAIN};
 pub struct Config {
     pub roots: Vec<Anchor<'static>>,
     pub alpn: Vec<Vec<u8>>,
+    /// Take any certificate chain, for any name, as npm's `strict-ssl=false` does. The server
+    /// must still sign the handshake with its certificate's key, and the records are still
+    /// protected end to end, but nothing says whose key that is: anyone on the path can pose as
+    /// the server. Off unless asked for.
+    pub insecure_skip_verify: bool,
 }
 
 /// A TLS connection over `S`, usually a `TcpStream`.

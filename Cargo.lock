@@ -195,6 +195,8 @@ dependencies = [
  "jpm-tls",
  "junction",
  "libc",
+ "rcgen",
+ "rustls",
  "serde_json",
  "webpki-roots",
 ]
