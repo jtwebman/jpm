@@ -21,15 +21,15 @@ The script downloads the binary for your platform from the
 puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v0.1.0` picks a release and `JPM_INSTALL`
 another directory. Each platform has its own build:
 
-| Platform      | Release asset           | Target                       |
-| ------------- | ----------------------- | ---------------------------- |
-| Linux x64     | `jpm-linux-x64`         | `x86_64-unknown-linux-musl`  |
-| Linux arm64   | `jpm-linux-arm64`       | `aarch64-unknown-linux-musl` |
+| Platform      | Release asset           | Target                           |
+| ------------- | ----------------------- | -------------------------------- |
+| Linux x64     | `jpm-linux-x64`         | `x86_64-unknown-linux-musl`      |
+| Linux arm64   | `jpm-linux-arm64`       | `aarch64-unknown-linux-musl`     |
 | Linux armv7   | `jpm-linux-armv7`       | `armv7-unknown-linux-musleabihf` |
-| macOS x64     | `jpm-darwin-x64`        | `x86_64-apple-darwin`        |
-| macOS arm64   | `jpm-darwin-arm64`      | `aarch64-apple-darwin`       |
-| Windows x64   | `jpm-windows-x64.exe`   | `x86_64-pc-windows-msvc`     |
-| Windows arm64 | `jpm-windows-arm64.exe` | `aarch64-pc-windows-msvc`    |
+| macOS x64     | `jpm-darwin-x64`        | `x86_64-apple-darwin`            |
+| macOS arm64   | `jpm-darwin-arm64`      | `aarch64-apple-darwin`           |
+| Windows x64   | `jpm-windows-x64.exe`   | `x86_64-pc-windows-msvc`         |
+| Windows arm64 | `jpm-windows-arm64.exe` | `aarch64-pc-windows-msvc`        |
 
 The Linux builds are static, so they run on glibc and musl (Alpine) alike. Tests run on Linux
 for now; macOS and Windows builds are not yet tested in CI.

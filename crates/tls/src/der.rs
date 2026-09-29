@@ -17,13 +17,13 @@ impl<'a> Reader<'a> {
     }
 
     /// The next value as `(tag, contents)`, or `None` when it is not valid DER.
-    pub fn next(&mut self) -> Option<(u8, &'a [u8])> {
+    pub fn read(&mut self) -> Option<(u8, &'a [u8])> {
         todo!("{}", self.data.len())
     }
 
     /// The next value when its tag is `tag`, contents only.
     pub fn expect(&mut self, tag: u8) -> Option<&'a [u8]> {
-        let (t, v) = self.next()?;
+        let (t, v) = self.read()?;
         (t == tag).then_some(v)
     }
 }
