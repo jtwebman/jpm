@@ -312,3 +312,94 @@ fn installs_bun_and_deno_from_their_platform_packages() {
     assert_eq!(run_in(&env, &env.project(), "b"), "bun 1.2.0", "the locked version still fits");
     assert!(!env.exists("node_modules/.bin/deno"));
 }
+
+/// pnpm-lock.yaml as pnpm writes a devEngines runtime: its builds by url and integrity.
+fn pnpm_lock(version: &str, integrity: &str) -> String {
+    let plat = platform();
+    format!(
+        "lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      node:
+        specifier: runtime:^22.0.0
+        version: runtime:{version}
+
+packages:
+
+  node@runtime:{version}:
+    hasBin: true
+    resolution:
+      type: variations
+      variants:
+        - resolution:
+            archive: tarball
+            bin:
+              node: bin/node
+            integrity: {integrity}
+            type: binary
+            url: https://nodejs.org/download/release/v{version}/node-v{version}-{plat}.tar.gz
+          targets:
+            - cpu: x64
+              os: linux
+        - resolution:
+            archive: zip
+            bin:
+              node: node.exe
+            integrity: sha256-n+9+ymdDprkQmJzY54cSN2s5T8ubbh6cRKB5mih/kMU=
+            prefix: node-v{version}-win-x64
+            type: binary
+            url: https://nodejs.org/download/release/v{version}/node-v{version}-win-x64.zip
+          targets:
+            - cpu: x64
+              os: win32
+    version: {version}
+
+snapshots:
+
+  node@runtime:{version}: {{}}
+"
+    )
+}
+
+#[test]
+fn brings_a_pnpm_runtime_over_at_its_version() {
+    let (_r, env) = setup(&RELEASES);
+    let manifest = json!({
+        "devEngines": { "runtime": { "name": "node", "version": "^22.0.0", "onFail": "download" } },
+        "scripts": { "v": "node --version" }
+    });
+    env.manifest(manifest.clone());
+    // A build pnpm recorded that is not the release's stops the import.
+    env.write("pnpm-lock.yaml", &pnpm_lock("22.11.0", "sha256-dLsPOoAwfFKUIcPthFF7j1Q4Z3CfQeU81z35nmRCr00="));
+    let err = fails(&env, &["install"]);
+    assert!(err.contains("pnpm-lock.yaml has https://nodejs.org") && err.contains("the release lists"), "{err}");
+    let ours = format!("sha256-{}", b64(&sha256(&node_archive("22.11.0", &platform()))));
+    env.write("pnpm-lock.yaml", &pnpm_lock("22.11.0", &ours));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("with the same versions"), "{out}");
+    assert_eq!(run_in(&env, &env.project(), "v"), "v22.11.0", "pnpm's version, not the newest the range allows");
+    assert!(env.read("jpm.lock").contains("package node@runtime:22.11.0\n"));
+    // Frozen reads pnpm-lock.yaml as it is, and writes nothing.
+    let fresh = || {
+        let _ = std::fs::remove_file(env.project().join("jpm.lock"));
+        std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    };
+    fresh();
+    env.ok(&["install", "--frozen-lockfile"]);
+    assert!(!env.exists("jpm.lock") && env.exists("node_modules/.bin/node"));
+    // Out of date with package.json: resolved again, pnpm's version still preferred.
+    fresh();
+    let mut changed = manifest;
+    changed["devEngines"]["runtime"]["version"] = json!("22");
+    env.manifest(changed);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("versions preferred"), "{out}");
+    assert_eq!(run_in(&env, &env.project(), "v"), "v22.11.0");
+}

@@ -970,6 +970,8 @@ fn import(
             info(&format!("wrote {} from {file} with the same versions; {file} is no longer read", LOCKFILE));
             lock
         }
+        // Bytes it records that are not what they claim are no reason to resolve around them.
+        Err(why) if why.code == "EINTEGRITY" => return Err(why),
         Err(why) => {
             info(&format!("{}; resolving with its versions preferred", why.message));
             let prefer = resolve::Prefer {
@@ -1286,6 +1288,16 @@ fn foreign_lock(
     ctx.binless = loaded.binless;
     ctx.scriptless = loaded.scriptless;
     let mut lock = loaded.lock;
+    // A runtime keeps the version the file locked; its builds are read from the release, and
+    // each one the file also recorded must be the same bytes.
+    let registry = ctx.registry(store);
+    for (name, (version, builds)) in &loaded.runtimes {
+        let p = crate::runtime::resolve(name, version, Some(version), &registry)?;
+        crate::runtime::check_builds(&p, builds, file)?;
+        lock.root.dependencies.insert(name.clone(), p.edge_version());
+        let variants = p.runtime.clone().unwrap_or_default();
+        lock.packages.insert(p.key(), lock::LockEntry { version: Some(p.version), variants, ..Default::default() });
+    }
     lock::mark_patches(&mut lock, &project.manifest.patches)?;
     Ok(lock)
 }

@@ -345,6 +345,12 @@ macOS or Windows without asking the network what to trust. A new range makes the
 date, as any other does. The build is unpacked into the store and linked like a package, and
 `jpm prune` removes it once no registered project's lockfile names it.
 
+A `pnpm-lock.yaml` brought over keeps the version pnpm locked for each runtime (`runtime:` in
+its importers). jpm reads the builds from the release as for its own lockfile; each one pnpm
+recorded that jpm uses too (Node's `.tar.gz` builds, matched by file name) must have the same
+integrity, or the install stops. pnpm's Windows Node, and its Bun and Deno, are zip files jpm
+does not use, so they are not compared.
+
 ## How it works
 
 - **Resolve.** The dependency graph is walked on a pool of threads. Each package is picked

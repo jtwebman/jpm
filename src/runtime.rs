@@ -147,12 +147,13 @@ fn node(range: &str, pinned: Option<&str>, registry: &Registry) -> Result<(Strin
     };
     let text = download(registry, &format!("{}/v{version}/SHASUMS256.txt", mirror()))?;
     let mut variants = node_variants(&text, &version, "");
-    // Only nodejs.org's own releases have unofficial musl builds beside them.
-    if mirror() == NODE_DIST && !variants.iter().any(|v| v.platform.ends_with("-musl")) {
+    // nodejs.org's releases have unofficial musl builds beside them, for the platforms theirs lack.
+    if mirror() == NODE_DIST {
         let base = format!("{UNOFFICIAL}/v{version}/");
         if let Ok(text) = download(registry, &format!("{base}SHASUMS256.txt")) {
-            variants
-                .extend(node_variants(&text, &version, &base).into_iter().filter(|v| v.platform.ends_with("-musl")));
+            let more = node_variants(&text, &version, &base).into_iter().filter(|v| v.platform.ends_with("-musl"));
+            let more: Vec<Variant> = more.filter(|m| !variants.iter().any(|v| v.platform == m.platform)).collect();
+            variants.extend(more);
         }
     }
     variants.sort();
@@ -255,6 +256,27 @@ fn from_npm(name: &str, range: &str, pinned: Option<&str>, registry: &Registry) 
     variants.sort();
     variants.dedup_by(|a, b| a.platform == b.platform);
     Ok((m.version.clone(), variants))
+}
+
+/// Another lockfile's builds of the runtime `p`, as `(url, integrity)`: one that is also among
+/// `p`'s, by its file name, must be the same bytes. (pnpm's Windows Node, and its Bun and Deno,
+/// are other archives, and are not compared.)
+pub fn check_builds(p: &Package, builds: &[(String, String)], file: &str) -> Result<()> {
+    let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
+    for (url, integrity) in builds {
+        let Some(v) = p.runtime.iter().flatten().find(|v| base(&v.file) == base(url)) else { continue };
+        let same = |a: &str, b: &str| {
+            let (a, b) = (crate::integrity::Integrity::parse(a), crate::integrity::Integrity::parse(b));
+            a.is_ok_and(|a| b.is_ok_and(|b| a == b))
+        };
+        if !same(&v.integrity, integrity) {
+            return Err(Error::new(
+                "EINTEGRITY",
+                format!("{file} has {url} as {integrity}, and the release lists {}", v.integrity),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The version a system binary reports, for a `devEngines.runtime` that is only checked. Node's
