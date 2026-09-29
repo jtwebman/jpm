@@ -106,6 +106,15 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     check_name(name, raw)?;
     let mut fetch_name = name.to_string();
     let mut s = spec.trim().to_string();
+    // The root's `patch:` ranges are read before this (`rules`); a builtin one is only its range.
+    if let Some((range, patch)) = crate::patch::yarn(name, &s) {
+        if patch.is_some() {
+            return Err(invalid(format!(
+                "\"patch:\" dependencies are read from the root package.json only (in package \"{raw}\")"
+            )));
+        }
+        return build(name, &range, raw);
+    }
     unsupported(&s, raw)?;
     let repo = git(&s, raw)?;
     let source = if repo.is_some() { None } else { path(&s, raw)? };
@@ -157,7 +166,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 6] = ["patch:", "portal:", "catalog:", "jsr:", "exec:", "gist:"];
+    const PROTOCOLS: [&str; 5] = ["portal:", "catalog:", "jsr:", "exec:", "gist:"];
     let lower = s.to_ascii_lowercase();
     if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
         return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
@@ -560,12 +569,12 @@ mod tests {
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in
-            ["patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"]
-        {
+        for spec in ["portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"] {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }
+        assert!(msg("patch:x@1#p.patch").contains("read from the root package.json only"));
+        assert_eq!(parse_dep("x", "patch:x@npm%3A^1#optional!builtin<compat/x>").unwrap().fetch_spec, "^1");
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
             assert!(parse_dep("x", spec).is_ok(), "{spec}");
