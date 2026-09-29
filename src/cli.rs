@@ -120,7 +120,7 @@ Notes
 
   npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
   (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:
-  -S, --save, -P, --save-prod, --no-audit, --no-fund, --no-progress and --force.
+  -S, --save, -P, --save-prod, --no-audit, --no-fund, --no-progress, --verbose and --force.
 
 Npm
   These commands run npm through exec. Only --dir goes before them.
@@ -181,7 +181,8 @@ const COMMANDS: [&str; 13] = [
     "patch-commit",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 8] = ["--no-audit", "--no-fund", "--no-progress", "--force", "-S", "--save", "-P", "--save-prod"];
+const NOOPS: [&str; 9] =
+    ["--no-audit", "--no-fund", "--no-progress", "--force", "--verbose", "-S", "--save", "-P", "--save-prod"];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
 fn npm_command(name: &str) -> bool {
@@ -848,6 +849,11 @@ mod tests {
         let c = p(&["--dir", "x", "publish", "--tag", "next"]);
         assert_eq!((c.command.as_deref(), c.specs.len()), (Some("publish"), 2));
         assert!(parse(&["--nope".to_string()]).is_err());
+        // npm's shorthand for `--loglevel verbose`, accepted as that is.
+        let c = p(&["install", "--verbose"]);
+        assert_eq!(c.command.as_deref(), Some("install"));
+        let c = p(&["run", "build", "--verbose"]);
+        assert_eq!(c.specs, ["build", "--verbose"]);
         assert!(parse(&["--before".to_string(), "soon".to_string()]).is_err());
     }
 
