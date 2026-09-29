@@ -359,9 +359,11 @@ cannot be written. It is also off, with a note, for a project that depends on `n
 Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
 declare. `global-store=true` overrides that.
 
-Packages built in the project also get a hidden hoist, `node_modules/.jpm/node_modules`: one
-version of every package, which Node reaches when a package imports something it did not
-declare, as pnpm does with `.pnpm/node_modules`.
+Packages built in the project also get a hidden hoist, `node_modules/.jpm/node_modules`: the
+highest version of every package the root does not link itself, which Node reaches when a
+package imports something it did not declare, as pnpm does with `.pnpm/node_modules`. Packages
+in the global store resolve from the store and cannot see it, so there an undeclared import
+fails.
 
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects

@@ -1099,22 +1099,40 @@ fn hoists_one_of_every_package_for_undeclared_imports() {
     env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1" } }));
     env.ok(&["install", "--no-global-store"]);
     assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"), "the highest");
-    assert!(env.read("node_modules/.jpm/node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+    assert!(!env.exists("node_modules/.jpm/node_modules/@scope/lib"), "the root links its own");
     assert!(!env.exists("node_modules/b"), "the hoist is not the root's node_modules");
-    // The root's own version wins, and the hoist follows the tree.
+    // A name the root links stays out: Node finds the root's own version next. The hoist
+    // follows the tree.
     env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1", "b": "1.0.0" } }));
     env.ok(&["install", "--no-global-store"]);
-    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@1.0.0"));
-    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    assert!(!env.exists("node_modules/.jpm/node_modules/b"));
+    env.manifest(json!({ "dependencies": { "@scope/lib": "1" } }));
     env.ok(&["install", "--no-global-store"]);
     assert!(!env.exists("node_modules/.jpm/node_modules/a"), "gone with its package");
     // Prune drops the unused entries and keeps the hoist.
     env.ok(&["prune"]);
     assert!(!entries(&env.project()).iter().any(|e| e.starts_with("a@")));
-    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@1.0.0"));
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"));
+    // A tree without its hoist (deleted, or installed before there was one) is not up to date.
+    std::fs::remove_dir_all(env.path("node_modules/.jpm/node_modules")).unwrap();
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"));
     // Entries in the global store resolve from the store: no hoist there.
     env.ok(&["install"]);
     assert!(!env.exists("node_modules/.jpm/node_modules"));
+}
+
+#[test]
+fn the_hoist_never_hides_what_the_root_links() {
+    // Node looks in the hoist before the root's node_modules, so a registry `b` there would
+    // stand in for the root's workspace `b` in every undeclared import.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "workspaces": ["b"], "dependencies": { "b": "workspace:*", "a": "1.1.0" } }));
+    env.write("b/package.json", r#"{ "name": "b", "version": "9.0.0" }"#);
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.exists("node_modules/.jpm/node_modules"));
+    assert!(!env.exists("node_modules/.jpm/node_modules/b"), "the root's b is the workspace");
 }
 
 #[test]
