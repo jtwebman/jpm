@@ -1210,10 +1210,18 @@ fn packages_in_the_global_store_find_undeclared_imports_under_run_and_exec() {
         "dependencies": { "a": "1.1.0", "c": "1.0.0", "uses": "1.0.0", "esm": "1.0.0" }
     }));
     let want = "cjs b@1.1.0 c@1.0.0\nesm b@1.1.0 c@1.0.0";
+    // The import hook needs Node 22.15's module.registerHooks; older Node gets require only.
+    let probe = std::process::Command::new("node").args(["-p", "typeof require('module').registerHooks"]).output();
+    let hooks = probe.is_ok_and(|o| o.stdout.starts_with(b"function"));
     for flag in [None, Some("--no-global-store")] {
         env.ok(&["install"].into_iter().chain(flag).collect::<Vec<_>>());
         let global = flag.is_none();
         assert_eq!(link_of(&env.project(), "uses").contains("v1"), global);
+        if global && !hooks {
+            let out = env.ok(&["exec", "uses"]);
+            assert!(out.contains("cjs b@1.1.0 c@1.0.0"), "{out}");
+            continue;
+        }
         assert!(env.ok(&["run", "-s", "both"]).contains(want), "{flag:?}");
         let out = env.ok(&["exec", "uses"]) + &env.ok(&["exec", "esm"]);
         assert!(out.contains(want), "{flag:?}: {out}");
