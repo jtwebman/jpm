@@ -7,6 +7,7 @@
 //! branch freely. Nothing here panics on input from the network; bad input is `None` or `false`.
 
 pub mod aead;
+mod ec;
 pub mod hash;
 pub mod p256;
 pub mod p384;
