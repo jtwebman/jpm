@@ -79,7 +79,12 @@ impl<S: Read + Write> Stream<S> {
                 }
                 self.conn.take_hs();
                 while let Some(m) = self.conn.hs_message()? {
-                    self.post_handshake(&m)?;
+                    // Any error here is fatal, even from `io`: the read key has moved on, or a
+                    // reply may be half sent.
+                    if let Err(e) = self.post_handshake(&m) {
+                        self.failed = true;
+                        return Err(e);
+                    }
                 }
                 Ok(())
             }
@@ -257,5 +262,70 @@ pub(crate) mod alert {
             120 => "tls: received alert no_application_protocol",
             _ => "tls: received an unknown alert",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Cursor, Read, Write};
+
+    use jpm_crypto::aead::Alg::Aes128Gcm;
+    use jpm_crypto::hash::Alg::Sha256;
+
+    use super::Stream;
+    use super::record::{Conn, HANDSHAKE};
+    use super::tls13::{Secret, Secrets, derive, keys};
+
+    /// Reads from `input`; writes fail while `fail_writes` is set.
+    struct Pipe {
+        input: Cursor<Vec<u8>>,
+        output: Vec<u8>,
+        fail_writes: bool,
+    }
+
+    impl Read for Pipe {
+        fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+            self.input.read(b)
+        }
+    }
+
+    impl Write for Pipe {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            if self.fail_writes {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "write timed out"));
+            }
+            self.output.extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn conn(input: Vec<u8>, read: &Secret, write: &Secret) -> Conn<Pipe> {
+        let mut c = Conn::new(Pipe { input: Cursor::new(input), output: Vec::new(), fail_writes: false });
+        c.tls13 = true;
+        c.read = Some(keys(Sha256, Aes128Gcm, read));
+        c.write = Some(keys(Sha256, Aes128Gcm, write));
+        c
+    }
+
+    /// When the answer to a KeyUpdate(update_requested) cannot be sent, the connection has
+    /// failed: nothing more may go out under the old key.
+    #[test]
+    fn key_update_reply_fails() {
+        let server = derive(Sha256, &[1; 32], b"s", b"");
+        let client = derive(Sha256, &[2; 32], b"c", b"");
+        let mut peer = conn(Vec::new(), &client, &server);
+        peer.send(HANDSHAKE, &[24, 0, 0, 1, 1]).ok().unwrap();
+
+        let mut c = conn(peer.io.output, &server, &client);
+        c.io.fail_writes = true;
+        let secrets = Secrets { hash: Sha256, aead: Aes128Gcm, client, server };
+        let mut s = Stream { conn: c, alpn: None, secrets: Some(secrets), closed: false, failed: false };
+        assert_eq!(s.read(&mut [0; 16]).unwrap_err().kind(), io::ErrorKind::TimedOut);
+        s.conn.io.fail_writes = false;
+        assert!(s.write(b"GET").is_err());
+        assert!(s.conn.io.output.is_empty());
     }
 }

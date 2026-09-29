@@ -2,7 +2,8 @@
 //! AES and GHASH run on the CPU's instructions where it has them (AES-NI and PCLMULQDQ on
 //! x86_64, the ARMv8 crypto extensions on aarch64) and on constant-time portable code otherwise.
 //!
-//! GCM counters are 32 bits, so one record must stay under 64 GiB; TLS records are 16 KiB.
+//! The block counters are 32 bits, so `data` is at most `2^36 - 32` bytes (64 GiB) for GCM and
+//! `2^38 - 64` (256 GiB) for ChaCha20-Poly1305; TLS records are 16 KiB.
 
 mod chacha;
 mod soft;
@@ -74,8 +75,10 @@ impl Key {
         Some(Key(inner))
     }
 
-    /// Encrypt `data` in place and return the tag.
+    /// Encrypt `data` in place and return the tag. Panics if `data` is too long for the block
+    /// counter (see the module docs).
     pub fn seal(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], data: &mut [u8]) -> [u8; TAG_LEN] {
+        assert!(data.len() as u64 <= self.max_len(), "aead: data too long");
         match &self.0 {
             Inner::Soft(g) => gcm_seal(&**g, nonce, aad, data),
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -85,13 +88,26 @@ impl Key {
     }
 
     /// Check the tag, in constant time, then decrypt `data` in place. On `false` the contents of
-    /// `data` are unspecified and must be dropped.
+    /// `data` are unspecified and must be dropped. `false` too if `data` is too long for the
+    /// block counter (see the module docs).
     pub fn open(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], data: &mut [u8], tag: &[u8; TAG_LEN]) -> bool {
+        if data.len() as u64 > self.max_len() {
+            return false;
+        }
         match &self.0 {
             Inner::Soft(g) => gcm_open(&**g, nonce, aad, data, tag),
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Inner::Hw(g) => gcm_open(&**g, nonce, aad, data, tag),
             Inner::ChaCha(k) => k.open(nonce, aad, data, tag),
+        }
+    }
+
+    /// The longest `data` before the 32-bit block counter wraps: GCM uses counters 2 to
+    /// 2^32 - 1 for 16-byte blocks, ChaCha20 counters 1 to 2^32 - 1 for 64-byte blocks.
+    fn max_len(&self) -> u64 {
+        match self.0 {
+            Inner::ChaCha(_) => ((1 << 32) - 1) * 64,
+            _ => ((1 << 32) - 2) * 16,
         }
     }
 }

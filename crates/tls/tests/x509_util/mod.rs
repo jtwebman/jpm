@@ -125,6 +125,9 @@ pub fn difference(
         {
             Some("ecdsa-with-SHA512")
         }
+        // 3. A chain of more than 64 certificates is refused before any search, so junk
+        //    cannot make the search slow. webpki has no such limit.
+        (Err("certificate path too complex"), Ok(())) if chain.len() > 64 => Some("chain length"),
         _ => None,
     }
 }
