@@ -99,6 +99,8 @@ struct Ctx {
     stamped: Mutex<BTreeMap<String, Stamp>>,
     /// A framework the tree depends on that needs every package inside the project.
     framework: std::sync::OnceLock<Option<&'static str>>,
+    /// The hashes of the project's patches: a patch file edited is a changed input.
+    patched: String,
 }
 
 /// Frameworks that fail when a package's real path is outside the project: Next's Turbopack
@@ -140,6 +142,7 @@ impl Ctx {
             scriptless: false,
             stamped: Mutex::default(),
             framework: std::sync::OnceLock::new(),
+            patched: String::new(),
         }
     }
 
@@ -199,6 +202,7 @@ impl Ctx {
         };
         let rules = rules::read(&dir, &manifest)?;
         rules.apply(&mut manifest)?;
+        self.patched = manifest.patches.iter().map(|p| p.hash.as_str()).collect::<Vec<_>>().join(",");
         Ok(Project { dir, manifest, workspaces, rules })
     }
 
@@ -270,6 +274,7 @@ impl Ctx {
             hosts,
             platform,
             crate::util::short_hash(&beside).into(),
+            self.patched.as_str().into(),
         ]))
     }
 
@@ -533,6 +538,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         built: chosen.clone(),
         inputs,
         tarballs: Some(tarballs.clone()),
+        patches: &project.manifest.patches,
     };
     let outcome = match link::link(&resolution, &options) {
         Err(e) if e.code == "ELINK" && e.message.contains("is not in the store") => {
@@ -780,11 +786,16 @@ fn plan(
         && !ctx.dedupe
     {
         let mut l = l.clone();
+        let repatched = lock::mark_patches(&mut l, &project.manifest.patches)?;
+        if repatched && ctx.opts.frozen {
+            return Err(fail("ELOCK", format!("{} is out of date with the patches", dir.join(LOCKFILE).display())));
+        }
         // upm's JSON, an older jpm.lock or a hand edit: written again in jpm's format, hash and all.
         if l.hash.is_none() && !ctx.opts.frozen {
             lock::write_lockfile(dir, &mut l)?;
             ctx.source = None;
-            info(&format!("wrote {} in jpm's lockfile format", dir.join(LOCKFILE).display()));
+            let why = if repatched { "with the patches as they are now" } else { "in jpm's lockfile format" };
+            info(&format!("wrote {} {why}", dir.join(LOCKFILE).display()));
         }
         return Ok(l);
     }
@@ -953,6 +964,7 @@ fn resolve_lock(
         }
     }
     let mut lock = lock::to_lockfile(&resolution, &base);
+    lock::mark_patches(&mut lock, &project.manifest.patches)?;
     if let Some(existing) = &existing {
         if lock::format_lockfile(&lock)? == lock::format_lockfile(existing)? {
             if ctx.dedupe {
@@ -1139,7 +1151,9 @@ fn foreign_lock(
     }
     ctx.binless = loaded.binless;
     ctx.scriptless = loaded.scriptless;
-    Ok(loaded.lock)
+    let mut lock = loaded.lock;
+    lock::mark_patches(&mut lock, &project.manifest.patches)?;
+    Ok(lock)
 }
 
 /// yarn.lock from yarn 1, which has no `__metadata` and never installs peers.
@@ -1365,9 +1379,10 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
         && lock::same_tree(l, &project.manifest, &tops(&project)?)
     {
         let mut l = l.clone();
+        lock::mark_patches(&mut l, &project.manifest.patches)?;
         if l.hash.is_none() && write {
             lock::write_lockfile(&dir, &mut l)?;
-            info(&format!("wrote {} in jpm's lockfile format", dir.join(LOCKFILE).display()));
+            info(&format!("wrote {}", dir.join(LOCKFILE).display()));
         }
         info(&format!("{LOCKFILE} is up to date — {}", counts(&l)));
         return Ok(l);

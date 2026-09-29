@@ -23,14 +23,15 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
 fn line_of(p: &Package) -> String {
     match &p.local {
         Some(path) => format!("{}@link:{path}::local", p.name),
-        // A built package is its own entry: its files are copies its scripts may change.
+        // A built or patched package is its own entry: its files are not the store's.
         None => format!(
-            "{}@{}::{}::{}{}",
+            "{}@{}::{}::{}{}{}",
             p.name,
             p.version,
             p.integrity,
             edges(&p.all_deps()),
-            if p.build { "::build" } else { "" }
+            if p.build { "::build" } else { "" },
+            p.patch.as_ref().map_or(String::new(), |h| format!("::patch:{h}"))
         ),
     }
 }

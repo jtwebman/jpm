@@ -76,8 +76,8 @@ pub fn short_hash(text: &str) -> String {
     to_base64_url(&digest(Alg::Sha256, text.as_bytes())[..16])
 }
 
-pub fn sha256_hex(text: &str) -> String {
-    digest(Alg::Sha256, text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
+    digest(Alg::Sha256, data.as_ref()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
