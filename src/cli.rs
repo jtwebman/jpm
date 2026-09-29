@@ -85,12 +85,14 @@ Notes
   pnpm-lock.yaml, bun.lock or yarn.lock: the same versions, resolved again only where package.json
   moved.
   --frozen-lockfile reads such a file as it is and writes nothing.
+  Overrides apply to every edge, peers too: npm's overrides, yarn's resolutions, pnpm.overrides
+  and pnpm-workspace.yaml's overrides; {LOCKFILE} records them, so a change makes it stale.
 
   prune removes the project's unused entries, then global entries and store content that no
   project installed from the store uses. It waits for installs using the store to finish.
 
   A dependency's install scripts run only when package.json lists it in trustedDependencies
-  and {LOCKFILE} approves the version: approve adds both, and a new version needs approving
+  (or pnpm-workspace.yaml in allowBuilds) and {LOCKFILE} approves the version: approve adds both, and a new version needs approving
   again. approve with no names lists what waits. The project's own lifecycle scripts
   (preinstall to postprepare) run on installs that change the tree.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.

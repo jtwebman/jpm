@@ -16,6 +16,7 @@ use crate::manifest::Manifest;
 use crate::project::{self, Added, Found, RootManifest, Workspace};
 use crate::registry::{Registry, base_for};
 use crate::resolve;
+use crate::rules::{self, Rules};
 use crate::semver;
 use crate::spec::{self, Kind};
 use crate::state::{self, Stamp, Stamps, stamp_of};
@@ -102,6 +103,7 @@ struct Project {
     dir: PathBuf,
     manifest: RootManifest,
     workspaces: Vec<Workspace>,
+    rules: Rules,
 }
 
 /// An edited package.json on its way through an install, written once the install can use it.
@@ -179,7 +181,7 @@ impl Ctx {
 
     fn load_project(&mut self) -> Result<Project> {
         let dir = self.project_dir();
-        let manifest = match self.found.as_ref().and_then(|f| f.manifest.clone()) {
+        let mut manifest = match self.found.as_ref().and_then(|f| f.manifest.clone()) {
             Some(m) => m,
             None => project::read_manifest(&dir.join("package.json"))?,
         };
@@ -187,7 +189,9 @@ impl Ctx {
             Some(w) => w,
             None => project::find_workspaces(&dir, &manifest)?,
         };
-        Ok(Project { dir, manifest, workspaces })
+        let rules = rules::read(&dir, &manifest)?;
+        rules.apply(&mut manifest)?;
+        Ok(Project { dir, manifest, workspaces, rules })
     }
 
     fn store(&self, verify: bool) -> Store {
@@ -306,7 +310,12 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         Some(mut e) => (
             std::mem::replace(
                 &mut e.project,
-                Project { dir: PathBuf::new(), manifest: RootManifest::default(), workspaces: Vec::new() },
+                Project {
+                    dir: PathBuf::new(),
+                    manifest: RootManifest::default(),
+                    workspaces: Vec::new(),
+                    rules: Rules::default(),
+                },
             ),
             Some(e),
         ),
@@ -458,8 +467,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     let packages = wanted.len();
     let scripts = !ctx.ignore_scripts();
-    let mut chosen =
-        if scripts { build::chosen(&resolution, &build::trusted(&project.manifest)) } else { HashSet::new() };
+    let mut chosen = if scripts {
+        build::chosen(&resolution, &build::trusted(&project.manifest, &project.rules))
+    } else {
+        HashSet::new()
+    };
     // Only the package the registry serves under that name and version, or a tarball package.json
     // names: a lockfile edit pointing an approved package at another tarball, or an alias
     // wearing a trusted name, runs nothing.
@@ -508,7 +520,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         resolution.packages.get(id).is_some_and(|p| !(ctx.opts.production && p.dev))
             && !outcome.dropped.iter().any(|d| d == id)
     };
-    let unbuilt = build::skipped(&resolution, &chosen, &installed);
+    let mut unbuilt = build::skipped(&resolution, &chosen, &installed);
+    // pnpm-workspace.yaml's `allowBuilds: { name: false }` says no already.
+    let denied =
+        |id: &String| crate::graph::split_key(id).is_some_and(|(n, _)| project.rules.builds.get(n) == Some(&false));
+    unbuilt.retain(|id| !denied(id));
     Ok(InstallResult {
         packages,
         workspaces,
@@ -542,7 +558,8 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
     let raw = std::fs::read_to_string(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
     let mut doc = RootManifest::parse(&raw, &file)?.doc;
     if names.is_empty() {
-        let trusted = build::trusted(&RootManifest::parse(&raw, &file)?);
+        let manifest = RootManifest::parse(&raw, &file)?;
+        let trusted = build::trusted(&manifest, &rules::read(&dir, &manifest)?);
         let pending = lock
             .packages
             .iter()
@@ -854,10 +871,12 @@ fn resolve_lock(
     }
     let workspaces: Vec<(String, RootManifest)> =
         project.workspaces.iter().map(|w| (w.path.clone(), w.manifest.clone())).collect();
+    // Locked subtrees were resolved under the old overrides: walked afresh, locked versions preferred.
+    let overridden = existing.as_ref().is_some_and(|l| l.root.overrides != project.manifest.overrides);
     let options = |locked| resolve::Options {
         registry,
         locked,
-        dedupe: ctx.dedupe,
+        dedupe: ctx.dedupe || overridden,
         workspaces: workspaces.clone(),
         tarball: Some(reader),
         on_pick,
@@ -1069,11 +1088,15 @@ fn edit_target(ctx: &mut Ctx, command: &str) -> Result<Edit> {
 
 /// Apply the edited document to the project the install reads.
 fn apply(edit: &mut Edit) -> Result<()> {
-    let m = RootManifest::from_doc(edit.doc.clone(), &edit.file)?;
+    let mut m = RootManifest::from_doc(edit.doc.clone(), &edit.file)?;
     let dir = edit.file.parent().map(Path::to_path_buf).unwrap_or_default();
-    match edit.project.workspaces.iter_mut().find(|w| w.dir == dir) {
+    let p = &mut edit.project;
+    match p.workspaces.iter_mut().find(|w| w.dir == dir) {
         Some(w) => w.manifest = m,
-        None => edit.project.manifest = m,
+        None => {
+            p.rules.apply(&mut m)?;
+            p.manifest = m;
+        }
     }
     Ok(())
 }

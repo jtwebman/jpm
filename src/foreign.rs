@@ -15,6 +15,7 @@ use crate::lock::{self, LockEntry, LockRoot, Lockfile};
 use crate::project::{GROUPS, RootManifest};
 use crate::registry::tarball_url;
 use crate::resolve::Prefer;
+use crate::rules;
 use crate::semver::max_satisfying;
 
 pub const FOREIGN: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock"];
@@ -243,7 +244,9 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
     let declared = flat(specs.as_ref());
     let recorded = flat(Some(&source.specs));
     for (name, range) in &recorded {
-        if declared.get(name) == Some(range) {
+        // pnpm records the range an override gave a root edge.
+        let overridden = |d: &String| rules::find(&manifest.overrides, None, name, d) == Some(Some(range.as_str()));
+        if declared.get(name).is_some_and(|d| d == range || overridden(d)) {
             continue;
         }
         let peer = manifest.peer_dependencies.as_ref().and_then(|p| p.get(name));
@@ -256,10 +259,16 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
         return Err(stale());
     }
     if let Some(overrides) = &source.overrides {
-        let given = [doc.get("overrides"), doc.get("resolutions")].into_iter().flatten().find(|v| !v.is_null());
         let empty = Value::Object(Map::new());
         // The same overrides written in another order are the same.
-        if !overrides.same_as(given.unwrap_or(&empty)) {
+        let same = if file == "pnpm-lock.yaml" {
+            let pnpm = manifest.overrides.iter().filter(|o| o.by == rules::Manager::Pnpm);
+            overrides.same_as(&Value::Object(pnpm.map(|o| (o.selector(), o.value_text().into())).collect()))
+        } else {
+            let given = [doc.get("overrides"), doc.get("resolutions")].into_iter().flatten().find(|v| !v.is_null());
+            overrides.same_as(given.unwrap_or(&empty))
+        };
+        if !same {
             return Err(stale());
         }
     }
@@ -582,7 +591,9 @@ fn read_pnpm(text: &str) -> Result<Source> {
         nodes.push(node);
     }
     let (specs, root) = root_of(groups, &|name| versions.get(name).cloned());
-    Ok(Source { nodes, specs, root, overrides: None })
+    // The overrides it was resolved under, as pnpm-workspace.yaml or `pnpm.overrides` give them.
+    let overrides = doc.get("overrides").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Object(Map::new()));
+    Ok(Source { nodes, specs, root, overrides: Some(overrides) })
 }
 
 /// The version an edge `dep: ref` points at, `""` when not from a registry. An alias is noted:
@@ -882,6 +893,7 @@ fn build(
         specs: Specs::canonical(Some(&source.specs)),
         dependencies: source.root,
         workspaces: None,
+        overrides: manifest.overrides.clone(),
     };
     let lock =
         Lockfile { lockfile_version: lock::TEXT_VERSION, root, workspaces: BTreeMap::new(), packages, hash: None };
@@ -1617,6 +1629,43 @@ snapshots:
         assert_eq!(read("bun.lock", &same, resolutions).unwrap().lock.root.dependencies, a);
         assert!(err("bun.lock", &text(json!({ "b": "2.0.0", "c": "1" })), doc.clone()).contains("out of date"));
         assert!(err("bun.lock", &text(json!({})), doc).contains("out of date"));
+    }
+
+    #[test]
+    fn holds_a_pnpm_lock_to_its_overrides() {
+        let text = "lockfileVersion: '9.0'
+overrides:
+  b: 2.0.0
+importers:
+  .:
+    dependencies:
+      a: {specifier: ^1, version: 1.0.0}
+      b: {specifier: 2.0.0, version: 2.0.0}
+packages:
+  a@1.0.0: {resolution: {integrity: sha512-a}}
+  b@2.0.0: {resolution: {integrity: sha512-b}}
+snapshots:
+  a@1.0.0:
+    dependencies:
+      b: 2.0.0
+  b@2.0.0: {}
+";
+        // pnpm records the overridden range for a root edge: package.json's `^1` became `2.0.0`.
+        let mut m = manifest(json!({ "dependencies": { "a": "^1", "b": "^1" } }));
+        let rule = crate::rules::Override::parse("pnpm", "b", "2.0.0").unwrap();
+        m.overrides = vec![rule.clone()];
+        let lock = load("pnpm-lock.yaml", text, &m, false, &npmjs).unwrap().lock;
+        assert_eq!(lock.root.specs, m.specs());
+        assert_eq!(lock.root.overrides, std::slice::from_ref(&rule));
+        assert_eq!(lock.packages["a@1.0.0"].dependencies["b"], "2.0.0");
+        // Other overrides than the file was resolved under, or none: out of date.
+        m.overrides = vec![crate::rules::Override::parse("pnpm", "b", "^2").unwrap()];
+        assert!(load("pnpm-lock.yaml", text, &m, false, &npmjs).err().unwrap().message.contains("out of date"));
+        m.overrides.clear();
+        assert!(load("pnpm-lock.yaml", text, &m, false, &npmjs).is_err());
+        // npm's and yarn's rules are not pnpm's to record.
+        m.overrides = vec![rule, crate::rules::Override::parse("npm", "c", "1.0.0").unwrap()];
+        assert!(load("pnpm-lock.yaml", text, &m, false, &npmjs).is_ok());
     }
 
     #[test]

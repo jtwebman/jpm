@@ -21,6 +21,7 @@ mod pool;
 mod project;
 mod registry;
 mod resolve;
+mod rules;
 mod run;
 mod semver;
 mod shim;

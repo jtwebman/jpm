@@ -1,0 +1,513 @@
+//! What a project sets for its whole tree beyond its dependency ranges, from package.json and
+//! pnpm-workspace.yaml: overrides, and which packages may build. Read once per command, before
+//! anything resolves.
+//!
+//! Overrides replace an edge's range before it is resolved, in every package: npm's `overrides`,
+//! yarn's `resolutions`, pnpm's `pnpm.overrides` and pnpm-workspace.yaml's `overrides` (bun reads
+//! the first two). The root carries them, resolved, into jpm.lock, so a change makes it stale.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use crate::error::{Error, Result};
+use crate::json::Value;
+use crate::project::RootManifest;
+use crate::{semver, spec, ui};
+
+pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
+
+/// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
+const UNREAD: [&str; 11] = [
+    "packageExtensions",
+    "supportedArchitectures",
+    "ignoredOptionalDependencies",
+    "resolutionMode",
+    "minimumReleaseAge",
+    "dedupePeerDependents",
+    "linkWorkspacePackages",
+    "injectWorkspacePackages",
+    "configDependencies",
+    "dangerouslyAllowAllBuilds",
+    "pnpmfile",
+];
+
+/// Whose override it is, which decides how a `name@range` key matches an edge's range: npm's
+/// where the two ranges meet, pnpm's where the edge's range lies inside the key's, yarn's where
+/// they are the same. In this order a rule of one manager goes before an equal one of the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Manager {
+    Pnpm,
+    Npm,
+    Yarn,
+}
+
+impl Manager {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pnpm => "pnpm",
+            Self::Npm => "npm",
+            Self::Yarn => "yarn",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Override {
+    pub by: Manager,
+    /// Only the edges of this package, at a version in the range if one is given.
+    pub parent: Option<(String, Option<String>)>,
+    pub name: String,
+    /// Only edges whose range this matches. `Some("")` is pnpm's convergence override: only edges
+    /// whose range the value (an exact version) satisfies.
+    pub range: Option<String>,
+    /// The range the edge asks for instead; `None` takes the edge out (pnpm's `-`).
+    pub value: Option<String>,
+}
+
+impl Override {
+    /// pnpm's selector: `[parent[@range]>]name[@range]`.
+    pub fn selector(&self) -> String {
+        let at = |n: &str, r: &Option<String>| r.as_ref().map_or_else(|| n.to_string(), |r| format!("{n}@{r}"));
+        match &self.parent {
+            Some((p, r)) => format!("{}>{}", at(p, r), at(&self.name, &self.range)),
+            None => at(&self.name, &self.range),
+        }
+    }
+
+    pub fn value_text(&self) -> &str {
+        self.value.as_deref().unwrap_or("-")
+    }
+
+    /// A rule as jpm.lock writes it: manager, selector, value.
+    pub fn parse(by: &str, selector: &str, value: &str) -> Option<Self> {
+        let by = match by {
+            "pnpm" => Manager::Pnpm,
+            "npm" => Manager::Npm,
+            "yarn" => Manager::Yarn,
+            _ => return None,
+        };
+        let (parent, name, range) = pnpm_selector(selector)?;
+        Some(Self { by, parent, name, range, value: (value != "-").then(|| value.to_string()) })
+    }
+
+    /// More specific rules first: a parent's, then a range's, then a name's, convergence last.
+    fn rank(&self) -> u8 {
+        match (&self.parent, self.range.as_deref()) {
+            (Some(_), _) => 0,
+            (None, Some("")) => 3,
+            (None, Some(_)) => 1,
+            (None, None) => 2,
+        }
+    }
+
+    fn matches(&self, parent: Option<(&str, &str)>, name: &str, range: &str) -> bool {
+        if self.name != name {
+            return false;
+        }
+        if let Some((p, r)) = &self.parent {
+            let Some((n, v)) = parent else { return false };
+            if n != p || r.as_ref().is_some_and(|r| !semver::satisfies(v, r)) {
+                return false;
+            }
+        }
+        match self.range.as_deref() {
+            None => true,
+            Some("") => self.value.as_deref().is_some_and(|v| semver::satisfies(v, range)),
+            Some(r) => match self.by {
+                Manager::Npm => semver::intersects(range, r),
+                Manager::Pnpm => range == r || semver::subset(range, r),
+                Manager::Yarn => range == r,
+            },
+        }
+    }
+}
+
+/// What the overrides do to the edge `name@range` of `parent` (`(name, version)`, `None` for the
+/// root): `None` leaves it, `Some(None)` takes it out, `Some(Some(r))` asks for `r` instead.
+pub fn find<'a>(
+    rules: &'a [Override],
+    parent: Option<(&str, &str)>,
+    name: &str,
+    range: &str,
+) -> Option<Option<&'a str>> {
+    rules.iter().find(|o| o.matches(parent, name, range)).map(|o| o.value.as_deref())
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Rules {
+    /// The root's package.json, which a `catalog:` value is read for.
+    file: PathBuf,
+    /// As written, before `$name` and `catalog:` values are resolved.
+    overrides: Vec<Override>,
+    /// pnpm-workspace.yaml's word on which packages may run install scripts.
+    pub builds: BTreeMap<String, bool>,
+}
+
+fn read_yaml(file: &Path) -> Result<Option<Value>> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::io(&e, format!("cannot read {}", file.display()))),
+    };
+    let what = file.display();
+    let doc = crate::foreign::read_yaml(text.trim_start_matches('\u{feff}'));
+    doc.map(Some).map_err(|e| Error::new("EWORKSPACE", format!("{what} cannot be read: {}", e.message)))
+}
+
+fn truthy(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Object(o)) => !o.is_empty(),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// The project's rules, from its root package.json and the files beside it.
+pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
+    let mut rules = Rules { file: dir.join("package.json"), ..Rules::default() };
+    let doc = &root.doc;
+    let pnpm = doc.get("pnpm");
+    if let Some(y) = read_yaml(&dir.join(PNPM_WORKSPACE))? {
+        if truthy(y.get("patchedDependencies")) {
+            return Err(Error::new("EPATCH", format!("jpm does not apply the patches {PNPM_WORKSPACE} names")));
+        }
+        for key in UNREAD {
+            if truthy(y.get(key)) {
+                ui::warn(&format!(
+                    "{PNPM_WORKSPACE} sets {key}, which jpm does not read: the tree may differ from pnpm's"
+                ));
+            }
+        }
+        if y.get("autoInstallPeers") == Some(&Value::Bool(false)) {
+            ui::warn(&format!("{PNPM_WORKSPACE} sets autoInstallPeers to false; jpm installs missing peers"));
+        }
+        rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
+        let built = y.get("onlyBuiltDependencies").and_then(Value::as_array).into_iter().flatten();
+        for name in built.filter_map(Value::as_str) {
+            rules.builds.insert(name.to_string(), true);
+        }
+        // pnpm 11: `name: true` or `false`, and `name@<versions or source>: true` for some.
+        // jpm approves each version anyway (`jpm approve`), so a key's name is what counts.
+        for (key, allowed) in y.get("allowBuilds").and_then(Value::as_object).into_iter().flatten() {
+            let Some(allowed) = allowed.as_bool() else { continue };
+            match key.get(1..).and_then(|k| k.find('@')) {
+                None => {
+                    rules.builds.insert(key.clone(), allowed);
+                }
+                Some(at) if allowed => {
+                    rules.builds.entry(key[..=at].to_string()).or_insert(true);
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    if truthy(doc.get("patchedDependencies")) || truthy(pnpm.and_then(|p| p.get("patchedDependencies"))) {
+        return Err(Error::new("EPATCH", "jpm does not apply the patches package.json names"));
+    }
+    rules.pnpm(pnpm.and_then(|p| p.get("overrides")), "package.json pnpm.overrides");
+    rules.npm(doc.get("overrides"));
+    rules.yarn(doc.get("resolutions"));
+    Ok(rules)
+}
+
+/// `name` or `name@range`.
+fn name_range(s: &str) -> (String, Option<String>) {
+    match s.get(1..).and_then(|t| t.find('@')) {
+        Some(i) => (s[..=i].to_string(), Some(s[i + 2..].trim().to_string())),
+        None => (s.trim().to_string(), None),
+    }
+}
+
+type Selector = (Option<(String, Option<String>)>, String, Option<String>);
+
+/// `[parent[@range]>]name[@range]`. The `>` that splits is the one no range reads as its own:
+/// not after `@`, a space, `|`, `<`, `>` or `=`, and not before `=`.
+fn pnpm_selector(s: &str) -> Option<Selector> {
+    let b = s.as_bytes();
+    let split = (1..b.len())
+        .find(|&i| b[i] == b'>' && !b"@ |<>=".contains(&b[i - 1]) && b.get(i + 1) != Some(&b'='))
+        .map(|i| (&s[..i], &s[i + 1..]));
+    let (parent, target) = match split {
+        Some((p, t)) => (Some(name_range(p)), t),
+        None => (None, s),
+    };
+    let (name, range) = name_range(target);
+    let named = |n: &str| spec::check_name(n, s).is_ok();
+    (named(&name) && parent.as_ref().is_none_or(|(p, _)| named(p))).then_some((parent, name, range))
+}
+
+impl Rules {
+    fn push(&mut self, by: Manager, (parent, name, range): Selector, value: &str) {
+        let value = (!(by == Manager::Pnpm && value == "-")).then(|| value.to_string());
+        self.overrides.push(Override { by, parent, name, range, value });
+    }
+
+    /// `name`, `name@range`, `parent@range>name@range`, and `-` to take the edge out.
+    fn pnpm(&mut self, v: Option<&Value>, file: &str) {
+        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+            match (pnpm_selector(key), value.as_str()) {
+                (Some(sel), Some(value)) => self.push(Manager::Pnpm, sel, value),
+                _ => ui::warn(&format!("{file}: override {key} is not one jpm reads; it is ignored")),
+            }
+        }
+    }
+
+    /// npm: `name` or `name@range`, nested `{ parent: { name: range } }` with `.` for the parent
+    /// itself. npm applies a nested one anywhere under the parent; jpm keeps one copy of each
+    /// version, so to the parent's own dependencies, and a deeper one to its nearest parent's.
+    fn npm(&mut self, v: Option<&Value>) {
+        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+            self.npm_rule(&[], key, value);
+        }
+    }
+
+    fn npm_rule(&mut self, path: &[&str], key: &str, value: &Value) {
+        let at = path.iter().chain([&key]).copied().collect::<Vec<_>>().join(" > ");
+        let (name, range) = name_range(key);
+        if spec::check_name(&name, key).is_err() || path.len() > 8 {
+            return ui::warn(&format!("package.json overrides {at} is not one jpm reads; it is ignored"));
+        }
+        let parent = path.last().map(|p| name_range(p));
+        match value {
+            Value::String(s) => {
+                if path.len() > 1 {
+                    let p = path[path.len() - 1];
+                    ui::warn(&format!("package.json overrides {at}: jpm applies it to every {p}'s {name}"));
+                }
+                self.push(Manager::Npm, (parent, name, range), s);
+            }
+            Value::Object(children) => {
+                if let Some(own) = children.get(".") {
+                    self.npm_rule(path, key, own);
+                }
+                let inner: Vec<&str> = path.iter().copied().chain([key]).collect();
+                for (child, value) in children.iter().filter(|(k, _)| k.as_str() != ".") {
+                    self.npm_rule(&inner, child, value);
+                }
+            }
+            _ => ui::warn(&format!("package.json overrides {at} is not a range; it is ignored")),
+        }
+    }
+
+    /// yarn: `name`, `**/name`, `parent/name`, each name maybe `@range` (berry's `npm:` taken off).
+    /// A longer path is read as its last parent's, which jpm cannot tell apart.
+    fn yarn(&mut self, v: Option<&Value>) {
+        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+            let skip = || ui::warn(&format!("package.json resolutions {key} is not one jpm reads; it is ignored"));
+            let Some(value) = value.as_str() else {
+                skip();
+                continue;
+            };
+            let mut path = key.as_str();
+            while let Some(rest) = path.strip_prefix("**/") {
+                path = rest;
+            }
+            let parts = segments(path);
+            // Berry writes `npm:^1.2.3` for a range of the same package.
+            let npm = |r: &str| r.strip_prefix("npm:").filter(|r| semver::valid_range(r)).unwrap_or(r).to_string();
+            let (parent, target) = match parts.as_slice() {
+                [target] => (None, *target),
+                [.., parent, target] if !parts.contains(&"**") => (Some(name_range(parent)), *target),
+                _ => {
+                    skip();
+                    continue;
+                }
+            };
+            let (name, range) = name_range(target);
+            let named = |n: &str| spec::check_name(n, key).is_ok();
+            if !named(&name) || parent.as_ref().is_some_and(|(p, _)| !named(p)) {
+                skip();
+                continue;
+            }
+            if parts.len() > 2 {
+                let p = parent.as_ref().map_or("", |(p, _)| p.as_str());
+                ui::warn(&format!("package.json resolutions {key}: jpm applies it to every {p}'s {name}"));
+            }
+            let parent = parent.map(|(p, r)| (p, r.as_deref().map(npm)));
+            self.push(Manager::Yarn, (parent, name, range.as_deref().map(npm)), &npm(value));
+        }
+    }
+
+    /// The overrides the root resolves under: `$name` read from its own ranges, `catalog:` from
+    /// its catalogs, the most specific first.
+    pub fn apply(&self, root: &mut RootManifest) -> Result<()> {
+        root.overrides = self.resolved(root)?;
+        Ok(())
+    }
+
+    fn resolved(&self, root: &RootManifest) -> Result<Vec<Override>> {
+        let mut out = Vec::with_capacity(self.overrides.len());
+        for o in &self.overrides {
+            let mut o = o.clone();
+            let selector = o.selector();
+            let fail = |why: String| Error::new("EOVERRIDE", format!("override {selector}: {why}"));
+            if let Some(dep) = o.value.as_deref().and_then(|v| v.strip_prefix('$')) {
+                let groups = [&root.dependencies, &root.dev_dependencies, &root.optional_dependencies];
+                let range = groups.into_iter().chain(root.peer_dependencies.as_ref()).find_map(|g| g.get(dep));
+                let Some(range) = range else { return Err(fail(format!("package.json does not depend on {dep}"))) };
+                o.value = Some(range.clone());
+            } else if let Some(v) = o.value.as_deref().filter(|v| v.starts_with("catalog:")) {
+                o.value = Some(crate::project::catalog_range(&self.file, &o.name, v)?);
+            }
+            if o.range.as_deref() == Some("") && !o.value.as_deref().is_some_and(semver::is_exact) {
+                return Err(fail("a convergence override takes an exact version".into()));
+            }
+            out.push(o);
+        }
+        out.sort_by_key(Override::rank);
+        Ok(out)
+    }
+}
+
+/// A yarn path's package names: a scoped name holds a `/` of its own.
+fn segments(path: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = path;
+    while !rest.is_empty() {
+        let skip = if rest.starts_with('@') { rest.find('/').map_or(rest.len(), |i| i + 1) } else { 0 };
+        let end = rest[skip..].find('/').map_or(rest.len(), |i| skip + i);
+        out.push(&rest[..end]);
+        rest = rest.get(end + 1..).unwrap_or("");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(text: &str) -> RootManifest {
+        RootManifest::parse(text, Path::new("package.json")).unwrap()
+    }
+
+    fn rules_of(text: &str) -> (Rules, RootManifest) {
+        let m = manifest(text);
+        let mut r = Rules::default();
+        r.pnpm(m.doc.get("pnpm").and_then(|p| p.get("overrides")), "package.json");
+        r.npm(m.doc.get("overrides"));
+        r.yarn(m.doc.get("resolutions"));
+        (r, m)
+    }
+
+    fn resolved(text: &str) -> Vec<Override> {
+        let (r, mut m) = rules_of(text);
+        r.apply(&mut m).unwrap();
+        m.overrides
+    }
+
+    #[test]
+    fn reads_selectors() {
+        let sel = |s: &str| pnpm_selector(s);
+        assert_eq!(sel("foo"), Some((None, "foo".into(), None)));
+        assert_eq!(sel("@s/foo@^2.1.0"), Some((None, "@s/foo".into(), Some("^2.1.0".into()))));
+        assert_eq!(sel("qar@1>zoo"), Some((Some(("qar".into(), Some("1".into()))), "zoo".into(), None)));
+        assert_eq!(sel("a@>=1>b@>2"), Some((Some(("a".into(), Some(">=1".into()))), "b".into(), Some(">2".into()))));
+        assert_eq!(sel("a@>1 <3>@s/b"), Some((Some(("a".into(), Some(">1 <3".into()))), "@s/b".into(), None)));
+        assert_eq!(sel("form-data@"), Some((None, "form-data".into(), Some(String::new()))));
+        assert_eq!(sel("../x"), None);
+        for s in ["foo", "@s/a@^1", "p@1>c", "p>c@^2", "x@"] {
+            let o = Override::parse("pnpm", s, "1.0.0").unwrap();
+            assert_eq!(o.selector(), s);
+        }
+        assert_eq!(segments("@s/a/@s/b"), ["@s/a", "@s/b"]);
+        assert_eq!(segments("a/**/b"), ["a", "**", "b"]);
+    }
+
+    #[test]
+    fn reads_every_managers_form() {
+        let o = resolved(
+            r#"{
+            "dependencies": { "react": "^18.2.0" },
+            "overrides": { "a": "1.0.0", "b@^1": "1.1.0", "p": { ".": "2.0.0", "c": "$react", "d": { ".": "3.0.0", "e": "1" } } },
+            "resolutions": { "**/f": "1.0.0", "g/h": "npm:^2.0.0", "i@npm:^1": "1.2.0", "j/**/k": "1", "**/l/m/n": "2", "o": "npm:other" },
+            "pnpm": { "overrides": { "q@1>r": "-", "s@": "4.0.6" } }
+        }"#,
+        );
+        let lines: Vec<String> =
+            o.iter().map(|o| format!("{} {} {}", o.by.as_str(), o.selector(), o.value_text())).collect();
+        assert_eq!(
+            lines,
+            [
+                "pnpm q@1>r -",
+                "npm p>c ^18.2.0",
+                "npm p>d 3.0.0",
+                "npm d>e 1",
+                "yarn g>h ^2.0.0",
+                "yarn m>n 2",
+                "npm b@^1 1.1.0",
+                "yarn i@^1 1.2.0",
+                "npm a 1.0.0",
+                "npm p 2.0.0",
+                "yarn f 1.0.0",
+                "yarn o npm:other",
+                "pnpm s@ 4.0.6",
+            ]
+        );
+    }
+
+    #[test]
+    fn matches_edges() {
+        let o = resolved(
+            r#"{ "overrides": { "b@^1": "1.1.0", "p": { "c": "2.0.0" } },
+                 "pnpm": { "overrides": { "q@1>r": "-", "s@": "4.0.6", "t@^2.1.0": "3.0.0" } },
+                 "resolutions": { "u@npm:^1.0.0": "1.5.0" } }"#,
+        );
+        let at = |parent: Option<(&str, &str)>, name: &str, range: &str| find(&o, parent, name, range);
+        // npm: the ranges meet.
+        assert_eq!(at(None, "b", "^1.2.0"), Some(Some("1.1.0")));
+        assert_eq!(at(None, "b", ">=0.5 <1.0.1"), Some(Some("1.1.0")));
+        assert_eq!(at(None, "b", "^2"), None);
+        // pnpm: the edge's range lies inside.
+        assert_eq!(at(None, "t", "^2.2.0"), Some(Some("3.0.0")));
+        assert_eq!(at(None, "t", "^2.0.0"), None);
+        // yarn: the same range.
+        assert_eq!(at(None, "u", "^1.0.0"), Some(Some("1.5.0")));
+        assert_eq!(at(None, "u", "^1.1.0"), None);
+        // A parent's own edges only.
+        assert_eq!(at(Some(("p", "1.0.0")), "c", "^1"), Some(Some("2.0.0")));
+        assert_eq!(at(Some(("x", "1.0.0")), "c", "^1"), None);
+        assert_eq!(at(None, "c", "^1"), None);
+        assert_eq!(at(Some(("q", "1.2.0")), "r", "*"), Some(None));
+        assert_eq!(at(Some(("q", "2.0.0")), "r", "*"), None);
+        // Convergence: only where the version fits the edge's range.
+        assert_eq!(at(None, "s", "^4.0.5"), Some(Some("4.0.6")));
+        assert_eq!(at(None, "s", "^3"), None);
+    }
+
+    #[test]
+    fn refuses_what_it_cannot_resolve() {
+        let err = |text: &str| {
+            let (r, mut m) = rules_of(text);
+            r.apply(&mut m).unwrap_err().message
+        };
+        assert!(err(r#"{ "overrides": { "a": "$nope" } }"#).contains("package.json does not depend on nope"));
+        assert!(err(r#"{ "pnpm": { "overrides": { "a@": "^1" } } }"#).contains("exact version"));
+    }
+
+    #[test]
+    fn reads_the_workspace_file() {
+        let dir = crate::store::tests::scratch("rules");
+        std::fs::write(
+            dir.join(PNPM_WORKSPACE),
+            "catalog:\n  c: ^2\noverrides:\n  b: 2.0.0 # pinned\n  c: 'catalog:'\nonlyBuiltDependencies:\n  - esbuild\nallowBuilds:\n  sharp: true\n  core-js: false\n  nx@21.6.4: true\n  esbuild: false\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("package.json"), "{}").unwrap();
+        let mut m = manifest(r#"{ "overrides": { "b": "1.0.0" } }"#);
+        let r = read(&dir, &m).unwrap();
+        r.apply(&mut m).unwrap();
+        let lines: Vec<String> =
+            m.overrides.iter().map(|o| format!("{} {} {}", o.by.as_str(), o.selector(), o.value_text())).collect();
+        // pnpm-workspace.yaml's before package.json's; `catalog:` read from the catalog.
+        assert_eq!(lines, ["pnpm b 2.0.0", "pnpm c ^2", "npm b 1.0.0"]);
+        let builds: Vec<(&str, bool)> = r.builds.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        assert_eq!(builds, [("core-js", false), ("esbuild", false), ("nx", true), ("sharp", true)]);
+        std::fs::write(dir.join(PNPM_WORKSPACE), "patchedDependencies:\n  a@1.0.0: patches/a.patch\n").unwrap();
+        assert_eq!(read(&dir, &m).unwrap_err().code, "EPATCH");
+        let patched = manifest(r#"{ "pnpm": { "patchedDependencies": { "a@1.0.0": "patches/a.patch" } } }"#);
+        std::fs::remove_file(dir.join(PNPM_WORKSPACE)).unwrap();
+        assert_eq!(read(&dir, &patched).unwrap_err().code, "EPATCH");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

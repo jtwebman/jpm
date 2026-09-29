@@ -84,9 +84,33 @@ Workspaces are read from package.json, or from `pnpm-workspace.yaml` when packag
 none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-workspace.yaml`,
 `.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
 
+jpm does not apply patches: `patchedDependencies` (in package.json, `pnpm` or
+`pnpm-workspace.yaml`) stops the install. `pnpm-workspace.yaml` settings that change what pnpm
+installs and jpm does not read, such as `packageExtensions` or `minimumReleaseAge`, are named in
+a warning; the rest are left alone.
+
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
 old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committed.
+
+## Overrides
+
+An override replaces the range an edge asks for, before it is resolved, in every package and
+for peers too. jpm reads each manager's field:
+
+| Field | Keys |
+| --- | --- |
+| npm's `overrides` (bun's too) | `name`, `name@range`, `{ "parent": { "name": … } }`, `.` for the parent itself |
+| yarn's `resolutions` (bun's too) | `name`, `**/name`, `parent/name` |
+| `pnpm.overrides`, `pnpm-workspace.yaml` `overrides` | `name`, `name@range`, `parent@range>name`, `name@` |
+
+A value is a range, an `npm:` alias, `$name` for the root's own range of `name`, `catalog:`, or
+for pnpm `-`, which takes the edge out. A `name@range` key matches as its manager does: npm's
+where the two ranges meet, pnpm's where the edge's range is inside it, yarn's where they are
+the same. jpm keeps one copy of each version of a package, so a nested rule applies to the
+parent's own dependencies wherever the parent is; a rule nested deeper applies to its nearest
+parent's, with a warning. When two rules match, the one with a parent wins, then one with a
+range, then a name alone; pnpm's rules go before npm's, and npm's before yarn's.
 
 ## The lockfile
 
@@ -96,6 +120,7 @@ old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committe
 jpm-lock 2
 hash 0c1f…
 root
+  override pnpm vite@^7>esbuild 0.25.9
   spec dependencies nuxt ^4.5.2
   dep nuxt 4.5.2
 package @babel/core@7.29.7
@@ -109,7 +134,13 @@ Each package records the hash of everything it depends on (`subgraph`), which na
 directory under `node_modules/.jpm`. The `hash` line covers the rest of the file: while it
 matches, jpm uses the recorded subgraphs instead of hashing the graph again. A hand edit or a
 merge is fine; the hash no longer matches, so jpm checks everything and writes the file again.
-`jpm lock --json` prints the lockfile as JSON, in upm's format.
+`jpm lock --json` prints the lockfile as JSON, in upm's format, with `root.overrides` added.
+
+The root records the ranges package.json declares (`spec`, a `catalog:` range as the range it
+stands for) and each override the tree was resolved under (`override`: manager, pnpm-style
+selector, value with `$name` and `catalog:` resolved, in the order they apply). Another range,
+catalog entry or override makes the file out of date: `jpm install` resolves again, and
+`--frozen-lockfile` fails.
 
 ## How it works
 
@@ -144,7 +175,8 @@ jpm approve esbuild         # trust it, approve this version, install
 ```
 
 `jpm approve` adds the name to `trustedDependencies` in package.json (bun's field; pnpm's
-`onlyBuiltDependencies` is read too) and marks the locked version `build` in jpm.lock. Both
+`onlyBuiltDependencies`, and `pnpm-workspace.yaml`'s `onlyBuiltDependencies` and `allowBuilds`,
+are read too, where `name: false` takes a name out and silences it) and marks the locked version `build` in jpm.lock. Both
 must agree: a new version of a trusted package does not run its scripts until it is approved
 again. Approved packages are copies, not links into the store, kept in the project; their
 scripts run once, dependencies first, with output in `.build.log` beside the package and
