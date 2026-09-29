@@ -26,6 +26,8 @@ pub struct Config {
     pub prefer_offline: bool,
     /// `global-store`: build package entries once, in the store, for every project to link to.
     pub global_store: Option<bool>,
+    /// `ignore-scripts`: run no install or lifecycle scripts.
+    pub ignore_scripts: bool,
 }
 
 /// What the command line says, over every file.
@@ -223,6 +225,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         offline: merged.get("offline").is_some_and(|v| v == "true"),
         prefer_offline: merged.get("prefer-offline").is_some_and(|v| v == "true"),
         global_store: merged.get("global-store").map(|v| v == "true"),
+        ignore_scripts: merged.get("ignore-scripts").is_some_and(|v| v == "true"),
     })
 }
 

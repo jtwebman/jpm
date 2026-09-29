@@ -30,6 +30,7 @@ Usage
   jpm fetch --lock [--production]
   jpm lock
   jpm prune
+  jpm approve [<name>...]
   jpm run [-w <workspace>... | --workspaces] [--if-present] [<script> [args...]]
                        (also run-script; t and tst are run test)
   jpm <script> [args...]
@@ -62,6 +63,7 @@ Options
   --registry <url>     override the registry
   -s, --silent         no progress, run banner or install summary (also -q, --loglevel)
   --store <dir>        package store directory (default: JPM_STORE or ~/.jpm/store)
+  --ignore-scripts     install: run no install or lifecycle scripts (also ignore-scripts=true)
   --verify             install: check sizes, links, bins and peers, not file contents
   --no-global-store    install: build package entries in the project, not once in the store
                        (also global-store=false in .npmrc or JPM_GLOBAL_STORE=0)
@@ -84,6 +86,11 @@ Notes
 
   prune removes the project's unused entries, then global entries and store content that no
   project installed from the store uses. It waits for installs using the store to finish.
+
+  A dependency's install scripts run only when package.json lists it in trustedDependencies
+  and {LOCKFILE} approves the version: approve adds both, and a new version needs approving
+  again. approve with no names lists what waits. The project's own lifecycle scripts
+  (preinstall to postprepare) run on installs that change the tree.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
 
@@ -93,8 +100,8 @@ Notes
 
   npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
   (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:
-  -S, --save, -P, --save-prod, --ignore-scripts, --no-audit, --no-fund, --no-progress,
-  --legacy-peer-deps and --force.
+  -S, --save, -P, --save-prod, --no-audit, --no-fund, --no-progress, --legacy-peer-deps
+  and --force.
 
 Npm
   These commands run npm through exec. Only --dir goes before them.
@@ -134,22 +141,14 @@ struct Cli {
     offline: bool,
     prefer_offline: bool,
     global_store: Option<bool>,
+    ignore_scripts: bool,
 }
 
-const COMMANDS: [&str; 10] = ["install", "add", "remove", "dedupe", "resolve", "fetch", "lock", "prune", "run", "exec"];
+const COMMANDS: [&str; 11] =
+    ["install", "add", "remove", "dedupe", "resolve", "fetch", "lock", "prune", "run", "exec", "approve"];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 10] = [
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--no-progress",
-    "--legacy-peer-deps",
-    "--force",
-    "-S",
-    "--save",
-    "-P",
-    "--save-prod",
-];
+const NOOPS: [&str; 9] =
+    ["--no-audit", "--no-fund", "--no-progress", "--legacy-peer-deps", "--force", "-S", "--save", "-P", "--save-prod"];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
 fn npm_command(name: &str) -> bool {
@@ -264,6 +263,7 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--lock" => cli.lock = true,
             "--offline" => cli.offline = true,
             "--prefer-offline" => cli.prefer_offline = true,
+            "--ignore-scripts" => cli.ignore_scripts = true,
             "--global-store" => cli.global_store = Some(true),
             "--no-global-store" => cli.global_store = Some(false),
             "--frozen-lockfile" => cli.frozen = true,
@@ -394,7 +394,7 @@ fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option
         ),
         (cli.json && command == "exec", "--json does not apply to exec".into()),
         (
-            !from_project && command != "run" && command != "exec" && cli.specs.is_empty(),
+            !from_project && !matches!(command, "run" | "exec" | "approve") && cli.specs.is_empty(),
             format!("{command} needs at least one {}", if command == "remove" { "name" } else { "spec" }),
         ),
         (
@@ -456,6 +456,7 @@ fn opts(cli: &Cli) -> Opts {
         workspaces: if cli.workspaces { Some(Select::All) } else { cli.workspace.clone().map(Select::Some) },
         if_present: cli.if_present,
         include_root: cli.include_root,
+        ignore_scripts: cli.ignore_scripts,
     }
 }
 
@@ -487,6 +488,27 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
         "lock" => {
             let l = commands::lock_command(o, !cli.json)?;
             if cli.json { Ok(format_json(&l)?.trim_end().to_string()) } else { Ok(String::new()) }
+        }
+        "approve" => {
+            let a = commands::approve(&cli.specs, o)?;
+            if cli.json {
+                let mut out = a.install.as_ref().map(|r| r.to_object(Object::new())).unwrap_or_default();
+                out.insert("approved", Value::from(a.approved));
+                out.insert("pending", Value::from(a.pending));
+                return Ok(pretty(&out.into()));
+            }
+            let mut lines = Vec::new();
+            for key in &a.approved {
+                lines.push(format!("approved {key}"));
+            }
+            if a.install.is_none() && a.pending.is_empty() {
+                lines.push("no install scripts wait for approval".into());
+            }
+            if !a.pending.is_empty() {
+                let head = if a.install.is_none() { "waiting for approval" } else { "still waiting" };
+                lines.push(format!("{head}: {}", a.pending.join(", ")));
+            }
+            Ok(lines.join("\n"))
         }
         "prune" => {
             let p = commands::prune(o)?;
@@ -635,6 +657,12 @@ fn installed(cli: &Cli, r: &InstallResult, started: Instant, changes: Object) ->
     }
     if s.repaired > 0 {
         detail.push_str(&format!(", {} repaired", s.repaired));
+    }
+    if r.built > 0 {
+        detail.push_str(&format!(", {} built", r.built));
+    }
+    if !r.unbuilt.is_empty() {
+        ui::info(&format!("install scripts not run for {}: `jpm approve <name>` runs them", r.unbuilt.join(", ")));
     }
     format!("{} {count}{}", paint(GREEN, "Installed", true), paint(GRAY, &format!("{detail}{time}"), true))
 }

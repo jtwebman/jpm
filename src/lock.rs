@@ -41,6 +41,11 @@ pub struct LockEntry {
     /// The digest of the store entry's name, `<name>@<version>-<subgraph>`: a hash of everything
     /// the package reaches, written down so an install need not hash the graph again.
     pub subgraph: Option<String>,
+    /// Has install scripts.
+    pub scripts: bool,
+    /// Its install scripts are approved at this version, and run when the package.json trusts
+    /// its name too.
+    pub build: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -119,6 +124,12 @@ impl LockEntry {
         put_list(&mut o, "os", &self.os);
         put_list(&mut o, "cpu", &self.cpu);
         put_list(&mut o, "libc", &self.libc);
+        if self.scripts {
+            o.insert("hasInstallScript", true.into());
+        }
+        if self.build {
+            o.insert("build", true.into());
+        }
         o.into()
     }
 }
@@ -225,6 +236,8 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
                 libc: p.libc.clone().unwrap_or_default(),
                 // The digest is the key's last 22 characters: base64url, which may hold a `-`.
                 subgraph: keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string),
+                scripts: p.scripts,
+                build: p.build,
             },
         );
     }
@@ -286,6 +299,8 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             libc: list(e.libc),
             peer_dependencies: (!e.peer_dependencies.is_empty()).then_some(e.peer_dependencies),
             peers: (!e.peers.is_empty()).then_some(e.peers),
+            scripts: e.scripts,
+            build: e.build,
             ..Package::default()
         };
         packages.insert(key, package);
@@ -464,6 +479,11 @@ fn text_body(lock: &Lockfile) -> String {
                 line(&mut out, true, word, &items);
             }
         }
+        for (word, set) in [("scripts", e.scripts), ("build", e.build)] {
+            if set {
+                line(&mut out, true, word, &[]);
+            }
+        }
     }
     out
 }
@@ -616,6 +636,8 @@ fn parse_text(text: &str) -> Result<Lockfile> {
                 "os" => e.os = t[1..].iter().map(|v| v.to_string()).collect(),
                 "cpu" => e.cpu = t[1..].iter().map(|v| v.to_string()).collect(),
                 "libc" => e.libc = t[1..].iter().map(|v| v.to_string()).collect(),
+                "scripts" if t.len() == 1 => e.scripts = true,
+                "build" if t.len() == 1 => e.build = true,
                 _ => edge(
                     word,
                     &t,
@@ -797,6 +819,9 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         }
         if e.integrity.is_empty() {
             return Err(fail(format!("{at}.integrity must be a non-empty string")));
+        }
+        if e.build && !e.scripts {
+            return Err(fail(format!("{at} approves install scripts it does not have")));
         }
         if source.is_some() {
             if !e.version.as_deref().is_some_and(semver::is_exact) {
@@ -988,6 +1013,33 @@ package d@1.0.0
         let lock = parse_lockfile(&quoted, LOCKFILE).unwrap();
         assert_eq!(lock.packages["b@1.0.0"].bin["my tool"], "a b.js");
         assert!(format_lockfile(&lock).unwrap().contains("bin \"my tool\" \"a b.js\""));
+    }
+
+    #[test]
+    fn keeps_install_script_approvals() {
+        let mut lock = sample();
+        let b = lock.packages.get_mut("b@1.0.0").unwrap();
+        b.scripts = true;
+        b.build = true;
+        let text = format_lockfile(&lock).unwrap();
+        assert!(text.contains("package b@1.0.0\n  integrity sha512-b\n") && text.contains("  scripts\n  build\n"));
+        let back = parse_lockfile(&text, LOCKFILE).unwrap();
+        assert!(back.packages["b@1.0.0"].scripts && back.packages["b@1.0.0"].build);
+        // An approval of scripts a package does not have is refused.
+        let mut lock = sample();
+        lock.packages.get_mut("b@1.0.0").unwrap().build = true;
+        assert!(validate(&lock).unwrap_err().message.contains("does not have"));
+        // Approving a package changes its entry, and its dependents' too.
+        let base = |_: &str| String::new();
+        let plain = crate::keys::store_keys(&from_lockfile(&sample(), &base).packages);
+        let mut lock = sample();
+        let b = lock.packages.get_mut("b@1.0.0").unwrap();
+        b.scripts = true;
+        b.build = true;
+        let built = crate::keys::store_keys(&from_lockfile(&lock, &base).packages);
+        assert_ne!(plain["b@1.0.0"], built["b@1.0.0"]);
+        assert_ne!(plain["a@1.0.0"], built["a@1.0.0"]);
+        assert_eq!(plain["c@1.0.0"], built["c@1.0.0"]);
     }
 
     #[test]
