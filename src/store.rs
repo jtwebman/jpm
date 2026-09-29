@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
 
 use flate2::read::GzDecoder;
 
@@ -110,6 +110,13 @@ type Pending = Arc<OnceLock<Result<Arc<Index>>>>;
 
 /// From this size a tarball unpacks while it downloads.
 const STREAM_MIN: u64 = 1024 * 1024;
+
+/// Files of a tarball written by the thread reading it; past these, writer threads take over.
+const INLINE_FILES: usize = 64;
+/// Writer threads for one tarball, at most.
+const WRITERS: usize = 8;
+/// File bodies read ahead of the writers.
+const WRITE_QUEUE: usize = 64;
 
 pub struct Store {
     pub dir: PathBuf,
@@ -468,34 +475,76 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     let mut made: HashSet<PathBuf> = HashSet::new();
     let mut manifest: Option<Vec<u8>> = None;
     let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
-    tar::read_entries(&mut input, |path, mode, size, body| {
-        let file = dest.join(name(path));
-        if let Some(parent) = file.parent()
-            && made.insert(parent.to_path_buf())
-        {
-            fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
-        }
-        let exec = mode & 0o111 != 0;
-        // A later entry for the path wins, as tar has it.
-        if files.contains_key(path) {
-            let _ = make_writable(&file);
-            let _ = fs::remove_file(&file);
-        }
-        let mut out = create(&file, exec).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
-        if path == "package.json" {
-            if size > crate::tar::MAX_META {
-                return Err(Error::new("EBADTAR", format!("package.json of {size} bytes")));
+    // Past the first files, bodies go to writer threads: one tarball of thousands of files
+    // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
+    let (send, recv) = mpsc::sync_channel::<(PathBuf, bool, Vec<u8>)>(WRITE_QUEUE);
+    let (recv, failed) = (&Mutex::new(recv), &Mutex::new(None::<Error>));
+    // A path a later entry repeats once writers run: written last, so the later one wins.
+    let mut again: BTreeMap<PathBuf, (bool, Vec<u8>)> = BTreeMap::new();
+    std::thread::scope(|scope| {
+        let mut writers = 0;
+        let read = tar::read_entries(&mut input, |path, mode, size, body| {
+            if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
+                return Err(e);
             }
-            let mut data = Vec::with_capacity(size as usize);
-            body.read_to_end(&mut data).map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
-            out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
-            manifest = Some(data);
-        } else {
-            io::copy(body, &mut out).map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
-        }
-        files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec });
-        Ok(())
+            let file = dest.join(name(path));
+            if let Some(parent) = file.parent()
+                && made.insert(parent.to_path_buf())
+            {
+                fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+            }
+            let exec = mode & 0o111 != 0;
+            let seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
+            let corrupt = |e: io::Error| Error::new("EBADTAR", format!("Corrupt tarball: {e}"));
+            if path != "package.json" && (writers > 0 || files.len() > INLINE_FILES) {
+                let mut data = Vec::with_capacity(size.min(1 << 24) as usize);
+                body.read_to_end(&mut data).map_err(corrupt)?;
+                if seen {
+                    again.insert(file, (exec, data));
+                    return Ok(());
+                }
+                if writers == 0 {
+                    writers = crate::pool::disk_threads().min(WRITERS);
+                    for _ in 0..writers {
+                        scope.spawn(move || write_queued(recv, failed));
+                    }
+                }
+                let _ = send.send((file, exec, data));
+                return Ok(());
+            }
+            // A later entry for the path wins, as tar has it.
+            if seen {
+                let _ = make_writable(&file);
+                let _ = fs::remove_file(&file);
+            }
+            let mut out = create(&file, exec).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+            if path == "package.json" {
+                if size > crate::tar::MAX_META {
+                    return Err(Error::new("EBADTAR", format!("package.json of {size} bytes")));
+                }
+                let mut data = Vec::with_capacity(size as usize);
+                body.read_to_end(&mut data).map_err(corrupt)?;
+                out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+                manifest = Some(data);
+            } else {
+                io::copy(body, &mut out).map_err(corrupt)?;
+            }
+            Ok(())
+        });
+        // The writers stop once the queue is empty; the scope waits for them.
+        drop(send);
+        read
     })?;
+    if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
+        return Err(e);
+    }
+    for (file, (exec, data)) in again {
+        let _ = make_writable(&file);
+        let _ = fs::remove_file(&file);
+        create(&file, exec)
+            .and_then(|mut out| out.write_all(&data))
+            .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+    }
     if input.limit() == 0 {
         return Err(Error::new("EBADTAR", format!("Tarball inflates past {} bytes", tar::MAX_ARCHIVE)));
     }
@@ -621,6 +670,20 @@ impl<R: Read> Read for Hashing<R> {
                 self.failed.get_or_insert_with(|| Error::new("ENETWORK", format!("download failed: {e}")));
                 Err(e)
             }
+        }
+    }
+}
+
+/// A writer thread of `extract`: queued files until the queue closes, the first error kept.
+fn write_queued(recv: &Mutex<mpsc::Receiver<(PathBuf, bool, Vec<u8>)>>, failed: &Mutex<Option<Error>>) {
+    loop {
+        let job = recv.lock().unwrap_or_else(PoisonError::into_inner).recv();
+        let Ok((file, exec, data)) = job else { return };
+        if let Err(e) = create(&file, exec).and_then(|mut out| out.write_all(&data)) {
+            failed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert(Error::io(&e, format!("cannot write {}", file.display())));
         }
     }
 }
@@ -778,6 +841,32 @@ pub mod tests {
         let dir = scratch("head");
         let index = extract(&mut head.as_slice().chain(input), &dir.join("x"), false).unwrap();
         assert_eq!(index.unpacked_size, big.len() as u64 + 1);
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn unpacks_a_large_tarball_on_writer_threads() {
+        // Past INLINE_FILES the writes go to threads; a path repeated after that still ends as
+        // the later entry has it, and one repeated before it too.
+        let names: Vec<String> = (0..3 * INLINE_FILES).map(|i| format!("package/d{}/f{i}.js", i % 7)).collect();
+        let mut entries: Vec<(&str, u32, &[u8])> = vec![("package/package.json", 0o644, br#"{"name":"a"}"#)];
+        entries.extend(names.iter().map(|n| (n.as_str(), 0o644, n.as_bytes())));
+        entries.push(("package/d0/f0.js", 0o755, b"early, again"));
+        entries.push(("package/d2/f100.js", 0o644, b"late, again"));
+        let dir = scratch("writers");
+        let index = extract(&mut gzip(&build(&entries)).as_slice(), &dir.join("x"), false).unwrap();
+        assert_eq!(index.files.len(), 1 + names.len());
+        for f in &index.files {
+            let want: &[u8] = match f.path.as_str() {
+                "package.json" => br#"{"name":"a"}"#,
+                "d0/f0.js" => b"early, again",
+                "d2/f100.js" => b"late, again",
+                p => names.iter().find(|n| n.ends_with(p)).unwrap().as_bytes(),
+            };
+            assert_eq!(fs::read(dir.join("x").join(&f.path)).unwrap(), want, "{}", f.path);
+            assert_eq!(f.size, want.len() as u64);
+        }
+        assert!(index.files.iter().find(|f| f.path == "d0/f0.js").unwrap().exec);
         remove_tree(&dir);
     }
 
