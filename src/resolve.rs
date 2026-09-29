@@ -278,6 +278,24 @@ impl Walk<'_> {
             push(self.dir(from, &spec)?);
             return Ok(());
         }
+        if spec.kind == Kind::Git {
+            // The locked commit while the spec that chose it stands: a branch is not followed
+            // until package.json names another ref.
+            let source = match self.kept_commit(from, name, range).filter(|_| !fresh) {
+                Some(source) => {
+                    self.visit_locked(from, &format!("{name}@{source}"));
+                    source
+                }
+                None => {
+                    let m = self.read(&spec.fetch_spec, None)?;
+                    let source = m.dist.tarball.clone().unwrap_or_default();
+                    self.visit(from, &spec.name, &m, Some(&source), queue)?;
+                    source
+                }
+            };
+            push(source);
+            return Ok(());
+        }
         if self.tops.contains_key(from)
             && let Some(ws) = self.local_for(&spec, from)?
         {
@@ -390,6 +408,21 @@ impl Walk<'_> {
             return Err(Error::new("EINVALIDSPEC", "only the root and workspaces may depend on a path"));
         };
         Ok(spec::source_at(fetch_spec, &base))
+    }
+
+    /// What a top's edge was locked to, while the top still declares it as it did then. Only a
+    /// top: a package's own edges are replayed whole with it (`visit_locked`), or walked afresh.
+    fn kept_commit(&self, from: &str, name: &str, range: &str) -> Option<String> {
+        let locked = self.opts.locked?;
+        let (specs, edge) = if from == ROOT {
+            (locked.root.specs.as_ref(), locked.root.dependencies.get(name))
+        } else {
+            let p = locked.packages.get(from).filter(|_| self.tops.contains_key(from))?;
+            (p.specs.as_ref(), p.dependencies.get(name).or_else(|| p.optional_dependencies.get(name)))
+        };
+        let declared = specs?.groups().any(|(_, g)| g.and_then(|g| g.get(name)).is_some_and(|r| r == range));
+        let edge = edge.filter(|e| declared && locked.packages.contains_key(&format!("{name}@{e}")))?;
+        Some(edge.clone())
     }
 
     /// A directory edge's version, `link:<path>`: the top there when it goes by this name, else

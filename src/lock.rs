@@ -1015,7 +1015,9 @@ fn check_key(key: &str) -> Result<Option<String>> {
     // A directory is only ever `link:`: one inside the project whose dependencies install is a
     // workspace entry, not a package.
     let dir = spec.kind == Kind::Directory && version.len() > 5 && version.starts_with("link:");
-    if spec.kind == Kind::Tarball || dir {
+    // A git package is locked to a commit, never to a branch.
+    let git = spec.kind == Kind::Git && spec::is_commit(crate::git::split(version).1);
+    if spec.kind == Kind::Tarball || dir || git {
         if spec.fetch_spec != version {
             return Err(fail(format!("package key {key:?} does not name its source as a lockfile does")));
         }
@@ -1141,6 +1143,36 @@ package d@1.0.0
             text.replace("  dep l link:../l\n", "  dep l link:../l\n  dep a 1.0.0\n")
                 .replace("\n  spec", "\n  spec dependencies a 1\n  spec")
                 + dep,
+        ] {
+            assert!(parse_lockfile(&bad, LOCKFILE).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn locks_a_git_package_to_a_commit() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let text = format!(
+            "jpm-lock 2\nhash 0\nroot\n  spec dependencies g github:u/r#main\n  dep g \"git+https://github.com/u/r.git#{commit}\"\n\
+             package \"g@git+https://github.com/u/r.git#{commit}\"\n  version 1.0.0\n  integrity sha512-g\n"
+        );
+        let lock = parse_lockfile(&text, LOCKFILE).unwrap();
+        let res = from_lockfile(&lock, &|_| String::new());
+        let g = &res.packages[&format!("g@git+https://github.com/u/r.git#{commit}")];
+        assert_eq!(
+            (g.version.as_str(), g.source.as_deref()),
+            ("1.0.0", Some(&*format!("git+https://github.com/u/r.git#{commit}")))
+        );
+        let again = format_lockfile(&to_lockfile(&res, &|_| String::new())).unwrap();
+        assert!(
+            again.contains(&format!("package \"g@git+https://github.com/u/r.git#{commit}\"\n  version 1.0.0\n")),
+            "{again}"
+        );
+        for bad in [
+            text.replace(&format!("#{commit}"), "#main"),
+            text.replace(&format!("#{commit}"), &format!("#{}", &commit[..12])),
+            text.replace("git+https://github.com/u/r.git", "git+https://-oProxyCommand=x/r.git"),
+            text.replace("git+https://github.com/u/r.git", "git+https://github.com/u/r"),
+            text.replace("  version 1.0.0\n", ""),
         ] {
             assert!(parse_lockfile(&bad, LOCKFILE).is_err(), "{bad}");
         }

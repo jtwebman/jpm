@@ -646,11 +646,13 @@ fn fill(store: &Store, wanted: &[&Package], dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Where the store reads a package: a local tarball as a file, anything else by url.
+/// Where the store reads a package: a local tarball as a file, a git commit from its
+/// repository, anything else by url.
 fn tarball_of(dir: &Path, resolved: &str, source: Option<&str>) -> Tarball {
-    match source.and_then(|s| s.strip_prefix("file:")) {
-        Some(path) => Tarball::File(dir.join(path)),
-        None => Tarball::Url(resolved.to_string()),
+    match source {
+        Some(s) if spec::is_git(s) => Tarball::Git(s.to_string()),
+        Some(s) if s.starts_with("file:") => Tarball::File(dir.join(&s[5..])),
+        _ => Tarball::Url(resolved.to_string()),
     }
 }
 
@@ -993,8 +995,12 @@ fn tops(project: &Project) -> Result<Vec<Workspace>> {
     Ok(all)
 }
 
-/// A tarball dependency's package.json, with `dist` naming the source and its bytes' integrity.
+/// A tarball or git dependency's package.json, with `dist` naming the source (a git ref resolved
+/// to its commit) and its integrity.
 fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Option<&str>) -> Result<Arc<Manifest>> {
+    let git = spec::is_git(source);
+    let resolved = if git { crate::git::resolve(source, ctx.config().offline)? } else { source.to_string() };
+    let source = resolved.as_str();
     let at = tarball_of(dir, source, Some(source));
     let stamp = match (&at, pinned) {
         (Tarball::File(path), None) => stamp_of(path),
@@ -1014,8 +1020,15 @@ fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Opti
         .map_err(|e| Error::io(&e, format!("cannot read the package.json of {source}")))?;
     let where_ = format!("package.json of {source}");
     // Written by hand, not checked by a registry.
-    RootManifest::parse(&text, Path::new(&where_))?;
+    let doc = RootManifest::parse(&text, Path::new(&where_))?.doc;
     let mut m = Manifest::from_json(&text).map_err(|e| e.context(&where_))?;
+    // A repository need not say its version, and npm runs its `prepare` as it installs one.
+    if git {
+        if m.version.is_empty() {
+            m.version = "0.0.0".into();
+        }
+        m.scripts |= doc.get("scripts").and_then(|s| s.get("prepare")).is_some();
+    }
     let exact = semver::parse(&m.version).map(|v| v.text);
     let Some(exact) = exact else { return Err(fail("EMANIFEST", format!("{where_} has no valid version"))) };
     m.version = exact;
@@ -1189,7 +1202,7 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
     let registry = ctx.registry(&store);
     let mut added: Vec<Added> = Vec::new();
     for ((raw, spec), bare) in specs.iter().zip(&parsed).zip(&bare) {
-        let located = spec.as_ref().is_none_or(|s| matches!(s.kind, Kind::Tarball | Kind::Directory));
+        let located = spec.as_ref().is_none_or(|s| matches!(s.kind, Kind::Tarball | Kind::Directory | Kind::Git));
         if located {
             let fetch_spec =
                 from_cwd(&edit.file, bare.as_deref().or(spec.as_ref().map(|s| s.fetch_spec.as_str())).unwrap_or(""));
@@ -1214,7 +1227,12 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
                     name
                 }
             };
-            let range = spec::parse_dep(&name, &fetch_spec)?.fetch_spec;
+            // A repository is saved as it was typed (`github:u/r#v1`); a path from package.json.
+            let range = match spec {
+                _ if !spec::is_git(&fetch_spec) => spec::parse_dep(&name, &fetch_spec)?.fetch_spec,
+                Some(s) => s.raw[s.name.len() + 1..].to_string(),
+                None => raw.clone(),
+            };
             added.push(Added { name, range, group });
             continue;
         }
@@ -1399,7 +1417,7 @@ fn pick_all(ctx: &Ctx, store: &Store, specs: &[String]) -> Result<Vec<Arc<Manife
         return Err(fail("EOPTION", "needs at least one spec"));
     }
     let parsed: Vec<spec::Spec> = specs.iter().map(|s| spec::parse_spec(s)).collect::<Result<_>>()?;
-    if let Some(t) = parsed.iter().find(|s| matches!(s.kind, Kind::Tarball | Kind::Directory)) {
+    if let Some(t) = parsed.iter().find(|s| matches!(s.kind, Kind::Tarball | Kind::Directory | Kind::Git)) {
         return Err(fail("EINVALIDSPEC", format!("{} is not a registry spec", t.raw)));
     }
     let registry = ctx.registry(store);
@@ -1792,7 +1810,9 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
 /// Where the specs install, made the context's root; the config stays the one already read.
 fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>)> {
     let parsed: Vec<spec::Spec> = specs.iter().map(|s| spec::parse_spec(s)).collect::<Result<_>>()?;
-    if let Some(l) = parsed.iter().find(|s| matches!(s.kind, Kind::Workspace | Kind::Tarball | Kind::Directory)) {
+    if let Some(l) =
+        parsed.iter().find(|s| matches!(s.kind, Kind::Workspace | Kind::Tarball | Kind::Directory | Kind::Git))
+    {
         return Err(fail("EINVALIDSPEC", format!("exec installs registry packages, not {}", l.raw)));
     }
     let store = ctx.store(false);

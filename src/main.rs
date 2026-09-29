@@ -8,6 +8,7 @@ mod config;
 mod error;
 mod foreign;
 mod gc;
+mod git;
 mod glob;
 mod graph;
 mod http;
