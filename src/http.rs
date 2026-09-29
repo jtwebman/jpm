@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use flate2::read::GzDecoder;
@@ -282,7 +282,8 @@ type Conn = BufReader<Stream>;
 type PoolKey = (bool, String, u16);
 
 struct Client {
-    tls: jpm_tls::Config,
+    /// Made at the first connection over TLS.
+    tls: LazyLock<jpm_tls::Config, Box<dyn FnOnce() -> jpm_tls::Config + Send>>,
     proxies: Proxies,
     pool: Mutex<HashMap<PoolKey, Vec<Conn>>>,
     dns: Mutex<HashMap<String, Vec<SocketAddr>>>,
@@ -292,13 +293,13 @@ static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
 
 /// The client `configure` set up, else one with Mozilla's roots and the proxy environment.
 fn client() -> &'static Arc<Client> {
-    CLIENT.get_or_init(|| Arc::new(Client::new(mozilla(), &Config::default(), &env)))
+    CLIENT.get_or_init(|| Arc::new(Client::new(Box::new(mozilla), &Config::default(), &env)))
 }
 
 /// The network settings of `.npmrc` and the environment, for every request from here on: the
 /// roots to trust, `strict-ssl` and the proxies. Called once, before the first request.
 pub fn configure(config: &Config) -> Result<()> {
-    let roots = roots(config, &env, system())?;
+    let roots = roots(config, &env, system)?;
     if config.insecure_tls {
         crate::ui::warn(
             "strict-ssl=false: certificates are not checked, so anyone on the network can pose as the registry",
@@ -314,9 +315,13 @@ fn env(name: &str) -> Option<String> {
 
 impl Client {
     /// HTTP/1.1 by ALPN.
-    fn new(roots: Vec<Anchor<'static>>, config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Self {
-        let tls =
-            jpm_tls::Config { roots, alpn: vec![b"http/1.1".to_vec()], insecure_skip_verify: config.insecure_tls };
+    fn new(roots: Roots, config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Self {
+        let insecure_skip_verify = config.insecure_tls;
+        let tls = LazyLock::new(Box::new(move || jpm_tls::Config {
+            roots: roots(),
+            alpn: vec![b"http/1.1".to_vec()],
+            insecure_skip_verify,
+        }) as Box<dyn FnOnce() -> _ + Send>);
         Self { tls, proxies: Proxies::new(config, env), pool: Mutex::default(), dns: Mutex::default() }
     }
 }
@@ -341,27 +346,33 @@ fn system() -> Vec<Anchor<'static>> {
     ders.into_iter().filter_map(|der| Anchor::from_cert(Box::leak(der.into_boxed_slice())).ok()).collect()
 }
 
+/// Trust anchors, made when first needed.
+type Roots = Box<dyn FnOnce() -> Vec<Anchor<'static>> + Send>;
+
 /// The roots to trust. `cafile`, else `ca`, in place of the defaults: npm hands them to Node as
 /// its `ca` option, which replaces the default list (NODE_EXTRA_CA_CERTS included). Otherwise
 /// Mozilla's and the system's (`system`), plus the file NODE_EXTRA_CA_CERTS names, as Node
-/// adds it.
+/// adds it. The files and settings are read now, so a bad one fails before anything is done;
+/// the system's are read at the first connection: a run that asks nothing never reads them.
 fn roots(
     config: &Config,
     env: &dyn Fn(&str) -> Option<String>,
-    system: Vec<Anchor<'static>>,
-) -> Result<Vec<Anchor<'static>>> {
-    if let Some(file) = &config.cafile {
-        return pem_file(file);
-    }
-    if let Some(pem) = &config.ca {
-        return anchors(pem).map_err(|e| e.context("the ca setting"));
-    }
-    let mut roots = mozilla();
-    roots.extend(system);
-    if let Some(file) = env("NODE_EXTRA_CA_CERTS") {
-        roots.extend(pem_file(Path::new(&file))?);
-    }
-    Ok(roots)
+    system: impl FnOnce() -> Vec<Anchor<'static>> + Send + 'static,
+) -> Result<Roots> {
+    let named = if let Some(file) = &config.cafile {
+        pem_file(file)?
+    } else if let Some(pem) = &config.ca {
+        anchors(pem).map_err(|e| e.context("the ca setting"))?
+    } else {
+        let extra = env("NODE_EXTRA_CA_CERTS").map(|file| pem_file(Path::new(&file))).transpose()?;
+        return Ok(Box::new(move || {
+            let mut roots = mozilla();
+            roots.extend(system());
+            roots.extend(extra.into_iter().flatten());
+            roots
+        }));
+    };
+    Ok(Box::new(move || named))
 }
 
 /// A bad or unreadable file is an error: going on without it would fail later, and less clearly.
@@ -1056,31 +1067,33 @@ mod tests {
             crate::config::to_config(&[crate::config::parse_npmrc(&rc, &|_| None).unwrap()], None).unwrap()
         };
         let mozilla = mozilla().len();
-        assert_eq!(roots(&config(""), &|_| None, Vec::new()).unwrap().len(), mozilla);
+        let n = |roots: Result<Roots>| roots.unwrap()().len();
+        assert_eq!(n(roots(&config(""), &|_| None, Vec::new)), mozilla);
         // NODE_EXTRA_CA_CERTS adds to Mozilla's.
-        assert_eq!(roots(&config(""), &with_extra, Vec::new()).unwrap().len(), mozilla + 1);
-        // So do the system's; cafile replaces them as well.
-        let system = || roots(&config(&format!("cafile={}", b.display())), &|_| None, Vec::new()).unwrap();
-        assert_eq!(roots(&config(""), &with_extra, system()).unwrap().len(), mozilla + 1 + system().len());
-        assert_eq!(roots(&config("cafile={b}"), &with_extra, system()).unwrap().len(), 2);
+        assert_eq!(n(roots(&config(""), &with_extra, Vec::new)), mozilla + 1);
+        // So do the system's, read only when the roots are first needed; cafile replaces them.
+        let system = || {
+            let two = roots(&config("cafile={b}"), &|_| None, Vec::new).unwrap()();
+            move || two
+        };
+        assert_eq!(n(roots(&config(""), &with_extra, system())), mozilla + 1 + 2);
+        assert!(roots(&config(""), &with_extra, || panic!("the system's roots read at once")).is_ok());
+        assert_eq!(n(roots(&config("cafile={b}"), &with_extra, system())), 2);
         // cafile and ca replace them, NODE_EXTRA_CA_CERTS too; cafile wins over ca.
-        assert_eq!(roots(&config("cafile={b}"), &with_extra, Vec::new()).unwrap().len(), 2);
+        assert_eq!(n(roots(&config("cafile={b}"), &with_extra, Vec::new)), 2);
         let inline = pem("c").trim_end().replace('\n', "\\n");
-        assert_eq!(roots(&config(&format!("ca=\"{inline}\"")), &with_extra, Vec::new()).unwrap().len(), 1);
+        assert_eq!(n(roots(&config(&format!("ca=\"{inline}\"")), &with_extra, Vec::new)), 1);
         let two = format!("ca[]=\"{inline}\"\nca[]=\"{}\"", pem("d").trim_end().replace('\n', "\\n"));
-        assert_eq!(roots(&config(&two), &with_extra, Vec::new()).unwrap().len(), 2);
-        assert_eq!(
-            roots(&config(&format!("ca=\"{inline}\"\ncafile={{b}}")), &with_extra, Vec::new()).unwrap().len(),
-            2
-        );
+        assert_eq!(n(roots(&config(&two), &with_extra, Vec::new)), 2);
+        assert_eq!(n(roots(&config(&format!("ca=\"{inline}\"\ncafile={{b}}")), &with_extra, Vec::new)), 2);
         // A bad or missing file is an error that names it.
         std::fs::write(&a, "not a certificate").unwrap();
-        let e = roots(&config(""), &with_extra, Vec::new()).unwrap_err();
+        let e = roots(&config(""), &with_extra, Vec::new).err().unwrap();
         assert_eq!(e.message, format!("{}: no PEM certificates", a.display()));
         let missing = dir.join("missing.pem");
-        let e = roots(&config(&format!("cafile={}", missing.display())), &|_| None, Vec::new()).unwrap_err();
+        let e = roots(&config(&format!("cafile={}", missing.display())), &|_| None, Vec::new).err().unwrap();
         assert!(e.message.starts_with(&format!("cannot read CA certificates from {}", missing.display())));
-        let e = roots(&config("ca=junk"), &|_| None, Vec::new()).unwrap_err();
+        let e = roots(&config("ca=junk"), &|_| None, Vec::new).err().unwrap();
         assert_eq!(e.message, "the ca setting: no PEM certificates");
         std::fs::remove_dir_all(&dir).unwrap();
     }
