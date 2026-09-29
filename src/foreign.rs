@@ -289,16 +289,17 @@ fn read_npm(text: &str) -> Result<Source> {
         return Err(fail(format!("package-lock.json v{v} has no packages map; npm 7 and later write one")));
     };
     let mut nodes = Vec::new();
-    let paths = listed.index();
-    for (path, entry) in listed {
+    let mut tree = Tree::default();
+    let at: Vec<Option<usize>> = listed
+        .iter()
+        .map(|(path, entry)| Some(tree.add(path.strip_prefix(NM)?.split("/node_modules/"), entry)))
+        .collect();
+    for ((path, entry), from) in listed.iter().zip(at) {
         // A bundled copy is inside its parent's tarball; a workspace path was refused before this.
-        if !path.starts_with(NM) || truthy(entry.get("inBundle")) {
-            continue;
-        }
+        let Some(from) = from.filter(|_| !truthy(entry.get("inBundle"))) else { continue };
         let Some(version) = npm_version(entry) else { continue };
-        let name = &path[path.rfind(NM).map_or(0, |i| i + NM.len())..];
+        let name = path[NM.len()..].rsplit("/node_modules/").next().unwrap_or_default();
         let real = entry.get("name").and_then(Value::as_str).filter(|n| !n.is_empty());
-        let from = format!("{path}/");
         let node = Node {
             name: name.to_string(),
             real: real.filter(|r| *r != name).map(str::to_string),
@@ -313,28 +314,65 @@ fn read_npm(text: &str) -> Result<Source> {
             scripts: truthy(entry.get("hasInstallScript")),
             ..Node::default()
         };
-        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match npm_find(&paths, &from, dep) {
+        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match tree.find(from, dep) {
             Some(hit) if truthy(hit.get("inBundle")) => Target::Bundled,
             hit => hit.and_then(npm_version).map_or(Target::Missing, |v| Target::Version(v.to_string())),
         }));
     }
-    let (specs, root) = root_of(groups_of(paths.get("").copied()), &|name| {
-        npm_find(&paths, "", name).and_then(npm_version).map(str::to_string)
-    });
+    let (specs, root) =
+        root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(npm_version).map(str::to_string));
     Ok(Source { nodes, specs, root, overrides: None })
 }
 
-/// The `node_modules/<name>` a walk up from `from` finds, as Node's resolution does.
-fn npm_find<'a>(paths: &HashMap<&str, &'a Value>, from: &str, name: &str) -> Option<&'a Value> {
-    let mut dir = from;
-    loop {
-        if let Some(hit) = paths.get(format!("{dir}{NM}{name}").as_str()).filter(|v| truthy(Some(v))) {
-            return Some(*hit);
+/// npm's and bun's paths as the folders they name, each a list of the packages up to it, so
+/// that a walk up is a step a level: joining each parent's path to look it up would take time
+/// in the square of its length. Folder 0 is the root.
+#[derive(Default)]
+struct Tree<'a> {
+    up: Vec<usize>,
+    entry: Vec<Option<&'a Value>>,
+    children: Vec<HashMap<&'a str, usize>>,
+}
+
+impl<'a> Tree<'a> {
+    /// The folder at the end of `names`, which holds `entry`.
+    fn add(&mut self, names: impl Iterator<Item = &'a str>, entry: &'a Value) -> usize {
+        if self.up.is_empty() {
+            self.up.push(0);
+            self.entry.push(None);
+            self.children.push(HashMap::new());
         }
-        if dir.is_empty() {
-            return None;
+        let mut at = 0;
+        for name in names {
+            at = match self.children[at].get(name) {
+                Some(&child) => child,
+                None => {
+                    let child = self.up.len();
+                    self.up.push(at);
+                    self.entry.push(None);
+                    self.children.push(HashMap::new());
+                    self.children[at].insert(name, child);
+                    child
+                }
+            };
         }
-        dir = dir.rfind(NM).map_or("", |up| &dir[..up]);
+        self.entry[at] = Some(entry);
+        at
+    }
+
+    /// The `name` nearest `from` on the walk up, as Node's resolution finds it.
+    fn find(&self, from: usize, name: &str) -> Option<&'a Value> {
+        let mut at = from;
+        loop {
+            let hit = self.children.get(at).and_then(|c| c.get(name)).and_then(|&c| self.entry[c]);
+            if let Some(hit) = hit.filter(|v| truthy(Some(v))) {
+                return Some(hit);
+            }
+            if at == 0 {
+                return None;
+            }
+            at = self.up[at];
+        }
     }
 }
 
@@ -596,13 +634,13 @@ fn read_bun(text: &str) -> Result<Source> {
     }
     let empty = Map::new();
     let listed = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
-    let paths = listed.index();
+    let mut tree = Tree::default();
+    let at: Vec<usize> = listed.iter().map(|(path, tuple)| tree.add(names(path).into_iter(), tuple)).collect();
     let mut nodes = Vec::new();
-    for (path, tuple) in listed {
+    for ((path, tuple), from) in listed.iter().zip(at) {
         let Some(t) = bun_tuple(tuple).filter(|t| !t.bundled) else { continue };
         let (real, version) = split_id(t.id);
-        let chain = names(path);
-        let name = chain.last().cloned().unwrap_or_default();
+        let name = names(path).last().map_or_else(String::new, |n| n.to_string());
         // bun writes an os or cpu it does not know as "none": unknown, so no restriction.
         let known = |v: Option<&Value>| list(v).into_iter().filter(|x| x != "none").collect();
         let node = Node {
@@ -619,10 +657,10 @@ fn read_bun(text: &str) -> Result<Source> {
         };
         let mut declared = Declared::of(t.meta);
         declared.optional_peers = list(t.meta.get("optionalPeers")).into_iter().collect();
-        nodes.push(with_edges(node, &declared, &|dep| bun_find(&paths, &chain, dep)));
+        nodes.push(with_edges(node, &declared, &|dep| bun_find(&tree, from, dep)));
     }
     let (specs, root) =
-        root_of(groups_of(workspaces.and_then(|w| w.get(""))), &|name| match bun_find(&paths, &[], name) {
+        root_of(groups_of(workspaces.and_then(|w| w.get(""))), &|name| match bun_find(&tree, 0, name) {
             Target::Version(v) => Some(v),
             _ => None,
         });
@@ -652,33 +690,28 @@ fn bun_tuple(value: &Value) -> Option<BunTuple<'_>> {
 }
 
 /// The nearest `name` up the hoisted path `from`.
-fn bun_find(paths: &HashMap<&str, &Value>, from: &[String], name: &str) -> Target {
-    for depth in (0..=from.len()).rev() {
-        let mut key = from[..depth].join("/");
-        if !key.is_empty() {
-            key.push('/');
-        }
-        key.push_str(name);
-        let Some(hit) = paths.get(key.as_str()).copied().filter(|v| truthy(Some(v))) else { continue };
-        return match bun_tuple(hit) {
-            None => Target::Missing,
-            Some(t) if t.bundled => Target::Bundled,
-            Some(t) => Target::Version(split_id(t.id).1),
-        };
+fn bun_find(tree: &Tree, from: usize, name: &str) -> Target {
+    match tree.find(from, name).map(bun_tuple) {
+        None | Some(None) => Target::Missing,
+        Some(Some(t)) if t.bundled => Target::Bundled,
+        Some(Some(t)) => Target::Version(split_id(t.id).1),
     }
-    Target::Missing
 }
 
 /// A path is package names joined by "/", and a scoped name has a "/" of its own.
-fn names(path: &str) -> Vec<String> {
+fn names(path: &str) -> Vec<&str> {
     let mut out = Vec::new();
+    let mut start = 0;
     let mut parts = path.split('/');
     while let Some(part) = parts.next() {
-        if part.starts_with('@') {
-            out.push(format!("{part}/{}", parts.next().unwrap_or_default()));
-        } else {
-            out.push(part.to_string());
+        let mut end = start + part.len();
+        if part.starts_with('@')
+            && let Some(rest) = parts.next()
+        {
+            end += 1 + rest.len();
         }
+        out.push(&path[start..end]);
+        start = end + 1;
     }
     out
 }
@@ -806,6 +839,12 @@ fn build(
         if node.integrity.is_empty() {
             return Err(fail(format!("{file} gives {key} no integrity")));
         }
+        // `validate` checks the key's name; the package it aliases goes into a url.
+        if let Some(real) = &node.real
+            && crate::spec::check_name(real, key).is_err()
+        {
+            return Err(fail(format!("{file} gives {key} the package name {real:?}, which is not one")));
+        }
         // npm may list a sha1 beside the sha512; jpm.lock keeps the strongest alone.
         let integrity = Integrity::parse(&node.integrity).map_or_else(|_| node.integrity.clone(), |i| i.text());
         if node.bin.is_empty() && node.has_bin {
@@ -855,16 +894,20 @@ fn build(
     Ok(ForeignLock { lock, binless, scriptless: false, warnings })
 }
 
-/// Whether two integrity fields name one tarball: equal, or their strongest shared algorithm's
-/// digests agree. npm writes `sha1-… sha512-…` for some copies of a package and not others.
+/// Whether two integrity fields name one tarball: equal, or the same digests for the strongest
+/// algorithm both carry. npm writes `sha1-… sha512-…` for some copies of a package and not
+/// others. Several digests of one algorithm mean any of them will do, so the sets must be equal,
+/// not just share one: the copies become one node that keeps one field, and it must not take a
+/// tarball the other copy's field refuses.
 fn same_integrity(a: &str, b: &str) -> bool {
     let hashes = |s: &str| s.split_whitespace().filter_map(|h| Integrity::parse(h).ok()).collect::<Vec<_>>();
-    let theirs = hashes(b);
-    let shared = hashes(a)
-        .into_iter()
-        .filter_map(|mine| Some((theirs.iter().find(|t| t.algorithm == mine.algorithm)?.digest == mine.digest, mine)))
-        .max_by_key(|(_, mine)| mine.digest.len());
-    a == b || shared.is_some_and(|(agree, _)| agree)
+    let (mine, theirs) = (hashes(a), hashes(b));
+    let digests = |of: &[Integrity], algorithm| {
+        of.iter().filter(|h| h.algorithm == algorithm).map(|h| h.digest.clone()).collect::<BTreeSet<_>>()
+    };
+    let strongest =
+        mine.iter().filter(|m| theirs.iter().any(|t| t.algorithm == m.algorithm)).max_by_key(|m| m.digest.len());
+    a == b || strongest.is_some_and(|s| digests(&mine, s.algorithm) == digests(&theirs, s.algorithm))
 }
 
 /// A longer digest is a stronger algorithm; 0 when nothing parses.
@@ -943,7 +986,11 @@ fn yaml(text: &str) -> Result<Value> {
     let lines: Vec<&str> =
         text.split('\n').filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).collect();
     let indent = lines.first().map_or(0, |l| indent_of(l));
-    Yaml { lines, i: 0 }.block(indent, 0)
+    // Written out as JSON for its parser, which indexes a big map's keys: inserting them one by
+    // one would scan the map for each, and pnpm's `packages` can hold a hundred thousand.
+    let mut out = String::new();
+    Yaml { lines, i: 0 }.block(indent, 0, &mut out)?;
+    json::parse(&out).map_err(|e| fail(format!("pnpm-lock.yaml cannot be read: {}", e.message)))
 }
 
 struct Yaml<'a> {
@@ -952,37 +999,42 @@ struct Yaml<'a> {
 }
 
 impl Yaml<'_> {
-    fn block(&mut self, indent: usize, depth: usize) -> Result<Value> {
+    fn block(&mut self, indent: usize, depth: usize, out: &mut String) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(too_deep());
         }
         let item = |l: &&str| l.trim().starts_with("- ");
-        if self.lines.get(self.i).is_some_and(item) {
-            let mut out = Vec::new();
-            while let Some(line) = self.lines.get(self.i).copied().filter(|l| indent_of(l) == indent && item(l)) {
-                self.i += 1;
-                out.push(scalar(&line.trim()[2..], depth + 1)?);
-            }
-            return Ok(Value::Array(out));
-        }
-        let mut out = Map::new();
+        let list = self.lines.get(self.i).is_some_and(item);
+        out.push(if list { '[' } else { '{' });
+        let mut first = true;
         while let Some(line) = self.lines.get(self.i).copied().filter(|l| indent_of(l) == indent) {
+            if list && !item(&line) {
+                break;
+            }
             self.i += 1;
+            if !std::mem::take(&mut first) {
+                out.push(',');
+            }
             let line = line.trim();
+            if list {
+                scalar(&line[2..], depth + 1, out)?;
+                continue;
+            }
             let colon = key_end(line);
-            let key = unquote(&line[..colon]);
+            json::quote(out, &unquote(&line[..colon]));
+            out.push(':');
             let rest = line.get(colon + 1..).unwrap_or_default().trim();
-            let value = if !rest.is_empty() {
-                scalar(rest, depth + 1)?
+            if !rest.is_empty() {
+                scalar(rest, depth + 1, out)?;
             } else {
                 match self.lines.get(self.i).map(|l| indent_of(l)) {
-                    Some(next) if next > indent => self.block(next, depth + 1)?,
-                    _ => Value::Object(Map::new()),
+                    Some(next) if next > indent => self.block(next, depth + 1, out)?,
+                    _ => out.push_str("{}"),
                 }
-            };
-            out.insert(key, value);
+            }
         }
-        Ok(Value::Object(out))
+        out.push(if list { ']' } else { '}' });
+        Ok(())
     }
 }
 
@@ -1015,29 +1067,41 @@ fn key_end(line: &str) -> usize {
     if line.ends_with(':') { line.len() - 1 } else { line.find(':').unwrap_or(line.len()) }
 }
 
-fn scalar(text: &str, depth: usize) -> Result<Value> {
+fn scalar(text: &str, depth: usize, out: &mut String) -> Result<()> {
     if depth > MAX_DEPTH {
         return Err(too_deep());
     }
     let v = text.trim();
     let inner = || &v[1..v.len() - 1];
-    Ok(match v {
-        "true" => Value::Bool(true),
-        "false" => Value::Bool(false),
+    match v {
+        "true" | "false" => out.push_str(v),
         _ if v.len() >= 2 && v.starts_with('{') && v.ends_with('}') => {
-            let mut out = Map::new();
-            for part in split_flow(inner()) {
+            out.push('{');
+            for (i, part) in split_flow(inner()).into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
                 let item = part.trim();
                 let colon = key_end(item);
-                out.insert(unquote(&item[..colon]), scalar(item.get(colon + 1..).unwrap_or_default(), depth + 1)?);
+                json::quote(out, &unquote(&item[..colon]));
+                out.push(':');
+                scalar(item.get(colon + 1..).unwrap_or_default(), depth + 1, out)?;
             }
-            Value::Object(out)
+            out.push('}');
         }
         _ if v.len() >= 2 && v.starts_with('[') && v.ends_with(']') => {
-            Value::Array(split_flow(inner()).into_iter().map(|p| Value::String(unquote(p))).collect())
+            out.push('[');
+            for (i, part) in split_flow(inner()).into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                json::quote(out, &unquote(part));
+            }
+            out.push(']');
         }
-        _ => Value::String(unquote(v)),
-    })
+        _ => json::quote(out, &unquote(v)),
+    }
+    Ok(())
 }
 
 /// Split a flow collection's body on the commas at its own level.
@@ -1562,5 +1626,108 @@ snapshots:
         assert_eq!(p.ranges["@s/a@~1.1.0"], "1.2.0");
         assert_eq!(p.ranges.len(), 2, "{:?}", p.ranges);
         assert_eq!(p.versions["@s/a"], ["1.2.0", "1.2.0"]);
+    }
+
+    #[test]
+    fn compares_integrity_both_ways() {
+        let (p, q) = (crate::integrity::sha512(b"p"), crate::integrity::sha512(b"q"));
+        let sha1 = format!("sha1-{}", crate::util::to_base64(&[7; 20]));
+        for (a, b, same) in [
+            (format!("{q} {p}"), p.clone(), false),
+            (format!("{q} {p}"), format!("{p} {q}"), true),
+            (format!("{sha1} {p}"), p.clone(), true),
+            (format!("{sha1} {p}"), format!("{sha1} {q}"), false),
+        ] {
+            assert_eq!(same_integrity(&a, &b), same, "{a} | {b}");
+            assert_eq!(same_integrity(&b, &a), same, "{b} | {a}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_real_name_that_is_not_one() {
+        let doc = json!({ "dependencies": { "a": "1.0.0" } });
+        let integrity = crate::integrity::sha512(b"a");
+        let npm = json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": doc,
+                "node_modules/a": { "version": "1.0.0", "name": "../evil", "integrity": integrity },
+            }
+        })
+        .to_string();
+        let bun = json!({
+            "lockfileVersion": 1,
+            "workspaces": { "": doc },
+            "packages": { "a": ["../evil@1.0.0", "", {}, integrity] },
+        })
+        .to_string();
+        for (file, text) in [("package-lock.json", npm), ("bun.lock", bun)] {
+            assert!(err(file, &text, doc.clone()).contains("package name \"../evil\""), "{file}");
+        }
+        let pnpm = format!(
+            "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      a:
+        specifier: 1.0.0
+        version: ../evil@1.0.0
+packages:
+  ../evil@1.0.0:
+    resolution: {{integrity: {integrity}}}
+snapshots:
+  ../evil@1.0.0: {{}}
+"
+        );
+        assert!(err("pnpm-lock.yaml", &pnpm, doc.clone()).contains("package name \"../evil\""));
+    }
+
+    // Each of these took seconds, in the square of the file's size, and quite a bit longer
+    // without optimizations.
+    #[test]
+    fn walks_up_a_deep_npm_path_a_level_at_a_time() {
+        let deep = format!("node_modules/a{}", "/node_modules/a".repeat(3000));
+        let missing: serde_json::Map<String, Value> = (0..20).map(|i| (format!("d{i}"), json!("1"))).collect();
+        let text =
+            json!({ "lockfileVersion": 3, "packages": { deep: { "version": "1.0.0", "dependencies": missing } } })
+                .to_string();
+        let start = std::time::Instant::now();
+        let source = read_npm(&text).unwrap();
+        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+        assert_eq!(source.nodes[0].name, "a");
+        assert_eq!(source.nodes[0].dependencies.len(), 20);
+    }
+
+    #[test]
+    fn walks_up_a_deep_bun_path_a_level_at_a_time() {
+        let deep = vec!["a"; 3000].join("/");
+        let missing: serde_json::Map<String, Value> = (0..20).map(|i| (format!("d{i}"), json!("1"))).collect();
+        let text = json!({
+            "lockfileVersion": 1,
+            "packages": { deep: ["a@1.0.0", "", { "dependencies": missing }, "sha512-a"] },
+        })
+        .to_string();
+        let start = std::time::Instant::now();
+        let source = read_bun(&text).unwrap();
+        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+        assert_eq!(source.nodes[0].dependencies.len(), 20);
+        // Scoped names are one step.
+        assert_eq!(names("a/@s/b/c"), ["a", "@s/b", "c"]);
+    }
+
+    #[test]
+    fn reads_a_big_yaml_map_in_linear_time() {
+        let mut text = String::from("packages:\n");
+        for i in 0..10_000 {
+            text.push_str(&format!("  p{i}@1.0.0:\n    resolution: {{integrity: sha512-x}}\n"));
+        }
+        text.push_str("  p0@1.0.0: {}\n");
+        let start = std::time::Instant::now();
+        let doc = yaml(&text).unwrap();
+        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+        let packages = doc.get("packages").and_then(|p| p.as_object()).unwrap();
+        assert_eq!(packages.len(), 10_000);
+        // A key given twice keeps its first place and its last value.
+        assert_eq!(packages.iter().next().map(|(k, v)| (k.as_str(), v.to_string())), Some(("p0@1.0.0", "{}".into())));
     }
 }
