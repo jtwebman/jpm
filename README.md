@@ -201,6 +201,11 @@ selector, value with `$name` and `catalog:` resolved, in the order they apply). 
 catalog entry or override makes the file out of date: `jpm install` resolves again, and
 `--frozen-lockfile` fails.
 
+With no `jpm.lock` (and no other manager's lockfile to bring over), `jpm install` keeps the
+versions a `node_modules` jpm installed already has, wherever the ranges in package.json allow
+them, and resolves the rest; then it writes `jpm.lock`. For a fresh resolve, delete `jpm.lock`
+and run `jpm lock`, which does not read `node_modules`, or delete `node_modules` too.
+
 ## Directory dependencies
 
 A dependency can be a directory, given relative to the package.json that names it:

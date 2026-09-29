@@ -904,7 +904,16 @@ fn plan(
         return Err(fail("ELOCK", format!("{} {why}", dir.join(LOCKFILE).display())));
     }
     let registry = ctx.registry(store);
-    resolve_lock(ctx, project, existing, &registry, &reader, on_pick, &moved, true, None)
+    // No jpm.lock, but a tree jpm installed: its versions stay where the ranges allow them.
+    let installed = state::read(dir).filter(|_| existing.is_none() && !ctx.dedupe).map(|s| {
+        info(&format!("no {LOCKFILE}; resolving with the versions in node_modules preferred"));
+        let mut prefer = resolve::Prefer::default();
+        for (name, version) in s.entries.iter().chain(&s.shared).filter_map(|e| crate::keys::name_version(e)) {
+            prefer.versions.entry(name).or_default().push(version.to_string());
+        }
+        prefer
+    });
+    resolve_lock(ctx, project, existing, &registry, &reader, on_pick, &moved, true, installed.as_ref())
 }
 
 /// Another manager's lockfile becomes `jpm.lock`. When it describes package.json exactly it is
