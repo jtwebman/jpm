@@ -21,7 +21,7 @@ fn usage_text() -> String {
         "jpm — a fast, small package manager for the npm registry
 
 Usage
-  jpm install [--production] [--frozen-lockfile] [--verify]    (also i; ci is frozen)
+  jpm [install] [--production] [--frozen-lockfile] [--verify]    (also i; ci is frozen)
   jpm add <spec>... [--dev | --optional] [--exact] [-w <workspace>]
   jpm remove <name>... [-w <workspace>]    (also uninstall, rm, r, un)
   jpm dedupe
@@ -374,10 +374,12 @@ pub fn main(argv0: &str, args: Vec<String>) -> i32 {
         ui::out(&format!("{}\n", env!("CARGO_PKG_VERSION")));
         return 0;
     }
-    let Some(mut command) = cli.command.clone().filter(|_| !cli.help) else {
+    if cli.help {
         ui::out(&format!("{}\n", help(true)));
         return 0;
-    };
+    }
+    // As in yarn and bun: no command is install, flags and all (`jpm --frozen-lockfile`).
+    let mut command = cli.command.clone().unwrap_or_else(|| "install".into());
     if npm_command(&command) {
         let own = cli.json
             || cli.registry.is_some()
