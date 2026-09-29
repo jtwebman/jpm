@@ -15,6 +15,8 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: jpm-linux-x64, musl: true }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: jpm-linux-arm64, musl: true }
+          # 32-bit Raspberry Pi OS (Pi 2 and later).
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, asset: jpm-linux-armv7, cross: true }
           - { os: macos-13, target: x86_64-apple-darwin, asset: jpm-darwin-x64 }
           - { os: macos-latest, target: aarch64-apple-darwin, asset: jpm-darwin-arm64 }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: jpm-windows-x64.exe }
@@ -25,7 +27,9 @@ jobs:
       - run: rustup target add ${{ matrix.target }}
       - if: matrix.musl
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --release --target ${{ matrix.target }}
+      - if: matrix.cross
+        uses: taiki-e/install-action@cross
+      - run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
       - shell: bash
         run: |
           bin=target/${{ matrix.target }}/release/jpm
