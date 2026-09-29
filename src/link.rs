@@ -30,7 +30,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use crate::error::{Error, Result};
 use crate::graph::{Package, Resolution};
 use crate::state::{self, RootLinks, Stamp, Stamps, State, Summary};
-use crate::store::{Index, Store, remove_tree};
+use crate::store::{FileEntry, Index, Store, remove_tree};
 use crate::util::{relative, temp_suffix};
 use crate::{pool, sys};
 
@@ -41,6 +41,8 @@ pub const HOIST: &str = "node_modules";
 pub const HOOK: &str = "hoist.cjs";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+/// Files per job when one package's files are linked on several threads.
+const PLACE_CHUNK: usize = 256;
 
 pub struct Inputs {
     pub hash: String,
@@ -705,16 +707,16 @@ impl Linker<'_> {
                     .map_err(|e| Error::io(&e, format!("cannot create {}", at.display())).with_code("ELINK"))?;
             }
         }
-        for f in &index.files {
+        let place = |f: &FileEntry| -> Result<()> {
             let (from, to) = (src.join(index.stored(&f.path)), dest.join(&f.path));
             if !copy && !self.copy_only.load(Ordering::Relaxed) {
                 match fs::hard_link(&from, &to) {
                     Ok(()) => {
                         Counts::add(&self.counts.linked, 1);
-                        continue;
+                        return Ok(());
                     }
                     // Two names one file on a case-insensitive disk: already there.
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
                     Err(e) if e.kind() == io::ErrorKind::TooManyLinks => {}
                     Err(e) if cannot_link(&e) => self.copy_only.store(true, Ordering::Relaxed),
                     Err(e) => return Err(Error::io(&e, format!("cannot link {}", to.display())).with_code("ELINK")),
@@ -728,8 +730,15 @@ impl Linker<'_> {
             if copy {
                 writable(&to, f.exec).map_err(|e| Error::io(&e, format!("cannot write {}", to.display())))?;
             }
+            Ok(())
+        };
+        if index.files.len() < 2 * PLACE_CHUNK {
+            return index.files.iter().try_for_each(place);
         }
-        Ok(())
+        // A package of thousands of files (next has 8,000) would take one thread for seconds
+        // while the others finish and wait: its files go to every core in chunks.
+        let chunks: Vec<&[FileEntry]> = index.files.chunks(PLACE_CHUNK).collect();
+        pool::map(pool::disk_threads(), chunks, |c| c.iter().try_for_each(place)).into_iter().collect()
     }
 
     /// Windows shims for a bin whose file, once linked, is `file`; its `#!` read from the store.
