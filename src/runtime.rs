@@ -31,7 +31,7 @@ const UNOFFICIAL: &str = "https://unofficial-builds.nodejs.org/download/release"
 /// One platform's build: `platform` is `<os>-<cpu>`, `-musl` added for a musl build, in Node's
 /// spelling. `file` is where it is: for Node a file under the release's directory on the mirror
 /// (or a whole url), for Bun and Deno the npm package that holds it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variant {
     pub platform: String,
     pub integrity: String,
@@ -156,7 +156,7 @@ fn node(range: &str, pinned: Option<&str>, registry: &Registry) -> Result<(Strin
             variants.extend(more);
         }
     }
-    variants.sort();
+    let variants = by_platform(variants);
     Ok((version, variants))
 }
 
@@ -253,9 +253,15 @@ fn from_npm(name: &str, range: &str, pinned: Option<&str>, registry: &Registry) 
     });
     let mut variants = read.into_iter().collect::<Result<Vec<_>>>()?;
     variants.retain(|v| !v.platform.starts_with('-') && !v.platform.contains("--"));
-    variants.sort();
-    variants.dedup_by(|a, b| a.platform == b.platform);
+    let variants = by_platform(variants);
     Ok((m.version.clone(), variants))
+}
+
+/// In platform order, one build per platform: the lockfile's order.
+fn by_platform(mut variants: Vec<Variant>) -> Vec<Variant> {
+    variants.sort_unstable_by(|a, b| a.platform.cmp(&b.platform));
+    variants.dedup_by(|a, b| a.platform == b.platform);
+    variants
 }
 
 /// Another lockfile's builds of the runtime `p`, as `(url, integrity)`: one that is also among
