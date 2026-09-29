@@ -1,15 +1,15 @@
-//! X25519 (RFC 7748), in constant time.
+//! X25519 (RFC 7748), in constant time. Its field arithmetic serves Ed25519 too.
 //!
 //! A field element mod p = 2^255 - 19 is five 51-bit limbs, least significant first. Limbs may
 //! run a few bits over 51 between operations; `mul` takes limbs up to about 2^54 and returns
 //! limbs just over 2^51, so sums of two products can go straight into another product. Only
 //! `to_bytes` reduces fully.
 
-type Fe = [u64; 5];
+pub(crate) type Fe = [u64; 5];
 
 const MASK: u64 = (1 << 51) - 1;
 
-fn load(b: &[u8; 32]) -> Fe {
+pub(crate) fn load(b: &[u8; 32]) -> Fe {
     let w = |i: usize| u64::from_le_bytes(b[i * 8..i * 8 + 8].try_into().unwrap());
     let (w0, w1, w2, w3) = (w(0), w(1), w(2), w(3));
     // The top bit is ignored, as RFC 7748 says for u-coordinates.
@@ -22,12 +22,12 @@ fn load(b: &[u8; 32]) -> Fe {
     ]
 }
 
-fn add(a: &Fe, b: &Fe) -> Fe {
+pub(crate) fn add(a: &Fe, b: &Fe) -> Fe {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4]]
 }
 
 /// a - b, computed as a + 4p - b so no limb goes negative (b's limbs are below 2^53).
-fn sub(a: &Fe, b: &Fe) -> Fe {
+pub(crate) fn sub(a: &Fe, b: &Fe) -> Fe {
     const P4_0: u64 = 4 * ((1 << 51) - 19);
     const P4: u64 = 4 * MASK;
     carry([
@@ -56,7 +56,7 @@ fn carry(mut c: [u128; 5]) -> Fe {
     ]
 }
 
-fn mul(a: &Fe, b: &Fe) -> Fe {
+pub(crate) fn mul(a: &Fe, b: &Fe) -> Fe {
     let m = |x: u64, y: u64| x as u128 * y as u128;
     let (b1, b2, b3, b4) = (b[1] * 19, b[2] * 19, b[3] * 19, b[4] * 19);
     carry([
@@ -68,7 +68,7 @@ fn mul(a: &Fe, b: &Fe) -> Fe {
     ])
 }
 
-fn sq(a: &Fe) -> Fe {
+pub(crate) fn sq(a: &Fe) -> Fe {
     let m = |x: u64, y: u64| x as u128 * y as u128;
     let (d0, d1, d2, d3) = (a[0] * 2, a[1] * 2, a[2] * 2, a[3] * 2);
     let (a3_19, a4_19) = (a[3] * 19, a[4] * 19);
@@ -89,8 +89,9 @@ fn sq_n(a: &Fe, n: usize) -> Fe {
     r
 }
 
-/// z^(p-2) = 1/z, with the addition chain from the curve25519 reference code.
-fn invert(z: &Fe) -> Fe {
+/// z^(2^250 - 1) and z^11: the common start of the two chains below, from the curve25519
+/// reference code.
+fn pow250(z: &Fe) -> (Fe, Fe) {
     let z2 = sq(z);
     let z9 = mul(&sq_n(&z2, 2), z);
     let z11 = mul(&z9, &z2);
@@ -101,11 +102,21 @@ fn invert(z: &Fe) -> Fe {
     let z_50_0 = mul(&sq_n(&z_40_0, 10), &z_10_0);
     let z_100_0 = mul(&sq_n(&z_50_0, 50), &z_50_0);
     let z_200_0 = mul(&sq_n(&z_100_0, 100), &z_100_0);
-    let z_250_0 = mul(&sq_n(&z_200_0, 50), &z_50_0);
+    (mul(&sq_n(&z_200_0, 50), &z_50_0), z11)
+}
+
+/// z^(p-2) = 1/z.
+pub(crate) fn invert(z: &Fe) -> Fe {
+    let (z_250_0, z11) = pow250(z);
     mul(&sq_n(&z_250_0, 5), &z11)
 }
 
-fn to_bytes(a: &Fe) -> [u8; 32] {
+/// z^((p-5)/8) = z^(2^252 - 3), for square roots.
+pub(crate) fn pow22523(z: &Fe) -> Fe {
+    mul(&sq_n(&pow250(z).0, 2), z)
+}
+
+pub(crate) fn to_bytes(a: &Fe) -> [u8; 32] {
     let mut l = carry(a.map(u128::from));
     // Now l < 2p. Add 19: the carry out of bit 255 is 1 exactly when l >= p, and then l - p is
     // l + 19 with bit 255 dropped.
