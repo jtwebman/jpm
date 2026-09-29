@@ -13,6 +13,8 @@
 //! - `libc()`: `glibc` or `musl` on Linux, `None` elsewhere.
 //! - `exec(command)`: run a command in place of this process, returning only on failure or,
 //!   where a process cannot be replaced, with the command's exit code.
+//! - `leave_interrupts_to_children()`: while children run, Ctrl+C is theirs to act on (Windows;
+//!   unix delivers it to the whole process group).
 
 #[cfg(unix)]
 mod unix;
@@ -29,11 +31,26 @@ pub use macos::*;
 
 #[cfg(windows)]
 mod windows;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn knows_whether_a_process_is_alive() {
+        assert!(super::alive(std::process::id()));
+        let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+            .args(if cfg!(windows) { &["/c", "exit"][..] } else { &[][..] })
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!super::alive(pid));
+    }
+}
 #[cfg(windows)]
 pub use windows::*;
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-pub use unix::{alive, clone_dir, exec, links_to, read_link, symlink_dir};
+pub use unix::{alive, clone_dir, exec, leave_interrupts_to_children, links_to, read_link, symlink_dir};
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn libc() -> Option<&'static str> {
     None

@@ -131,9 +131,26 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf]) -> Command {
     command
 }
 
+/// Why the shell did not start. Windows starts no process in a directory whose path is 260
+/// characters or longer, whatever `LongPathsEnabled` says, and reports only "invalid".
+pub fn start_error(e: &std::io::Error, command: &Command) -> Error {
+    if let Some(dir) = command.get_current_dir().filter(|d| cfg!(windows) && d.as_os_str().len() >= 260) {
+        return Error::new(
+            "ENAMETOOLONG",
+            format!(
+                "cannot start the shell in {}: Windows starts no program in a directory whose path is 260 characters or longer; move the project to a shorter path",
+                dir.display()
+            ),
+        );
+    }
+    Error::io(e, "cannot start the shell")
+}
+
 /// Run to completion, sharing this process's stdio; the exit code, or 128 + a signal's number.
 pub fn wait(command: &mut Command) -> Result<i32> {
-    let status = command.status().map_err(|e| Error::io(&e, "cannot start the shell"))?;
+    crate::sys::leave_interrupts_to_children();
+    let status = command.status().map_err(|e| start_error(&e, command))?;
+
     if let Some(code) = status.code() {
         return Ok(code);
     }

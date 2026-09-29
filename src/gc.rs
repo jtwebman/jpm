@@ -49,6 +49,10 @@ fn freed(path: &Path) -> u64 {
             return 0;
         }
     }
+    #[cfg(windows)]
+    if crate::sys::file_info(path).is_some_and(|i| i.links > 1) {
+        return 0;
+    }
     meta.len()
 }
 
