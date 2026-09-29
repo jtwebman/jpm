@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use crate::error::{Error, Result};
 
 /// How deep arrays and objects may nest before the document is refused, not the stack.
-const MAX_DEPTH: usize = 512;
+const MAX_DEPTH: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Value {
@@ -762,6 +762,25 @@ fn js_number(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_deep_nesting_on_a_small_stack() {
+        // The limit, not the stack, must stop a hostile document: a quarter of the 2 MiB a pool
+        // thread gets is enough, even unoptimized.
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let ok = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+                assert!(parse(&ok).is_ok());
+                let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
+                assert!(parse(&deep).is_err());
+                let obj = "{\"a\":".repeat(100_000);
+                assert!(parse(&obj).is_err());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     fn round(text: &str) -> String {
         to_string(&parse(text).unwrap())

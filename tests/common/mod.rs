@@ -152,6 +152,7 @@ fn serve(stream: TcpStream, pkgs: &Mutex<Vec<Pkg>>, hits: &Mutex<Vec<String>>, r
         }
         let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
         let mut length = 0;
+        let mut auth = String::new();
         loop {
             let mut h = String::new();
             if reader.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
@@ -160,11 +161,15 @@ fn serve(stream: TcpStream, pkgs: &Mutex<Vec<Pkg>>, hits: &Mutex<Vec<String>>, r
             if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
                 length = v.trim().parse().unwrap_or(0);
             }
+            if h.to_ascii_lowercase().starts_with("authorization:") {
+                auth = format!(" {}", h.trim_end());
+            }
         }
         let mut body = vec![0; length];
         let _ = reader.read_exact(&mut body);
         requests.fetch_add(1, Ordering::Relaxed);
-        hits.lock().unwrap().push(path.clone());
+        // The path, then any credential it came with, for tests that check where tokens go.
+        hits.lock().unwrap().push(format!("{path}{auth}"));
         let (status, bytes) = answer(&path.replace("%2f", "/").replace("%2F", "/"), &pkgs.lock().unwrap(), base);
         let head = format!(
             "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: keep-alive\r\n\r\n",

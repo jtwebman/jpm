@@ -1430,6 +1430,22 @@ pub struct ExecOpts {
 
 /// A package's bin, as npx runs one: a local bin when the name has one, else installed into a
 /// project of its own under the exec home, one per set of versions and registries.
+/// npm's own commands (publish, login, view...), handed to the npm on PATH as they are. Never an
+/// npm from a project or its dependencies' bins, which would see the credentials these handle,
+/// and never one installed on the fly from a registry a project's .npmrc chose.
+pub fn npm(command: &str, args: &[String], dir: Option<&Path>) -> Result<i32> {
+    let npm = run::which("npm")
+        .ok_or_else(|| fail("ENOENT", format!("npm is not on PATH; jpm hands `{command}` to npm as it is")))?;
+    let mut cmd = std::process::Command::new(npm);
+    cmd.arg(command).args(args);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    // Or npm's version and init, run in a workspace, would install the tree their own way.
+    cmd.env("npm_config_workspaces_update", "false");
+    crate::sys::exec(&mut cmd).map_err(|err| Error::io(&err, "cannot start npm"))
+}
+
 pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     if e.call && !e.args.is_empty() {
         return Err(fail("EOPTION", "exec takes a call line or args, not both"));

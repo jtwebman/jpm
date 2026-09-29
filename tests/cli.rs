@@ -347,6 +347,64 @@ fn never_builds_or_prunes_through_a_committed_symlink() {
 }
 
 #[test]
+fn sends_tokens_only_where_they_belong() {
+    let r = registry();
+    let other = registry();
+    let env = Env::new(&r);
+    let host = |url: &str| url.trim_start_matches("http://").to_string();
+    // The registry is plain http here, configured so: its own token goes to it. Another host's
+    // token never does, and the scope on the other host gets only its own.
+    env.write(
+        ".npmrc",
+        &format!(
+            "//{}/:_authToken=MINE\n@s:registry={}\n//{}/npm/:_authToken=PATH-ONLY\n",
+            host(&r.url),
+            other.url,
+            host(&other.url)
+        ),
+    );
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    let hits = r.hits.lock().unwrap().clone();
+    assert!(hits.iter().any(|h| h.contains("authorization: Bearer MINE")), "{hits:?}");
+    assert!(!hits.iter().any(|h| h.contains("PATH-ONLY")), "{hits:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn hands_npm_commands_only_to_the_system_npm() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = registry();
+    let env = Env::new(&r);
+    let script = |path: &std::path::Path, body: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    // A dependency's (or the project's) npm must never see `login` or `publish`.
+    let planted = env.root.join("planted");
+    script(&env.project().join("node_modules/.bin/npm"), &format!("touch {}", planted.display()));
+    env.manifest(json!({ "name": "app", "bin": { "npm": "evil.js" } }));
+    let system = env.root.join("system-bin");
+    script(&system.join("npm"), "echo system-npm \"$@\"");
+    let path = format!("{}:/usr/bin:/bin", system.display());
+    let out = env.command(&["whoami"]).env("PATH", &path).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("system-npm whoami"), "{out:?}");
+    assert!(!planted.exists(), "a project npm ran");
+    // Without one on PATH, jpm says so rather than installing npm from the project's registry.
+    let out = env.command(&["whoami"]).env("PATH", "/usr/bin:/bin").output().unwrap();
+    assert!(
+        !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("npm is not on PATH") || which_npm(),
+        "{out:?}"
+    );
+    assert!(!planted.exists());
+}
+
+fn which_npm() -> bool {
+    ["/usr/bin/npm", "/bin/npm"].iter().any(|p| std::path::Path::new(p).exists())
+}
+
+#[test]
 fn reads_upm_lockfiles() {
     let r = registry();
     let env = Env::new(&r);

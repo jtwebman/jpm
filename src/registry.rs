@@ -54,14 +54,28 @@ pub fn base_for<'a>(base: &'a str, scopes: &'a BTreeMap<String, String>, name: &
     base
 }
 
+/// Marks, in the credentials map, a host whose registry is configured over plain http.
+pub const INSECURE: &str = "http:";
+
 /// The header a url gets from the credentials: the longest `//host/path/` prefix, walking up one
-/// segment or slash at a time as npm does.
+/// segment or slash at a time as npm does. Nothing over plain http unless that host's registry is
+/// http itself, and nothing for a path with dot segments, which the server would resolve to a
+/// path the prefix does not cover.
 pub fn auth_for(auth: &BTreeMap<String, String>, url: &str) -> Option<String> {
     if auth.is_empty() {
         return None;
     }
-    let rest = url.split_once("://")?.1;
+    let (scheme, rest) = url.split_once("://")?;
     let path_end = rest.find(['?', '#']).unwrap_or(rest.len());
+    let host = rest[..path_end].split('/').next()?;
+    if !scheme.eq_ignore_ascii_case("https") && !auth.contains_key(&format!("{INSECURE}//{host}/")) {
+        return None;
+    }
+    let path = &rest[host.len()..path_end];
+    let lower = path.to_ascii_lowercase();
+    if path.split('/').any(|s| s == "." || s == "..") || lower.contains("%2e") {
+        return None;
+    }
     let mut dart = format!("//{}", &rest[..path_end]);
     if !dart[2..].contains('/') {
         dart.push('/');
@@ -543,6 +557,15 @@ mod tests {
         assert_eq!(auth_for(&auth, "https://r.test/npm/a/-/a.tgz").as_deref(), Some("x"));
         assert_eq!(auth_for(&auth, "https://r.test/other/a"), None);
         assert_eq!(auth_for(&auth, "https://evil.test/npm/a"), None);
+        // Not over plain http, unless that host's registry is http.
+        assert_eq!(auth_for(&auth, "http://r.test/npm/a/-/a.tgz"), None);
+        let mut local = auth.clone();
+        local.insert(format!("{INSECURE}//r.test/"), String::new());
+        assert_eq!(auth_for(&local, "http://r.test/npm/a/-/a.tgz").as_deref(), Some("x"));
+        // Not for a path the server would resolve outside the prefix.
+        for url in ["https://r.test/npm/../other", "https://r.test/npm/%2e%2e/other", "https://r.test/npm/./a"] {
+            assert_eq!(auth_for(&auth, url), None, "{url}");
+        }
     }
 
     #[test]
