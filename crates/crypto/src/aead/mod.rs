@@ -50,14 +50,15 @@ impl Key {
         Self::with(alg, key, aes_hardware())
     }
 
-    /// `new`, with the choice of AES code left to the caller; the tests use it to run the
-    /// portable code on machines with AES instructions.
+    /// `new`, with the choice of code left to the caller: the CPU's AES or SIMD instructions
+    /// (`hw`) or portable code. The tests use it to run both.
     fn with(alg: Alg, key: &[u8], hw: bool) -> Option<Self> {
         if key.len() != alg.key_len() {
             return None;
         }
         if alg == Alg::ChaCha20Poly1305 {
-            return Some(Key(Inner::ChaCha(chacha::Key::new(key))));
+            let imp = if hw { chacha::Imp::best() } else { chacha::Imp::Scalar };
+            return Some(Key(Inner::ChaCha(chacha::Key::new(key, imp))));
         }
         let (mut w, nr) = soft::key_schedule(key);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -116,30 +117,43 @@ trait Gcm {
 
     /// Fold `data` into the GHASH state `y`, a final partial block padded with zeros.
     fn ghash(&self, y: &mut [u8; 16], data: &[u8]);
+
+    /// Encrypt (`seal`) or decrypt `data` from counter 2 and fold the ciphertext into `y`. The
+    /// hardware versions do both in one pass, so the AES and carry-less multiply units work
+    /// side by side.
+    fn crypt(&self, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+        if !seal {
+            self.ghash(y, data);
+        }
+        self.ctr(nonce, 2, data);
+        if seal {
+            self.ghash(y, data);
+        }
+    }
 }
 
 fn gcm_seal(g: &impl Gcm, nonce: &[u8; 12], aad: &[u8], data: &mut [u8]) -> [u8; 16] {
-    g.ctr(nonce, 2, data);
-    gcm_tag(g, nonce, aad, data)
+    gcm(g, nonce, aad, data, true)
 }
 
+/// Decrypts while it authenticates; on a bad tag, `data` is zeroed.
 fn gcm_open(g: &impl Gcm, nonce: &[u8; 12], aad: &[u8], data: &mut [u8], tag: &[u8; 16]) -> bool {
-    let ok = crate::ct_eq(&gcm_tag(g, nonce, aad, data), tag);
-    if ok {
-        g.ctr(nonce, 2, data);
+    let ok = crate::ct_eq(&gcm(g, nonce, aad, data, false), tag);
+    if !ok {
+        data.fill(0);
     }
     ok
 }
 
-/// The tag: GHASH over the padded AAD, the padded ciphertext and their lengths in bits,
-/// encrypted with counter block 1.
-fn gcm_tag(g: &impl Gcm, nonce: &[u8; 12], aad: &[u8], ct: &[u8]) -> [u8; 16] {
+/// Encrypt or decrypt `data` and return the tag: GHASH over the padded AAD, the padded
+/// ciphertext and their lengths in bits, encrypted with counter block 1.
+fn gcm(g: &impl Gcm, nonce: &[u8; 12], aad: &[u8], data: &mut [u8], seal: bool) -> [u8; 16] {
     let mut y = [0; 16];
     g.ghash(&mut y, aad);
-    g.ghash(&mut y, ct);
+    g.crypt(nonce, &mut y, data, seal);
     let mut lens = [0; 16];
     lens[..8].copy_from_slice(&((aad.len() as u64) << 3).to_be_bytes());
-    lens[8..].copy_from_slice(&((ct.len() as u64) << 3).to_be_bytes());
+    lens[8..].copy_from_slice(&((data.len() as u64) << 3).to_be_bytes());
     g.ghash(&mut y, &lens);
     g.ctr(nonce, 1, &mut y);
     y

@@ -9,7 +9,10 @@
 //! multiplies, 64 bits at a time; see `reduce`.
 //!
 //! The CTR loop encrypts eight blocks at a time to keep the AES unit busy; GHASH multiplies up to
-//! eight blocks by H^8 .. H^1 and reduces once.
+//! eight blocks by H^8 .. H^1 and reduces once. Encryption and GHASH run in one pass, one GHASH
+//! block per AES round. Where the CPU has VAES and VPCLMULQDQ, the same pass works on 256-bit
+//! registers, two blocks per instruction: that halves the instruction count, which is what
+//! limits it.
 
 use std::arch::x86_64::*;
 
@@ -24,6 +27,9 @@ pub(super) struct Gcm {
     h: [__m128i; 8],
     /// The two halves of each `h` XORed, in the low half: the Karatsuba middle operand.
     hk: [__m128i; 8],
+    /// Whether `crypt` may use VAES, VPCLMULQDQ and AVX2. The tests clear it to run the
+    /// 128-bit code.
+    pub(super) vaes: bool,
 }
 
 impl Gcm {
@@ -46,6 +52,16 @@ impl super::Gcm for Gcm {
     fn ghash(&self, y: &mut [u8; 16], data: &[u8]) {
         // SAFETY: as above.
         unsafe { ghash(self, y, data) }
+    }
+
+    fn crypt(&self, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+        if self.vaes {
+            // SAFETY: `vaes` is only set once the CPU showed VAES, VPCLMULQDQ and AVX2.
+            unsafe { crypt_vaes(self, nonce, y, data, seal) }
+        } else {
+            // SAFETY: as above.
+            unsafe { crypt(self, nonce, y, data, seal) }
+        }
     }
 }
 
@@ -80,7 +96,9 @@ fn init(w: &[u32; 60], nr: usize) -> Gcm {
         }
         *k = load(&b);
     }
-    let mut g = Gcm { rk, nr, h: [z; 8], hk: [z; 8] };
+    let vaes =
+        is_x86_feature_detected!("vaes") && is_x86_feature_detected!("vpclmulqdq") && is_x86_feature_detected!("avx2");
+    let mut g = Gcm { rk, nr, h: [z; 8], hk: [z; 8], vaes };
 
     let mut e0 = [z];
     aes(&g.rk[..=nr], &mut e0);
@@ -132,18 +150,28 @@ fn aes<const N: usize>(rk: &[__m128i], b: &mut [__m128i; N]) {
     }
 }
 
+/// The counter block `nonce || ctr`, given `base` = `nonce || 0`.
+#[target_feature(enable = "aes,pclmulqdq,ssse3")]
+fn counter(base: __m128i, ctr: u32) -> __m128i {
+    _mm_xor_si128(base, _mm_set_epi32(ctr.swap_bytes() as i32, 0, 0, 0))
+}
+
+fn base(nonce: &[u8; 12]) -> __m128i {
+    let mut n = [0; 16];
+    n[..12].copy_from_slice(nonce);
+    load(&n)
+}
+
 #[target_feature(enable = "aes,pclmulqdq,ssse3")]
 fn ctr8(g: &Gcm, nonce: &[u8; 12], ctr: u32, data: &mut [u8]) {
     let rk = &g.rk[..=g.nr];
-    let mut n = [0; 16];
-    n[..12].copy_from_slice(nonce);
-    let base = load(&n);
+    let base = base(nonce);
     let mut ctr = ctr;
     let (groups, rest) = data.as_chunks_mut::<128>();
     for group in groups {
         let mut b = [base; 8];
         for x in &mut b {
-            *x = _mm_xor_si128(*x, _mm_set_epi32(ctr.swap_bytes() as i32, 0, 0, 0));
+            *x = counter(base, ctr);
             ctr = ctr.wrapping_add(1);
         }
         aes(rk, &mut b);
@@ -152,7 +180,7 @@ fn ctr8(g: &Gcm, nonce: &[u8; 12], ctr: u32, data: &mut [u8]) {
         }
     }
     for chunk in rest.chunks_mut(16) {
-        let mut b = [_mm_xor_si128(base, _mm_set_epi32(ctr.swap_bytes() as i32, 0, 0, 0))];
+        let mut b = [counter(base, ctr)];
         ctr = ctr.wrapping_add(1);
         aes(rk, &mut b);
         let mut t = [0; 16];
@@ -165,7 +193,13 @@ fn ctr8(g: &Gcm, nonce: &[u8; 12], ctr: u32, data: &mut [u8]) {
 
 #[target_feature(enable = "aes,pclmulqdq,ssse3")]
 fn ghash(g: &Gcm, y: &mut [u8; 16], data: &[u8]) {
-    let mut acc = bswap(load(y));
+    store(y, bswap(ghash_acc(g, bswap(load(y)), data)));
+}
+
+#[target_feature(enable = "aes,pclmulqdq,ssse3")]
+#[inline]
+fn ghash_acc(g: &Gcm, acc: __m128i, data: &[u8]) -> __m128i {
+    let mut acc = acc;
     let (groups, rest) = data.as_chunks::<128>();
     for group in groups {
         acc = mul_add(g, acc, group.as_chunks::<16>().0);
@@ -175,7 +209,194 @@ fn ghash(g: &Gcm, y: &mut [u8; 16], data: &[u8]) {
         t[..rest.len()].copy_from_slice(rest);
         acc = mul_add(g, acc, &t.as_chunks::<16>().0[..rest.len().div_ceil(16)]);
     }
+    acc
+}
+
+/// CTR and GHASH in one pass, eight blocks at a time. Opening, GHASH takes each group of
+/// ciphertext before it is decrypted; sealing, it takes the group encrypted one round before,
+/// so either way the AES of one group and the GHASH of another are independent and overlap.
+#[target_feature(enable = "aes,pclmulqdq,ssse3")]
+fn crypt(g: &Gcm, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+    let rk = &g.rk[..=g.nr];
+    let base = base(nonce);
+    let mut ctr = 2u32;
+    let mut acc = bswap(load(y));
+    let (groups, rest) = data.as_chunks_mut::<128>();
+    for i in 0..groups.len() {
+        let mut b = [base; 8];
+        for x in &mut b {
+            *x = counter(base, ctr);
+            ctr = ctr.wrapping_add(1);
+        }
+        if !seal {
+            acc = aes_ghash(g, rk, &mut b, acc, groups[i].as_chunks::<16>().0.try_into().unwrap());
+        } else if i > 0 {
+            acc = aes_ghash(g, rk, &mut b, acc, groups[i - 1].as_chunks::<16>().0.try_into().unwrap());
+        } else {
+            aes(rk, &mut b);
+        }
+        for (d, k) in groups[i].as_chunks_mut::<16>().0.iter_mut().zip(b) {
+            store(d, _mm_xor_si128(load(d), k));
+        }
+    }
+    if seal && let Some(last) = groups.last() {
+        acc = mul_add(g, acc, last.as_chunks::<16>().0);
+    }
+    if !seal {
+        acc = ghash_acc(g, acc, rest);
+    }
+    ctr8(g, nonce, ctr, rest);
+    if seal {
+        acc = ghash_acc(g, acc, rest);
+    }
     store(y, bswap(acc));
+}
+
+/// Encrypt eight blocks and fold eight others into `acc`, one GHASH block in each AES round
+/// (there are at least nine) so the two instruction streams interleave.
+#[target_feature(enable = "aes,pclmulqdq,ssse3")]
+#[inline]
+fn aes_ghash(g: &Gcm, rk: &[__m128i], b: &mut [__m128i; 8], acc: __m128i, blocks: &[[u8; 16]; 8]) -> __m128i {
+    let (first, rest) = rk.split_first().unwrap();
+    let (last, mid) = rest.split_last().unwrap();
+    for x in b.iter_mut() {
+        *x = _mm_xor_si128(*x, *first);
+    }
+    let (mut lo, mut hi, mut md) = (_mm_setzero_si128(), _mm_setzero_si128(), _mm_setzero_si128());
+    for (r, k) in mid.iter().enumerate() {
+        for x in b.iter_mut() {
+            *x = _mm_aesenc_si128(*x, *k);
+        }
+        if r < 8 {
+            let mut x = bswap(load(&blocks[r]));
+            if r == 0 {
+                x = _mm_xor_si128(x, acc);
+            }
+            let (h, hk) = (g.h[7 - r], g.hk[7 - r]);
+            lo = _mm_xor_si128(lo, _mm_clmulepi64_si128(x, h, 0x00));
+            hi = _mm_xor_si128(hi, _mm_clmulepi64_si128(x, h, 0x11));
+            md = _mm_xor_si128(md, _mm_clmulepi64_si128(fold(x), hk, 0x00));
+        }
+    }
+    for x in b.iter_mut() {
+        *x = _mm_aesenclast_si128(*x, *last);
+    }
+    reduce(lo, hi, md)
+}
+
+/// `crypt` on 256-bit registers: each holds two blocks.
+#[target_feature(enable = "aes,pclmulqdq,ssse3,avx2,vaes,vpclmulqdq")]
+fn crypt_vaes(g: &Gcm, nonce: &[u8; 12], y: &mut [u8; 16], data: &mut [u8], seal: bool) {
+    let mut rk = [_mm256_setzero_si256(); 15];
+    for (r, k) in rk.iter_mut().zip(&g.rk[..=g.nr]) {
+        *r = _mm256_broadcastsi128_si256(*k);
+    }
+    let rk = &rk[..=g.nr];
+    // Block 2j in the low half and 2j + 1 in the high half meet H^(8-2j) and H^(7-2j).
+    let mut h = [_mm256_setzero_si256(); 4];
+    let mut hk = h;
+    for j in 0..4 {
+        h[j] = _mm256_set_m128i(g.h[6 - 2 * j], g.h[7 - 2 * j]);
+        hk[j] = _mm256_set_m128i(g.hk[6 - 2 * j], g.hk[7 - 2 * j]);
+    }
+    let base = _mm256_broadcastsi128_si256(base(nonce));
+    // Counters as little-endian words in the last lane of each half, byte-swapped into place.
+    let mut ctr = _mm256_set_epi32(3, 0, 0, 0, 2, 0, 0, 0);
+    let two = _mm256_set_epi32(2, 0, 0, 0, 2, 0, 0, 0);
+    #[rustfmt::skip]
+    let swap = _mm256_set_epi8(
+        12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    );
+    let mut acc = bswap(load(y));
+    let (groups, rest) = data.as_chunks_mut::<128>();
+    for i in 0..groups.len() {
+        let mut b = [base; 4];
+        for x in &mut b {
+            *x = _mm256_xor_si256(base, _mm256_shuffle_epi8(ctr, swap));
+            ctr = _mm256_add_epi32(ctr, two);
+        }
+        let prev = match (seal, i) {
+            (false, _) => Some(&groups[i]),
+            (true, 0) => None,
+            (true, _) => Some(&groups[i - 1]),
+        };
+        acc = aes_ghash_vaes(rk, &mut b, acc, prev.map(|p| p.as_chunks::<32>().0.try_into().unwrap()), &h, &hk);
+        for (d, k) in groups[i].as_chunks_mut::<32>().0.iter_mut().zip(b) {
+            store256(d, _mm256_xor_si256(load256(d), k));
+        }
+    }
+    if seal && let Some(last) = groups.last() {
+        acc = mul_add(g, acc, last.as_chunks::<16>().0);
+    }
+    if !seal {
+        acc = ghash_acc(g, acc, rest);
+    }
+    ctr8(g, nonce, 2u32.wrapping_add(8 * groups.len() as u32), rest);
+    if seal {
+        acc = ghash_acc(g, acc, rest);
+    }
+    store(y, bswap(acc));
+}
+
+fn load256(b: &[u8; 32]) -> __m256i {
+    // SAFETY: an unaligned 32-byte read from a 32-byte array; only called from AVX2 code.
+    unsafe { _mm256_loadu_si256(b.as_ptr().cast()) }
+}
+
+fn store256(b: &mut [u8; 32], v: __m256i) {
+    // SAFETY: an unaligned 32-byte write to a 32-byte array; only called from AVX2 code.
+    unsafe { _mm256_storeu_si256(b.as_mut_ptr().cast(), v) }
+}
+
+/// Encrypt eight blocks in four registers and fold eight others (if any) into `acc`, one pair
+/// of GHASH blocks in each of the first four AES rounds.
+#[target_feature(enable = "aes,pclmulqdq,ssse3,avx2,vaes,vpclmulqdq")]
+#[inline]
+fn aes_ghash_vaes(
+    rk: &[__m256i],
+    b: &mut [__m256i; 4],
+    acc: __m128i,
+    blocks: Option<&[[u8; 32]; 4]>,
+    h: &[__m256i; 4],
+    hk: &[__m256i; 4],
+) -> __m128i {
+    let (first, rest) = rk.split_first().unwrap();
+    let (last, mid) = rest.split_last().unwrap();
+    for x in b.iter_mut() {
+        *x = _mm256_xor_si256(*x, *first);
+    }
+    #[rustfmt::skip]
+    let rev = _mm256_set_epi8(
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    );
+    let (mut lo, mut hi, mut md) = (_mm256_setzero_si256(), _mm256_setzero_si256(), _mm256_setzero_si256());
+    for (r, k) in mid.iter().enumerate() {
+        for x in b.iter_mut() {
+            *x = _mm256_aesenc_epi128(*x, *k);
+        }
+        if let Some(blocks) = blocks
+            && r < 4
+        {
+            let mut x = _mm256_shuffle_epi8(load256(&blocks[r]), rev);
+            if r == 0 {
+                x = _mm256_xor_si256(x, _mm256_set_m128i(_mm_setzero_si128(), acc));
+            }
+            lo = _mm256_xor_si256(lo, _mm256_clmulepi64_epi128(x, h[r], 0x00));
+            hi = _mm256_xor_si256(hi, _mm256_clmulepi64_epi128(x, h[r], 0x11));
+            let f = _mm256_xor_si256(x, _mm256_shuffle_epi32(x, 0x4e));
+            md = _mm256_xor_si256(md, _mm256_clmulepi64_epi128(f, hk[r], 0x00));
+        }
+    }
+    for x in b.iter_mut() {
+        *x = _mm256_aesenclast_epi128(*x, *last);
+    }
+    if blocks.is_none() {
+        return acc;
+    }
+    let halves = |v: __m256i| _mm_xor_si128(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
+    reduce(halves(lo), halves(hi), halves(md))
 }
 
 /// Fold up to eight blocks into `acc`: (acc + b[0]) H^n + b[1] H^(n-1) + ... + b[n-1] H, with the
