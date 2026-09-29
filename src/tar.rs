@@ -10,6 +10,10 @@ const BLOCK: usize = 512;
 /// Ceilings, so a 1 MB tarball cannot declare a 1 GB entry and exhaust the disk or memory.
 const MAX_ENTRY: u64 = 512 * 1024 * 1024;
 pub const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
+/// A pax header, long name or package.json is read into memory whole.
+pub const MAX_META: u64 = 1024 * 1024;
+/// Files per package: far above any real one, far below what fills a disk with inodes.
+const MAX_FILES: usize = 200_000;
 
 fn bad(message: impl Into<String>) -> Error {
     Error::new("EBADTAR", message)
@@ -17,10 +21,16 @@ fn bad(message: impl Into<String>) -> Error {
 
 /// Read every regular file, calling `each(path, mode, size, bytes)`. `each` must read exactly
 /// `size` bytes, or the rest are skipped for it. The first path component is stripped.
-pub fn read_entries(
+pub fn read_entries(input: impl Read, each: impl FnMut(&str, u32, u64, &mut dyn Read) -> Result<()>) -> Result<()> {
+    read_limited(input, MAX_FILES, each)
+}
+
+fn read_limited(
     mut input: impl Read,
+    max_files: usize,
     mut each: impl FnMut(&str, u32, u64, &mut dyn Read) -> Result<()>,
 ) -> Result<()> {
+    let mut files = 0;
     let mut global: BTreeMap<String, String> = BTreeMap::new();
     let mut next: BTreeMap<String, String> = BTreeMap::new();
     let mut long_name = String::new();
@@ -50,6 +60,9 @@ pub fn read_entries(
         if size > MAX_ENTRY {
             return Err(bad(format!("Tar entry {} declares {size} bytes", name(&header))));
         }
+        if meta_kind && size > MAX_META {
+            return Err(bad(format!("Tar header entry of {size} bytes")));
+        }
         if meta_kind {
             let mut data = vec![0u8; size as usize];
             input.read_exact(&mut data).map_err(|_| bad("Unexpected end of tar archive"))?;
@@ -71,6 +84,10 @@ pub fn read_entries(
         let path = if regular { safe_path(&raw) } else { None };
         let mut body = (&mut input).take(size);
         if let Some(path) = path {
+            files += 1;
+            if files > max_files {
+                return Err(bad(format!("Tarball has more than {max_files} files")));
+            }
             each(&path, num(&header[100..108]) as u32, size, &mut body)?;
         }
         // Whatever `each` left, and the padding.
@@ -109,25 +126,25 @@ fn padded(size: u64) -> u64 {
     size.div_ceil(BLOCK as u64) * BLOCK as u64
 }
 
-/// Strip the first component and refuse traversal, absolute paths and drive letters.
+/// Strip the first component, then keep the path only when every part is a plain name.
 pub fn safe_path(raw: &str) -> Option<String> {
-    if raw.is_empty() || raw.contains(['\0', '\n', '\r']) {
-        return None;
-    }
-    let b = raw.as_bytes();
-    if b.len() > 1 && b[1] == b':' && b[0].is_ascii_alphabetic() {
-        return None;
-    }
     let normalized = raw.replace('\\', "/");
-    if normalized.starts_with('/') {
+    if normalized.starts_with('/') || raw.contains(':') {
         return None;
     }
-    let parts: Vec<&str> = normalized.split('/').collect();
-    if parts.contains(&"..") {
-        return None;
-    }
-    let kept: Vec<&str> = parts.into_iter().filter(|p| !p.is_empty() && *p != ".").collect();
-    (kept.len() > 1).then(|| kept[1..].join("/"))
+    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    let path = parts.get(1..)?.join("/");
+    plain(&path).then_some(path)
+}
+
+/// A relative `/`-separated path that stays where it is joined on every OS: no empty, `.` or
+/// `..` part, no NUL or line breaks, and no `:` (a drive letter or an alternate data stream on
+/// Windows, where `C:/x` joined onto a directory replaces it). Windows also drops trailing dots
+/// and spaces from a name, so a part may not end in one, or be only dots and spaces.
+pub fn plain(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(['\0', '\n', '\r', ':', '\\'])
+        && path.split('/').all(|p| !p.is_empty() && !p.ends_with(['.', ' ']) && p != "..")
 }
 
 fn name(header: &[u8]) -> String {
@@ -214,6 +231,53 @@ pub mod tests {
         })
         .unwrap();
         out
+    }
+
+    #[test]
+    fn bounds_what_it_holds() {
+        // A pax header over the cap is refused before it is read into memory.
+        let mut pax = build(&[("package/x", 0o644, b"x")]);
+        pax[156] = b'x';
+        let big = format!("{:011o}\0", MAX_META + 1);
+        pax[124..136].copy_from_slice(big.as_bytes());
+        let sum: u32 =
+            pax[..512].iter().enumerate().map(|(i, b)| if (148..156).contains(&i) { 32 } else { u32::from(*b) }).sum();
+        pax[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        assert!(read_entries(pax.as_slice(), |_, _, _, _| Ok(())).unwrap_err().message.contains("header entry"));
+        // So are more files than the limit.
+        let four = build(&[
+            ("package/a", 0o644, b""),
+            ("package/b", 0o644, b""),
+            ("package/c", 0o644, b""),
+            ("package/d", 0o644, b""),
+        ]);
+        assert!(
+            read_limited(four.as_slice(), 3, |_, _, _, _| Ok(())).unwrap_err().message.contains("more than 3 files")
+        );
+        assert!(read_limited(four.as_slice(), 4, |_, _, _, _| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn keeps_only_plain_paths() {
+        for ok in ["package/index.js", "package/.github/x.yml", "package/a/b/c.d.ts", "../package/x"] {
+            assert!(safe_path(ok).is_some(), "{ok}");
+        }
+        for bad in [
+            "package/C:/Users/x",
+            "package/C:x",
+            "package/a/../b",
+            "package\\a\\..\\..\\b",
+            "/abs/x",
+            "package/.../x",
+            "package/x. ",
+            "package/x.",
+            "package/a:stream",
+            "package/nul\0x",
+            "package",
+            "",
+        ] {
+            assert_eq!(safe_path(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

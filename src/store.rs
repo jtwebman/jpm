@@ -55,7 +55,7 @@ impl Index {
                 let (flag, rest) = line.split_once(' ')?;
                 let (size, path) = rest.split_once(' ')?;
                 // The linker joins it under the entry, so it must never climb out.
-                if path.is_empty() || path.starts_with('/') || path.split('/').any(|p| p == ".." || p.is_empty()) {
+                if !crate::tar::plain(path) {
                     return None;
                 }
                 Some(FileEntry { path: path.to_string(), size: size.parse().ok()?, exec: flag == "x" })
@@ -251,7 +251,13 @@ impl Store {
             } else {
                 extract(&mut input, &temp)
             };
-            let drained = io::copy(&mut input, &mut io::sink());
+            // The rest still counts toward the hash; a source that never ends is refused.
+            let drained = io::copy(&mut (&mut input).take(crate::tar::MAX_ARCHIVE), &mut io::sink()).and_then(|_| {
+                match input.read(&mut [0u8; 1])? {
+                    0 => Ok(()),
+                    _ => Err(io::Error::other("tarball larger than 1 GiB")),
+                }
+            });
             if let Some(dropped) = input.failed.take() {
                 remove_tree(&temp);
                 last = Some(dropped);
@@ -360,22 +366,26 @@ pub fn remove_tree(dir: &Path) {
     if fs::remove_dir_all(dir).is_ok() || !dir.exists() {
         return;
     }
-    // Windows will not delete a read-only file; unix needs write access to each directory.
-    fn writable(p: &Path) {
-        if let Ok(meta) = fs::symlink_metadata(p) {
-            let mut perm = meta.permissions();
-            #[allow(clippy::permissions_set_readonly_false)]
-            perm.set_readonly(false);
-            let _ = fs::set_permissions(p, perm);
-            if meta.is_dir() {
-                for e in fs::read_dir(p).into_iter().flatten().flatten() {
-                    writable(&e.path());
-                }
+    writable(dir);
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Windows will not delete a read-only file; unix needs write access to each directory. A
+/// symlink is left alone: setting its permissions would set its target's.
+fn writable(p: &Path) {
+    if let Ok(meta) = fs::symlink_metadata(p)
+        && !meta.file_type().is_symlink()
+    {
+        let mut perm = meta.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        let _ = fs::set_permissions(p, perm);
+        if meta.is_dir() {
+            for e in fs::read_dir(p).into_iter().flatten().flatten() {
+                writable(&e.path());
             }
         }
     }
-    writable(dir);
-    let _ = fs::remove_dir_all(dir);
 }
 
 /// Gunzip (when gzipped) and write every regular file under `dest`, read-only, the
@@ -406,6 +416,9 @@ pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
         }
         let mut out = create(&file, exec).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
         if path == "package.json" {
+            if size > crate::tar::MAX_META {
+                return Err(Error::new("EBADTAR", format!("package.json of {size} bytes")));
+            }
             let mut data = Vec::with_capacity(size as usize);
             body.read_to_end(&mut data).map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
             out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
@@ -498,6 +511,30 @@ fn make_writable(file: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 pub mod tests {
+    #[test]
+    fn refuses_index_paths_that_leave_the_entry() {
+        for bad in ["C:/x", "a/../b", "a:stream", "/abs", "a/./b", "a\\b", "x."] {
+            assert!(super::Index::parse(&format!("jpm-index 1 1\n- 1 {bad}\n")).is_none(), "{bad}");
+        }
+        assert!(super::Index::parse("jpm-index 1 1\n- 1 lib/ok.js\n").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_tree_never_changes_a_link_target() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("rt-link");
+        let outside = root.join("outside");
+        fs::write(&outside, "x").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o600)).unwrap();
+        let tree = root.join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("link")).unwrap();
+        super::writable(&tree);
+        assert_eq!(fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o600);
+        super::remove_tree(&root);
+    }
+
     use super::*;
     use crate::integrity::sha512;
     use crate::tar::tests::build;

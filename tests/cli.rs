@@ -319,6 +319,33 @@ fn prunes_what_no_project_uses() {
     assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
 }
 
+#[cfg(unix)]
+#[test]
+fn never_builds_or_prunes_through_a_committed_symlink() {
+    let r = registry();
+    let env = Env::new(&r);
+    // A repo can commit node_modules/.jpm, or node_modules itself, as a link to anywhere.
+    let victim = env.root.join("victim");
+    std::fs::create_dir_all(victim.join("precious@1.0.0-aaaaaaaaaaaaaaaaaaaaaa")).unwrap();
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    for link in ["node_modules/.jpm", "node_modules"] {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        let at = env.project().join(link);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&victim, &at).unwrap();
+        env.write(
+            "node_modules/.jpm.json",
+            r#"{"version":1,"hash":"x","entries":[],"complete":true,"store":"/nowhere"}"#,
+        );
+        let out = env.jpm(&["install", "--no-global-store"]);
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && text.contains("leads outside the project"), "{link}: {text}");
+        env.ok(&["prune"]);
+        assert!(victim.join("precious@1.0.0-aaaaaaaaaaaaaaaaaaaaaa").exists(), "{link}: prune emptied the target");
+        std::fs::remove_file(&at).unwrap();
+    }
+}
+
 #[test]
 fn reads_upm_lockfiles() {
     let r = registry();
