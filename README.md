@@ -25,6 +25,7 @@ another directory. Each platform has its own build:
 | ------------- | ----------------------- | ---------------------------- |
 | Linux x64     | `jpm-linux-x64`         | `x86_64-unknown-linux-musl`  |
 | Linux arm64   | `jpm-linux-arm64`       | `aarch64-unknown-linux-musl` |
+| Linux armv7   | `jpm-linux-armv7`       | `armv7-unknown-linux-musleabihf` |
 | macOS x64     | `jpm-darwin-x64`        | `x86_64-apple-darwin`        |
 | macOS arm64   | `jpm-darwin-arm64`      | `aarch64-apple-darwin`       |
 | Windows x64   | `jpm-windows-x64.exe`   | `x86_64-pc-windows-msvc`     |

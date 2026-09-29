@@ -14,6 +14,7 @@ esac
 case "$(uname -m)" in
   x86_64 | amd64) cpu=x64 ;;
   arm64 | aarch64) cpu=arm64 ;;
+  armv7l | armv8l) cpu=armv7 ;;
   *) echo "jpm: no build for $(uname -m)" >&2; exit 1 ;;
 esac
 # A shell under Rosetta reports x86_64 on an arm64 Mac: take the native build.
