@@ -309,6 +309,11 @@ impl Store {
         self.root.join("tmp")
     }
 
+    /// The global virtual store: package entries with their dependency links, shared by projects.
+    pub fn links_dir(&self) -> PathBuf {
+        self.root.join("links")
+    }
+
     pub fn pkg_root(&self) -> PathBuf {
         self.root.join("pkg")
     }

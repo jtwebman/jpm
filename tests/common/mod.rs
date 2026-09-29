@@ -130,8 +130,11 @@ impl Registry {
         Self { url, pkgs, hits, requests }
     }
 
+    /// Adds a version, or replaces one already published.
     pub fn publish(&self, p: Pkg) {
-        self.pkgs.lock().unwrap().push(p);
+        let mut pkgs = self.pkgs.lock().unwrap();
+        pkgs.retain(|old| (&old.name, &old.version) != (&p.name, &p.version));
+        pkgs.push(p);
     }
 
     pub fn hit_count(&self, needle: &str) -> usize {
@@ -271,6 +274,7 @@ impl Env {
             .env("npm_config_min_release_age", "0")
             .env("NO_COLOR", "1")
             .env("JPM_NODE_VERSION", "22.0.0")
+            .env_remove("JPM_GLOBAL_STORE")
             .env_remove("npm_config_userconfig");
         c
     }

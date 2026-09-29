@@ -63,6 +63,8 @@ Options
   -s, --silent         no progress, run banner or install summary (also -q, --loglevel)
   --store <dir>        package store directory (default: JPM_STORE or ~/.jpm/store)
   --verify             install: check sizes, links, bins and peers, not file contents
+  --no-global-store    install: build package entries in the project, not once in the store
+                       (also global-store=false in .npmrc or JPM_GLOBAL_STORE=0)
   -w, --workspace <name|path>
                        add, remove, run: select workspaces (repeatable; parent paths work)
   --workspaces         run: select all workspaces
@@ -130,6 +132,7 @@ struct Cli {
     quiet: bool,
     offline: bool,
     prefer_offline: bool,
+    global_store: Option<bool>,
 }
 
 const COMMANDS: [&str; 10] = ["install", "add", "remove", "dedupe", "resolve", "fetch", "lock", "prune", "run", "exec"];
@@ -260,6 +263,8 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--lock" => cli.lock = true,
             "--offline" => cli.offline = true,
             "--prefer-offline" => cli.prefer_offline = true,
+            "--global-store" => cli.global_store = Some(true),
+            "--no-global-store" => cli.global_store = Some(false),
             "--frozen-lockfile" => cli.frozen = true,
             "--verify" => cli.verify = true,
             "--dev" | "-D" | "--save-dev" => cli.dev = true,
@@ -433,6 +438,7 @@ fn opts(cli: &Cli) -> Opts {
             min_release_age_exclude: cli.exclude.clone(),
             offline: cli.offline.then_some(true),
             prefer_offline: cli.prefer_offline.then_some(true),
+            global_store: cli.global_store,
         },
         store: cli.store.as_ref().map(PathBuf::from),
         production: cli.production,
