@@ -20,8 +20,8 @@ fixture, lifecycle scripts off, and no telemetry or update checks. jpm is built 
 
 Every run measures the latest release of each manager. Before timing, the jpm just built
 installs the newest npm, pnpm, yarn (berry), upm, bun and deno from the npm registry into
-the work dir's `tools/`, with no minimum release age, so a version published minutes ago
-is used. aube comes from its latest GitHub release. pnpm, bun and deno run as their native
+the work dir's `tools/`. jpm's minimum release age applies, so a version published less
+than a day ago is not used yet. aube comes from its newest GitHub release that is at least a day old. pnpm, bun and deno run as their native
 binaries, not through the packages' Node launchers.
 
 `--installed` measures the managers on `PATH` instead, and `--bin name=path` names one
