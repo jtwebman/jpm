@@ -143,6 +143,8 @@ pub struct Package {
     pub scripts: bool,
     /// Its install scripts are approved at this version (`jpm approve`).
     pub build: bool,
+    /// The sha256 of the patch applied to its files.
+    pub patch: Option<String>,
 }
 
 impl Package {

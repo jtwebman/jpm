@@ -47,6 +47,8 @@ pub struct LockEntry {
     /// Its install scripts are approved at this version, and run when the package.json trusts
     /// its name too.
     pub build: bool,
+    /// The sha256 of the patch applied to it.
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -134,6 +136,9 @@ impl LockEntry {
         }
         if self.build {
             o.insert("build", true.into());
+        }
+        if let Some(h) = &self.patch {
+            o.insert("patch", h.into());
         }
         o.into()
     }
@@ -255,6 +260,7 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
                 subgraph: keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string),
                 scripts: p.scripts,
                 build: p.build,
+                patch: p.patch.clone(),
             },
         );
     }
@@ -322,6 +328,7 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             peers: (!e.peers.is_empty()).then_some(e.peers),
             scripts: e.scripts,
             build: e.build,
+            patch: e.patch,
             ..Package::default()
         };
         packages.insert(key, package);
@@ -511,6 +518,9 @@ fn text_body(lock: &Lockfile) -> String {
                 line(&mut out, true, word, &[]);
             }
         }
+        if let Some(h) = &e.patch {
+            line(&mut out, true, "patch", &[h]);
+        }
     }
     out
 }
@@ -669,6 +679,7 @@ fn parse_text(text: &str) -> Result<Lockfile> {
                 "libc" => e.libc = t[1..].iter().map(|v| v.to_string()).collect(),
                 "scripts" if t.len() == 1 => e.scripts = true,
                 "build" if t.len() == 1 => e.build = true,
+                "patch" => e.patch = Some(arg(1)?),
                 _ => edge(
                     word,
                     &t,
@@ -782,16 +793,44 @@ pub fn read_lockfile(dir: &Path) -> Result<Option<(Lockfile, &'static str)>> {
     }
 }
 
-/// Write `jpm.lock`; the lock then carries the hash of what was written.
-pub fn write_lockfile(dir: &Path, lock: &mut Lockfile) -> Result<()> {
-    lock.lockfile_version = TEXT_VERSION;
-    // Brought over from a format without them: the subgraphs are hashed once, here.
+/// Brought over from a format without them, or changed: the subgraphs are hashed once, here.
+fn fill_subgraphs(lock: &mut Lockfile) {
     if lock.packages.iter().any(|(k, e)| e.subgraph.is_none() && !is_link(k)) {
         let keys = crate::keys::store_keys(&from_lockfile(lock, &|_| String::new()).packages);
         for (key, e) in &mut lock.packages {
             e.subgraph = keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string);
         }
     }
+}
+
+/// Mark each package the project's patches apply to. Whether that changed anything: then the
+/// subgraphs are hashed again, and the file no longer has the content it was read with.
+pub fn mark_patches(lock: &mut Lockfile, patches: &[crate::patch::Patch]) -> Result<bool> {
+    let packages = lock.packages.iter().filter(|(k, _)| !is_link(k)).filter_map(|(k, e)| {
+        let (name, tail) = split_key(k)?;
+        Some((k.as_str(), name, e.version.as_deref().unwrap_or(tail)))
+    });
+    let chosen = crate::patch::select(patches, packages)?;
+    let mut changed = false;
+    for (key, e) in &mut lock.packages {
+        let want = chosen.get(key);
+        if e.patch.as_ref() != want {
+            e.patch = want.cloned();
+            changed = true;
+        }
+    }
+    if changed {
+        lock.hash = None;
+        lock.packages.values_mut().for_each(|e| e.subgraph = None);
+        fill_subgraphs(lock);
+    }
+    Ok(changed)
+}
+
+/// Write `jpm.lock`; the lock then carries the hash of what was written.
+pub fn write_lockfile(dir: &Path, lock: &mut Lockfile) -> Result<()> {
+    lock.lockfile_version = TEXT_VERSION;
+    fill_subgraphs(lock);
     let text = format_lockfile(lock)?;
     write_atomic(&dir.join(LOCKFILE), text.as_bytes())?;
     lock.hash = parse_text(&text)?.hash;
@@ -872,6 +911,9 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         }
         if e.integrity.is_empty() {
             return Err(fail(format!("{at}.integrity must be a non-empty string")));
+        }
+        if e.patch.as_ref().is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
+            return Err(fail(format!("{at}.patch is not a sha256")));
         }
         if e.build && !e.scripts {
             return Err(fail(format!("{at} approves install scripts it does not have")));

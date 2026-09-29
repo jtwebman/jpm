@@ -65,6 +65,8 @@ pub struct Options<'a> {
     /// lockfile and root manifest alone (no workspaces).
     pub inputs: Option<Inputs>,
     pub tarballs: Option<BTreeMap<String, Option<Stamp>>>,
+    /// The project's patches, found by their hash.
+    pub patches: &'a [crate::patch::Patch],
 }
 
 #[derive(Debug, Default, Clone)]
@@ -488,8 +490,9 @@ impl Linker<'_> {
         let nm = self.root_of(entry).join(&entry.key).join("node_modules");
         let pkg_dir = nm.join(&entry.pkg.name);
         let index = self.index(entry)?;
-        // A built package's files are its scripts' to change.
+        // A built package's files are its scripts' to change, a patched one's are not the store's.
         if !entry.build
+            && entry.pkg.patch.is_none()
             && !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| m.len() == f.size))
         {
             return Ok(false);
@@ -529,6 +532,19 @@ impl Linker<'_> {
             Counts::add(&self.counts.cloned, 1);
         } else {
             self.place_files(&*self.index(entry)?, &src, &pkg_dir, entry.build)?;
+        }
+        if let Some(hash) = &pkg.patch {
+            let patch = self.opts.patches.iter().find(|p| p.hash == *hash).ok_or_else(|| {
+                Error::new(
+                    "EPATCH",
+                    format!("{}@{} is patched, and no patch of the project has its hash", pkg.name, pkg.version),
+                )
+            })?;
+            let file = self.opts.dir.join(&patch.path);
+            let text = fs::read(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
+            crate::patch::apply(&pkg_dir, &text, entry.shared && !entry.build).map_err(|why| {
+                Error::new("EPATCH", format!("{} does not apply to {}@{}: {why}", patch.path, pkg.name, pkg.version))
+            })?;
         }
         let deps = self.deps_of(pkg)?;
         let own_scope = pkg.name.split_once('/').map(|(s, _)| s);

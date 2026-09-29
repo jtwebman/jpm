@@ -60,6 +60,8 @@ struct Source {
     root: Deps,
     /// The overrides the file was resolved under, where it records them (bun).
     overrides: Option<Value>,
+    /// `patchedDependencies`: pnpm's key -> `{ path, hash }` or hash, bun's key -> path.
+    patches: Value,
 }
 
 /// What an edge finds: a version, a copy inside the parent's tarball, or nothing from a registry.
@@ -235,11 +237,20 @@ fn fail(message: impl Into<String>) -> Error {
 /// like npm without a consumer, does not install.
 fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<()> {
     let doc = &manifest.doc;
-    let pnpm = doc.get("pnpm").and_then(|p| p.get("patchedDependencies"));
-    if truthy(doc.get("patchedDependencies")) || truthy(pnpm) {
-        return Err(fail("jpm does not apply the patches package.json names"));
-    }
     let stale = || fail(format!("{file} is out of date with package.json"));
+    // pnpm and bun write down the patches they applied; npm knows none.
+    let path = |p: &str| p.trim_start_matches("./").to_string();
+    let patched = |p: &crate::patch::Patch| {
+        let v = source.patches.get(&p.selector()).map(|v| v.get("path").unwrap_or(v)).and_then(Value::as_str);
+        v.is_some_and(|v| path(v) == path(&p.path) || v == p.hash)
+    };
+    let recorded = source.patches.as_object().map_or(0, |o| o.len());
+    if file != "package-lock.json"
+        && file != "npm-shrinkwrap.json"
+        && (recorded != manifest.patches.len() || !manifest.patches.iter().all(patched))
+    {
+        return Err(fail(format!("{file} is out of date with the patches")));
+    }
     let specs = manifest.specs();
     let declared = flat(specs.as_ref());
     let recorded = flat(Some(&source.specs));
@@ -330,7 +341,7 @@ fn read_npm(text: &str) -> Result<Source> {
     }
     let (specs, root) =
         root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(npm_version).map(str::to_string));
-    Ok(Source { nodes, specs, root, overrides: None })
+    Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null })
 }
 
 /// npm's and bun's paths as the folders they name, each a list of the packages up to it, so
@@ -521,9 +532,6 @@ fn read_pnpm(text: &str) -> Result<Source> {
     if importers.is_some_and(|i| i.keys().any(|path| path != ".")) {
         return Err(fail("jpm does not read workspaces from pnpm-lock.yaml"));
     }
-    if truthy(doc.get("patchedDependencies")) {
-        return Err(fail("jpm does not apply the patches pnpm-lock.yaml names"));
-    }
     let empty = Map::new();
     let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
     let snapshots = doc.get("snapshots").and_then(Value::as_object).unwrap_or(&empty);
@@ -598,7 +606,13 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let (specs, root) = root_of(groups, &|name| versions.get(name).cloned());
     // The overrides it was resolved under, as pnpm-workspace.yaml or `pnpm.overrides` give them.
     let overrides = doc.get("overrides").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Object(Map::new()));
-    Ok(Source { nodes, specs, root, overrides: Some(overrides) })
+    Ok(Source {
+        nodes,
+        specs,
+        root,
+        overrides: Some(overrides),
+        patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+    })
 }
 
 /// The version an edge `dep: ref` points at, `""` when not from a registry. An alias is noted:
@@ -653,9 +667,6 @@ fn read_bun(text: &str) -> Result<Source> {
     if workspaces.is_some_and(|w| w.keys().any(|path| !path.is_empty())) {
         return Err(fail("jpm does not read workspaces from bun.lock"));
     }
-    if truthy(doc.get("patchedDependencies")) {
-        return Err(fail("jpm does not apply the patches bun.lock names"));
-    }
     let empty = Map::new();
     let listed = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
     let mut tree = Tree::default();
@@ -699,7 +710,13 @@ fn read_bun(text: &str) -> Result<Source> {
         _ => None,
     });
     let overrides = doc.get("overrides").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Object(Map::new()));
-    Ok(Source { nodes, specs, root, overrides: Some(overrides) })
+    Ok(Source {
+        nodes,
+        specs,
+        root,
+        overrides: Some(overrides),
+        patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+    })
 }
 
 struct BunTuple<'a> {
@@ -907,6 +924,7 @@ fn build(
             // Scripts come over as known, never as approved: that is `jpm approve`'s to say.
             scripts: node.scripts,
             build: false,
+            patch: None,
         };
         packages.insert(key.clone(), entry);
     }
@@ -1586,18 +1604,40 @@ snapshots:
         );
         let workspace = "lockfileVersion: '9.0'\nimporters:\n  .: {}\n  packages/a: {}\n";
         assert!(err("pnpm-lock.yaml", workspace, json!({})).contains("workspaces"));
-        let patched = "lockfileVersion: '9.0'\npatchedDependencies:\n  a: patches/a.patch\n";
-        assert!(err("pnpm-lock.yaml", patched, json!({})).contains("patches"));
-        let bun_patched = r#"{"lockfileVersion":1,"patchedDependencies":{"a@1.0.0":"patches/a.patch"}}"#;
-        assert!(err("bun.lock", bun_patched, json!({})).contains("patches"));
         assert!(err("pnpm-lock.yaml", "lockfileVersion: '6.0'\n", json!({})).contains("pnpm 9 and later"));
         assert!(err("bun.lock", "{", json!({})).contains("bun.lock cannot be read"));
         assert!(err("package-lock.json", r#"{"lockfileVersion":1}"#, json!({})).contains("v1 has no packages map"));
-        let empty = r#"{"lockfileVersion":1,"packages":{}}"#;
-        let patches = json!({ "a@1.0.0": "patches/a.patch" });
-        assert!(err("bun.lock", empty, json!({ "patchedDependencies": patches })).contains("patches"));
-        let pnpm_patches = json!({ "pnpm": { "patchedDependencies": patches } });
-        assert!(err("package-lock.json", &npm(json!({})), pnpm_patches).contains("patches"));
+    }
+
+    #[test]
+    fn holds_patches_to_the_project() {
+        let mut m = manifest(json!({}));
+        let patch = |path: &str| crate::patch::Patch {
+            name: "a".into(),
+            range: Some("1.0.0".into()),
+            path: path.into(),
+            hash: "f".repeat(64),
+        };
+        let load_with = |file: &str, text: &str, m: &RootManifest| load(file, text, m, false, &npmjs).map(|_| ());
+        let pnpm =
+            "lockfileVersion: '9.0'\npatchedDependencies:\n  a@1.0.0:\n    hash: abc\n    path: patches/a.patch\n";
+        let bun = r#"{"lockfileVersion":1,"patchedDependencies":{"a@1.0.0":"patches/a.patch"}}"#;
+        let npm = json!({ "lockfileVersion": 3, "packages": {} }).to_string();
+        let stale = |file: &str, text: &str, m: &RootManifest| load_with(file, text, m).unwrap_err().message;
+        // Written without the project's patches, or with others.
+        assert_eq!(stale("pnpm-lock.yaml", pnpm, &m), "pnpm-lock.yaml is out of date with the patches");
+        assert!(stale("bun.lock", bun, &m).contains("out of date with the patches"));
+        m.patches = vec![patch("./patches/b.patch")];
+        assert!(stale("pnpm-lock.yaml", pnpm, &m).contains("out of date with the patches"));
+        assert!(stale("bun.lock", r#"{"lockfileVersion":1}"#, &m).contains("out of date with the patches"));
+        // The same: by path, or by the hash where pnpm keeps only that.
+        m.patches = vec![patch("./patches/a.patch")];
+        load_with("pnpm-lock.yaml", pnpm, &m).unwrap();
+        load_with("bun.lock", bun, &m).unwrap();
+        let hashed = format!("lockfileVersion: '9.0'\npatchedDependencies:\n  a@1.0.0: {}\n", "f".repeat(64));
+        load_with("pnpm-lock.yaml", &hashed, &m).unwrap();
+        // npm knows no patches: its tree stands.
+        load_with("package-lock.json", &npm, &m).unwrap();
     }
 
     #[test]

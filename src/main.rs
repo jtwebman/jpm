@@ -18,6 +18,7 @@ mod keys;
 mod link;
 mod lock;
 mod manifest;
+mod patch;
 mod pool;
 mod project;
 mod registry;

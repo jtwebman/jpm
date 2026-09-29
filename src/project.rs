@@ -26,6 +26,8 @@ pub struct RootManifest {
     pub workspaces: Option<Vec<String>>,
     /// The root's overrides, resolved (`rules::Rules::apply`); empty for a workspace.
     pub overrides: Vec<crate::rules::Override>,
+    /// The root's patches, each file read for its hash (`rules::Rules::apply`).
+    pub patches: Vec<crate::patch::Patch>,
     pub doc: Object,
 }
 
@@ -93,6 +95,7 @@ impl RootManifest {
             peer_optional,
             workspaces,
             overrides: Vec::new(),
+            patches: Vec::new(),
             doc,
         })
     }
