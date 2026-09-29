@@ -306,8 +306,9 @@ impl Registry {
         self.route(name, version)?.ok_or_else(missing)
     }
 
-    /// One pinned version, or `None` when nothing serves it.
-    fn pinned(&self, name: &str, version: &str) -> Result<Option<Arc<Manifest>>> {
+    /// One pinned version, or `None` when nothing serves it. `exempt` looks past the release
+    /// cutoff.
+    fn pinned(&self, name: &str, version: &str, exempt: bool) -> Result<Option<Arc<Manifest>>> {
         let known = self.corgis.lock().map_err(|_| poisoned())?.get(name).and_then(|c| c.get().cloned());
         if let Some(Ok(doc)) = known
             && let Some(m) = doc.version(version)
@@ -319,14 +320,15 @@ impl Registry {
         {
             return Ok(Some(m));
         }
-        Ok(self.packument(name).ok().and_then(|doc| doc.version(version)))
+        let cut = self.packument(name).ok().and_then(|doc| doc.version(version));
+        Ok(if cut.is_none() && exempt { self.manifest(name, version).ok() } else { cut })
     }
 
     /// The walk's pick: `pinned` first when there is a version to try, then the usual pick.
-    pub fn pick(&self, spec: &Spec, pinned: Option<&str>) -> Result<Arc<Manifest>> {
+    pub fn pick(&self, spec: &Spec, pinned: Option<&str>, exempt: bool) -> Result<Arc<Manifest>> {
         let name = &spec.fetch_name;
         if let Some(v) = pinned
-            && let Some(m) = self.pinned(name, v)?
+            && let Some(m) = self.pinned(name, v, exempt)?
         {
             return Ok(m);
         }

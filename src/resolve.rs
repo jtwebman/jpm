@@ -38,6 +38,8 @@ pub struct Options<'a> {
     pub on_pick: Option<&'a OnPick<'a>>,
     /// Another manager's lockfile being brought over, so its choices survive where they fit.
     pub prefer: Option<&'a Prefer>,
+    /// `legacy-peer-deps`: a peer is linked to what the tree has, and never added.
+    pub legacy_peers: bool,
     pub threads: usize,
 }
 
@@ -49,6 +51,8 @@ pub struct Prefer {
     pub ranges: HashMap<String, String>,
     /// Every registry range must be one of `ranges`: a frozen install from yarn.lock.
     pub only: bool,
+    /// The file's manager never installs peers (yarn 1), so the resolve adds none.
+    pub legacy_peers: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +85,8 @@ struct State {
     soft_peers: HashMap<String, Vec<(String, String)>>,
     hard_peers: Vec<(String, String, String)>,
     warnings: BTreeSet<String>,
+    /// Ends the walk: yarn.lock lacks a range a frozen install needs.
+    fatal: Option<Error>,
 }
 
 struct Walk<'a> {
@@ -164,20 +170,24 @@ impl Walk<'_> {
                 }
             }
         }
-        self.drain(jobs);
+        self.drain(jobs)?;
         self.prune()?;
-        self.settle_peers();
+        self.settle_peers()?;
         self.prune()?;
         self.wire_soft_peers();
         Ok(self.finish())
     }
 
-    fn drain(&self, jobs: Vec<Job>) {
+    fn drain(&self, jobs: Vec<Job>) -> Result<()> {
         pool::run(self.opts.threads, jobs, |job, queue| self.edge(job, queue));
+        lock(&self.state).fatal.take().map_or(Ok(()), Err)
     }
 
     fn edge(&self, job: Job, queue: &Queue<Job>) {
         let Job { from, name, range, optional, fresh } = job;
+        if lock(&self.state).fatal.is_some() {
+            return;
+        }
         if let Err(error) = self.try_edge(&from, &name, &range, optional, fresh, queue) {
             // Offline, a skipped optional would be locked out for good, where online it is fetched.
             let mut s = lock(&self.state);
@@ -185,6 +195,11 @@ impl Walk<'_> {
                 let who = if from.is_empty() { "root" } else { &from };
                 let error =
                     Error::new(error.code, format!("{} — resolving {name}@{range} (required by {who})", error.message));
+                // Out of date is out of date: the rest of the walk would only download more.
+                if error.code == "ELOCK" && self.opts.prefer.is_some_and(|p| p.only) {
+                    s.fatal.get_or_insert(error);
+                    return;
+                }
                 s.dead.entry(from).or_insert(error);
             } else {
                 let who = if from.is_empty() { "root".to_string() } else { from };
@@ -265,10 +280,12 @@ impl Walk<'_> {
             if exact.is_none() && self.opts.prefer.is_some_and(|p| p.only) && self.ranged(spec).is_none() {
                 return Err(Error::new("ELOCK", format!("it has no {}@{}", spec.fetch_name, spec.fetch_spec)));
             }
-            let wanted = exact
-                .or_else(|| if self.opts.dedupe && !fresh { self.kept(spec) } else { None })
-                .or_else(|| self.preferred(spec));
-            self.opts.registry.pick(spec, wanted.as_deref())
+            let kept = if self.opts.dedupe && !fresh { self.kept(spec) } else { None };
+            let preferred = self.preferred(spec);
+            let wanted = exact.or_else(|| kept.clone()).or_else(|| preferred.clone());
+            // A version a lockfile names was taken before: the release age is for new picks.
+            let exempt = wanted.is_some() && (wanted == kept || wanted == preferred);
+            self.opts.registry.pick(spec, wanted.as_deref(), exempt)
         })
         .clone()
     }
@@ -467,14 +484,14 @@ impl Walk<'_> {
 
     /// A required peer resolves against the tree first, so a plugin reuses the host already
     /// there. Only an unmet peer is fetched, and a fetch can bring peers of its own: a fixpoint.
-    fn settle_peers(&self) {
+    fn settle_peers(&self) -> Result<()> {
         loop {
             let mut jobs = Vec::new();
             {
                 let mut s = lock(&self.state);
                 let mut todo = std::mem::take(&mut s.hard_peers);
                 if todo.is_empty() {
-                    return;
+                    return Ok(());
                 }
                 todo.sort();
                 let shipped = self.shipped(&s);
@@ -493,6 +510,12 @@ impl Walk<'_> {
                         }
                         continue;
                     }
+                    if self.opts.legacy_peers {
+                        let who = if from.is_empty() { "root" } else { &from };
+                        s.warnings
+                            .insert(format!("unmet peer {name}@{range} of {who}: nothing in the tree provides it"));
+                        continue;
+                    }
                     // Nothing in the tree: the version this consumer was locked with, if it still fits.
                     let own = self.locked_peer(&from, &name);
                     let again = own.as_deref().filter(|o| {
@@ -504,7 +527,7 @@ impl Walk<'_> {
                     jobs.push(Job { from, name, range, optional: false, fresh });
                 }
             }
-            self.drain(jobs);
+            self.drain(jobs)?;
         }
     }
 
@@ -661,15 +684,31 @@ impl Walk<'_> {
 /// Register a package's peers to settle after the walk: required ones become edges, optional
 /// ones are wired only to what is there.
 fn settle(s: &mut State, key: &str, peers: &Peers, ranges: Option<&Deps>) {
-    let range = |n: &str| ranges.and_then(|r| r.get(n)).cloned().unwrap_or_default();
     let mut soft = Vec::new();
     for (name, kind) in peers {
+        let written = ranges.and_then(|r| r.get(name)).cloned().unwrap_or_default();
+        let Some(range) = peer_range(name, &written) else {
+            let who = if key.is_empty() { "root" } else { key };
+            s.warnings.insert(format!("{who} declares peer {name}@{written}, which is not a range; left unmet"));
+            continue;
+        };
         match kind {
-            PeerKind::Optional => soft.push((name.clone(), range(name))),
-            PeerKind::Required => s.hard_peers.push((key.to_string(), name.clone(), range(name))),
+            PeerKind::Optional => soft.push((name.clone(), range)),
+            PeerKind::Required => s.hard_peers.push((key.to_string(), name.clone(), range)),
         }
     }
     s.soft_peers.insert(key.to_string(), soft);
+}
+
+/// A peer range as written, or the `||` alternatives of it that are ranges (`>=3 || insiders`
+/// is `>=3`); `None` when none is.
+fn peer_range(name: &str, range: &str) -> Option<String> {
+    if spec::parse_dep(name, range).is_ok() {
+        return Some(range.to_string());
+    }
+    let kept: Vec<&str> =
+        range.split("||").map(str::trim).filter(|r| !r.is_empty() && semver::valid_range(r)).collect();
+    (!kept.is_empty()).then(|| kept.join(" || "))
 }
 
 /// Package name -> the keys of its records `keep` accepts.

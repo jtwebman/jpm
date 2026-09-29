@@ -271,29 +271,39 @@ fn reach<'a>(
 
 /// Narrow a resolution to the packages that run here. The lockfile holds every platform's
 /// builds; this needs no network, since `os`, `cpu` and `libc` were written down. A package
-/// with a required edge to something that cannot run here goes too, and a required package that
-/// cannot run here is an error.
+/// with a required edge to something that cannot run here goes too. A package that cannot run
+/// here is an error only when a top's own dependency needs it through required edges: a workspace
+/// may list every platform's build as a devDependency, as bun allows, and only this platform's
+/// is linked.
 pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resolution> {
     let mut warnings: BTreeSet<String> = std::mem::take(&mut res.warnings).into_iter().collect();
     let mut gone: HashMap<String, String> = HashMap::new();
-    let drop = |key: &str, why: String, gone: &mut HashMap<String, String>| -> Result<()> {
-        if res.packages.get(key).is_some_and(|p| !p.optional) {
-            return Err(Error::new("EBADPLATFORM", format!("{key} {why}")));
+    let needed = needed(&res);
+    let mut drop = |key: &str, why: String, chained: bool, gone: &mut HashMap<String, String>| -> Result<()> {
+        let p = &res.packages[key];
+        if let Some(who) = needed.get(key) {
+            return Err(Error::new("EBADPLATFORM", format!("{key} {why} (required by {who})")));
+        }
+        if !p.optional {
+            warnings.insert(format!("skipped dev-only {key}: {why}"));
+        } else if chained {
+            warnings.insert(format!("skipped optional {key}: {why}"));
         }
         gone.insert(key.to_string(), why);
         Ok(())
     };
     for (key, p) in &res.packages {
         if !runs_on(p.os.as_ref(), p.cpu.as_ref(), p.libc.as_ref(), platform) {
-            drop(key, format!("does not run on {platform}"), &mut gone)?;
+            drop(key, format!("does not run on {platform}"), false, &mut gone)?;
         }
     }
-    // A required edge to a dropped package takes its owner with it, until nothing changes.
+    // A required edge to a dropped package takes its owner with it, until nothing changes. A
+    // workspace stays: what it can lose is dev-only.
     let mut changed = !gone.is_empty();
     while changed {
         changed = false;
         for (key, p) in &res.packages {
-            if gone.contains_key(key) {
+            if gone.contains_key(key) || p.local.is_some() {
                 continue;
             }
             let lost = p.dependencies.iter().find_map(|(n, v)| {
@@ -301,8 +311,7 @@ pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resol
                 gone.get(&dep).map(|why| format!("needs {dep}, which {why}"))
             });
             if let Some(why) = lost {
-                drop(key, why.clone(), &mut gone)?;
-                warnings.insert(format!("skipped optional {key}: {why}"));
+                drop(key, why, true, &mut gone)?;
                 changed = true;
             }
         }
@@ -332,6 +341,27 @@ pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resol
     present(&mut res.root.dependencies);
     res.warnings = warnings.into_iter().collect();
     Ok(res)
+}
+
+/// What installs whatever else goes: the root's and the workspaces' `dependencies` and what they
+/// reach through required edges, each with the root, workspace path or package that needs it.
+fn needed(res: &Resolution) -> HashMap<String, String> {
+    let prod = |specs: &Option<Specs>, name: &str| {
+        specs.as_ref().and_then(|s| s.dependencies.as_ref()).is_some_and(|d| d.contains_key(name))
+    };
+    let mut queue: Vec<(String, String)> = Vec::new();
+    let tops = res.packages.values().filter_map(|p| Some((p.local.clone()?, &p.specs, &p.dependencies)));
+    for (who, specs, deps) in std::iter::once(("root".to_string(), &res.root.specs, &res.root.dependencies)).chain(tops)
+    {
+        queue.extend(deps.iter().filter(|(n, _)| prod(specs, n)).map(|(n, v)| (format!("{n}@{v}"), who.clone())));
+    }
+    let mut out = HashMap::new();
+    while let Some((key, who)) = queue.pop() {
+        let Some(p) = res.packages.get(&key).filter(|p| p.local.is_none() && !out.contains_key(&key)) else { continue };
+        queue.extend(p.dependencies.iter().map(|(n, v)| (format!("{n}@{v}"), key.clone())));
+        out.insert(key, who);
+    }
+    out
 }
 
 /// Consumers whose declared peer range is not what the tree installed.
@@ -402,7 +432,15 @@ mod tests {
         assert!(out.packages["a@1.0.0"].optional_dependencies.is_empty());
         assert_eq!(out.warnings.len(), 1);
 
-        res.packages.get_mut("bind@1.0.0").unwrap().optional = false;
-        assert_eq!(filter_platform(res, &platform()).unwrap_err().code, "EBADPLATFORM");
+        // Required by a, which the root's devDependencies bring: skipped.
+        res.packages.get_mut("a@1.0.0").unwrap().dependencies.insert("bind".into(), "1.0.0".into());
+        let deps: Deps = [("a".to_string(), "^1".to_string())].into();
+        res.root.specs = Some(Specs { dev_dependencies: Some(deps.clone()), ..Specs::default() });
+        let out = filter_platform(res.clone(), &platform()).unwrap();
+        assert!(!out.packages.contains_key("bind@1.0.0") && out.warnings.iter().any(|w| w.contains("dev-only")));
+        // Brought by its dependencies, it is needed.
+        res.root.specs = Some(Specs { dependencies: Some(deps), ..Specs::default() });
+        let e = filter_platform(res, &platform()).unwrap_err();
+        assert_eq!((e.code, e.message.contains("(required by a@1.0.0)")), ("EBADPLATFORM", true), "{}", e.message);
     }
 }

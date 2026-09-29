@@ -823,3 +823,104 @@ unsafe extern "C" {
     #[link_name = "geteuid"]
     fn libc_geteuid() -> u32;
 }
+
+#[test]
+fn reads_what_it_can_of_a_peer_range() {
+    let r = Registry::start(vec![
+        pkg("host", "1.0.0", json!({})),
+        pkg("anim", "1.0.0", json!({ "peerDependencies": { "host": ">=1.0.0 || insiders || >=4.0.0-alpha.20" } })),
+        pkg("odd", "1.0.0", json!({ "peerDependencies": { "host": "insiders || nightly" } })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "anim": "1.0.0", "odd": "1.0.0", "host": "^1.0.0" } }));
+    let out = env.ok(&["install"]);
+    let lock = env.lock();
+    assert_eq!(lock["packages"]["anim@1.0.0"]["dependencies"]["host"], "1.0.0", "the alternatives that are ranges");
+    // No alternative is a range: nothing matches, and that is a warning.
+    assert!(out.contains("host@insiders || nightly"), "{out}");
+    assert!(lock["packages"]["odd@1.0.0"]["dependencies"]["host"].is_null());
+}
+
+#[test]
+fn keeps_new_versions_an_imported_lockfile_names() {
+    let fresh = json!({ "_published": "2999-01-01T00:00:00.000Z" });
+    let r = Registry::start(vec![pkg("b", "1.0.0", json!({})), pkg("@s/fresh", "1.0.0", fresh.clone())]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "@s/fresh": "^1.0.0", "b": "^1.0.0" } }));
+    let aged = |args: &[&str]| env.command(args).env("npm_config_min_release_age", "1").output().unwrap();
+    let out = aged(&["lock"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("min-release-age"), "nothing names it yet: {text}");
+    // package-lock.json predates b, so it is resolved again, keeping the version it names.
+    let tgz = common::pkg("@s/fresh", "1.0.0", fresh).tarball();
+    env.write(
+        "package-lock.json",
+        &serde_json::to_string_pretty(&json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": { "@s/fresh": "^1.0.0" } },
+                "node_modules/@s/fresh": { "version": "1.0.0", "resolved": format!("{}/@s/fresh/-/fresh-1.0.0.tgz", r.url), "integrity": common::sha512(&tgz) }
+            }
+        }))
+        .unwrap(),
+    );
+    let out = aged(&["lock"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && text.contains("versions preferred"), "{text}");
+    assert!(env.lock()["packages"].get("@s/fresh@1.0.0").is_some());
+}
+
+#[test]
+fn legacy_peer_deps_links_only_peers_the_tree_has() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "legacy-peer-deps=true\n");
+    env.manifest(json!({ "dependencies": { "plugin": "1" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("unmet peer host@>=1"), "{out}");
+    assert!(env.lock()["packages"].get("host@2.0.0").is_none(), "no peer is added");
+    env.manifest(json!({ "dependencies": { "plugin": "1", "host": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["plugin@1.0.0"]["dependencies"]["host"], "1.0.0", "the tree's host");
+    // The flag says the same.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "plugin": "1" } }));
+    env.ok(&["install", "--legacy-peer-deps"]);
+    assert!(env.lock()["packages"].get("host@2.0.0").is_none());
+}
+
+#[test]
+fn yarn_1_lockfiles_install_no_peers() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "plugin": "1" } }));
+    // yarn 1 never installs peers, so its file names no host.
+    env.write("yarn.lock", "# yarn lockfile v1\n\n\nplugin@1:\n  version \"1.0.0\"\n");
+    env.ok(&["ci"]);
+    assert!(env.exists("node_modules/plugin") && !env.exists("node_modules/plugin/../host"));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("with the same versions"), "{out}");
+    assert!(env.lock()["packages"].get("host@2.0.0").is_none());
+}
+
+#[test]
+fn skips_a_dev_dependency_for_another_platform() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"] }));
+    let core = |group: &str| {
+        // native, which ships, has native-mars as an optional dependency: that is not a need.
+        let text = json!({ "name": "core", "version": "1.0.0", "dependencies": { "native": "1" }, group: { "native-mars": "1.0.0", "b": "1.0.0" } });
+        env.write("packages/core/package.json", &text.to_string());
+    };
+    core("devDependencies");
+    let out = env.ok(&["install"]);
+    assert!(out.contains("native-mars@1.0.0"), "{out}");
+    assert!(env.lock()["packages"].get("native-mars@1.0.0").is_some(), "the lockfile keeps every platform");
+    assert!(env.exists("packages/core/node_modules/b") && !env.exists("packages/core/node_modules/native-mars"));
+    // One that ships cannot be left out; the error says who needs it.
+    core("dependencies");
+    let out = env.jpm(&["install"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("EBADPLATFORM") && text.contains("packages/core"), "{text}");
+}
