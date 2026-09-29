@@ -279,6 +279,9 @@ impl Store {
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
             let unpacked = match small_head(&mut input, length) {
+                Ok(head) if tarball.to_string().ends_with(".exe") => {
+                    store_exe(&mut head.as_slice().chain(&mut input), &temp, &tarball.to_string())
+                }
                 Ok(head) => extract(&mut head.as_slice().chain(&mut input), &temp, SUFFIX_FILES),
                 Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
             };
@@ -566,6 +569,22 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
 }
 
+/// A download that is a Windows program, not an archive (Node's `win-x64/node.exe`): kept as the
+/// one executable file it is, under its own name.
+fn store_exe(source: &mut dyn Read, dest: &Path, url: &str) -> Result<Index> {
+    let name = url.rsplit(['/', '\\']).next().unwrap_or_default();
+    if !tar::plain(name) {
+        return Err(Error::new("EBADTAR", format!("{url} does not end in a file name")));
+    }
+    fs::create_dir_all(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
+    let file = dest.join(if SUFFIX_FILES { format!("{name}{STORED_SUFFIX}") } else { name.to_string() });
+    let mut out = create(&file, true).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+    let size = io::copy(&mut source.take(tar::MAX_ARCHIVE), &mut out)
+        .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+    let files = vec![FileEntry { path: name.to_string(), size, exec: true }];
+    Ok(Index { files, unpacked_size: size, suffixed: SUFFIX_FILES })
+}
+
 /// Take out of an unpacked repository what `npm pack` would leave out under package.json's
 /// `files`: a pattern keeps a file it names, or everything under a directory it names, and a `!`
 /// pattern takes it out again, the last to match winning. package.json, the readme, the licence,
@@ -812,6 +831,19 @@ pub mod tests {
         let bad = sha512(b"other");
         assert_eq!(store.ensure(&Tarball::File(file), &bad).unwrap_err().code, "EINTEGRITY");
         assert!(!store.has(&bad));
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn stores_a_windows_program_as_it_is() {
+        let dir = scratch("exe");
+        let file = dir.join("node.exe");
+        fs::write(&file, b"MZ not an archive").unwrap();
+        let store = Store::new(dir.join("store"), BTreeMap::new(), false, false);
+        let integrity = sha512(b"MZ not an archive");
+        let index = store.ensure(&Tarball::File(file), &integrity).unwrap();
+        assert_eq!(index.files, [FileEntry { path: "node.exe".into(), size: 17, exec: true }]);
+        assert_eq!(fs::read(store.file(&integrity, "node.exe").unwrap()).unwrap(), b"MZ not an archive");
         remove_tree(&dir);
     }
 
