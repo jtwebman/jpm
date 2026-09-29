@@ -24,6 +24,8 @@ pub struct Config {
     pub release_age_exclude: Vec<String>,
     pub offline: bool,
     pub prefer_offline: bool,
+    /// `global-store`: build package entries once, in the store, for every project to link to.
+    pub global_store: Option<bool>,
 }
 
 /// What the command line says, over every file.
@@ -35,6 +37,7 @@ pub struct Flags {
     pub min_release_age_exclude: Option<Vec<String>>,
     pub offline: Option<bool>,
     pub prefer_offline: Option<bool>,
+    pub global_store: Option<bool>,
 }
 
 type Layer = BTreeMap<String, String>;
@@ -218,6 +221,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         release_age_exclude: dedup,
         offline: merged.get("offline").is_some_and(|v| v == "true"),
         prefer_offline: merged.get("prefer-offline").is_some_and(|v| v == "true"),
+        global_store: merged.get("global-store").map(|v| v == "true"),
     })
 }
 
@@ -296,6 +300,9 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     }
     if let Some(o) = flags.prefer_offline {
         cli.insert("prefer-offline".into(), o.to_string());
+    }
+    if let Some(g) = flags.global_store {
+        cli.insert("global-store".into(), g.to_string());
     }
     to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())
 }

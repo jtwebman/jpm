@@ -110,9 +110,15 @@ merge is fine; the hash no longer matches, so jpm checks everything and writes t
   so a plugin uses the host version the tree already has.
 - **Store.** Each tarball is checked against its integrity and unpacked once into a shared
   store (`~/.jpm/store`, or `JPM_STORE`). Files there are read-only.
-- **Link.** `node_modules/.jpm/<name>@<version>-<hash>/` holds each package, hardlinked from
-  the store (a single `clonefile` per package on macOS). Everything else is a symlink (a
-  junction on Windows), so a package can import only what it declared.
+- **Link.** Each package gets an entry, `<name>@<version>-<hash>/`, named by a hash of the
+  package and everything below it. The entry holds the package's files, hardlinked from the
+  store (a single `clonefile` per package on macOS), and a symlink (a junction on Windows) to
+  each of its dependencies, so a package can import only what it declared.
+- **Global virtual store.** Entries are built once, in the store (`v1/links`), and shared by
+  every project on the machine: `node_modules/<dep>` links straight to one. A warm install
+  makes only those links. An entry missing an optional package, or depending on one that is,
+  is built in the project's `node_modules/.jpm` instead, as every entry is when the global
+  store is off.
 - **Repeat installs.** `node_modules/.jpm.json` records what was installed. When the
   lockfile, `package.json` and settings are unchanged, a repeat install checks a few links and
   exits.
@@ -128,6 +134,12 @@ Dependency lifecycle scripts (`postinstall` and the like) are not run.
 
 New versions are held back for one day by default (`min-release-age`). Set it to `0` to
 turn this off.
+
+The global virtual store is on by default. Turn it off with `global-store=false` in `.npmrc`,
+`JPM_GLOBAL_STORE=0` or `--no-global-store`. It is off inside containers (`/.dockerenv` or
+`/run/.containerenv`), where a mounted project would not see the store, and when the store
+cannot be written. Tools that expect a package's real path to sit inside the project may need
+it off.
 
 ## Development
 

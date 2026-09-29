@@ -200,15 +200,86 @@ fn repairs_a_damaged_tree_under_verify() {
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
     env.ok(&["install"]);
-    let entry = std::fs::read_dir(env.project().join("node_modules/.jpm"))
-        .unwrap()
-        .flatten()
-        .find(|e| e.file_name().to_string_lossy().starts_with("b@"))
-        .unwrap();
-    std::fs::remove_file(entry.path().join("node_modules/b/index.js")).unwrap();
+    let b = std::fs::canonicalize(env.project().join("node_modules/b")).unwrap();
+    std::fs::remove_file(b.join("index.js")).unwrap();
     let out = env.ok(&["install", "--verify"]);
     assert!(out.contains("repaired"), "{out}");
     assert!(env.read("node_modules/b/index.js").contains("b@1.0.0"));
+}
+
+/// The entries built in a project's `.jpm`.
+fn entries(dir: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(dir.join("node_modules/.jpm"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    out.sort();
+    out
+}
+
+fn link_of(dir: &std::path::Path, name: &str) -> String {
+    std::fs::read_link(dir.join("node_modules").join(name)).unwrap().to_string_lossy().into_owned()
+}
+
+#[test]
+fn shares_entries_through_the_global_store() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    let links = env.store().join("v1/links");
+    let target = link_of(&env.project(), "a");
+    // Built once in the store; the project links its direct deps straight there.
+    assert!(entries(&env.project()).is_empty());
+    assert!(target.starts_with(&*links.to_string_lossy()), "{target}");
+    assert_eq!(std::fs::read_dir(&links).unwrap().count(), 2);
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+
+    // A second project links to the same entries and builds none.
+    let other = env.root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(env.project().join("package.json"), other.join("package.json")).unwrap();
+    let out = env.command_in(&other, &["install"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && text.contains("0 entries"), "{text}");
+    assert_eq!(link_of(&other, "a"), target);
+
+    // Off, the project builds its own entries; on again, it links back.
+    env.ok(&["install", "--no-global-store"]);
+    assert_eq!(entries(&env.project()).len(), 2);
+    assert!(link_of(&env.project(), "a").starts_with(".jpm"));
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+    env.ok(&["install"]);
+    assert_eq!(link_of(&env.project(), "a"), target);
+    let again = env.ok(&["install"]);
+    assert!(again.contains("up to date"), "{again}");
+}
+
+#[test]
+fn keeps_entries_missing_an_optional_package_local() {
+    let r = registry();
+    r.publish(pkg(
+        "nat",
+        "1.0.0",
+        json!({ "dependencies": { "b": "1.0.0" }, "optionalDependencies": { "native-any": "1.0.0" } }),
+    ));
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "nat": "1" } }));
+    env.ok(&["install"]);
+    // Republished with other bytes, the locked package fails its integrity check and is skipped.
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    let _ = std::process::Command::new("chmod").args(["-R", "u+w"]).arg(env.store()).output();
+    std::fs::remove_dir_all(env.store()).unwrap();
+    r.publish(pkg("native-any", "1.0.0", json!({})).file("extra.js", 0o644, "changed"));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("skipped optional native-any"), "{out}");
+    // nat lacks native-any, so its entry is the project's own; b is still shared.
+    let list = entries(&env.project());
+    assert!(list.len() == 1 && list[0].starts_with("nat@"), "{list:?}");
+    assert!(!env.exists("node_modules/nat/../native-any"));
+    assert!(env.read("node_modules/nat/../b/index.js").contains("b@1.0.0"));
 }
 
 #[test]

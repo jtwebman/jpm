@@ -9,6 +9,9 @@
 //!
 //! A package can import only what it declared, and entries are built in parallel under temp
 //! names and renamed in whole, so a reader never sees half of one.
+//!
+//! With the global virtual store, entries are built once in `<store>/v1/links` and the project
+//! links its direct deps straight to them: a warm install makes only those links.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -43,6 +46,9 @@ pub struct Options<'a> {
     pub hash: String,
     /// Each package's store entry name, by key.
     pub keys: HashMap<String, String>,
+    /// The global virtual store: entries are built once there, for every project to link to.
+    /// `None` builds every entry in the project's `.jpm`.
+    pub global: Option<PathBuf>,
     /// What the state records for the no-op check: only when the tree is a function of the
     /// lockfile and root manifest alone (no workspaces).
     pub inputs: Option<Inputs>,
@@ -125,6 +131,8 @@ struct Entry<'a> {
     key: String,
     /// `<key>/node_modules/<name>`, spelled with the platform's separator.
     home: String,
+    /// Built in the global store, not the project.
+    shared: bool,
 }
 
 /// The root, or a workspace: a `node_modules` of its own holding what it declared.
@@ -165,13 +173,14 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let tops = tops_of(opts.dir, res);
     let entries_dir = opts.dir.join("node_modules").join(".jpm");
     let previous = state::read(opts.dir);
-    let state_of = |entries: Vec<String>, complete: bool, root: RootLinks| {
+    let state_of = |entries: Vec<String>, shared: Vec<String>, complete: bool, root: RootLinks| {
         let single = tops.len() == 1;
         let inputs = opts.inputs.as_ref().filter(|_| single);
         State {
             version: 1,
             hash: opts.hash.clone(),
             entries,
+            shared,
             complete,
             store: opts.store.dir.display().to_string(),
             production: opts.production,
@@ -183,14 +192,14 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         }
     };
     if let Some(prev) = previous.as_ref().filter(|s| !opts.verify && s.hash == opts.hash && s.complete)
-        && let Some(root) = standing(opts.dir, &entries_dir, &tops, res, prev, opts.production)
+        && let Some(root) = standing(opts.dir, &entries_dir, opts.global.as_deref(), &tops, res, prev, opts.production)
     {
         // The same tree from other inputs: the state learns them, so the next install is short.
         let learned = opts.inputs.as_ref().is_some_and(|i| prev.inputs.as_ref() != Some(&i.hash)) && tops.len() == 1;
         if learned || prev.tarballs != opts.tarballs {
-            state::write(opts.dir, &state_of(prev.entries.clone(), true, root))?;
+            state::write(opts.dir, &state_of(prev.entries.clone(), prev.shared.clone(), true, root))?;
         }
-        let stats = Stats { reused: prev.entries.len(), ..Stats::default() };
+        let stats = Stats { reused: prev.entries.len() + prev.shared.len(), ..Stats::default() };
         return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true });
     }
     state::clear(opts.dir);
@@ -211,9 +220,37 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             continue;
         }
         let home = sep(&format!("{key}/node_modules/{}", pkg.name));
-        wanted.insert(id.clone(), Entry { pkg, key: key.clone(), home });
+        wanted.insert(id.clone(), Entry { pkg, key: key.clone(), home, shared: opts.global.is_some() });
     }
     fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
+    // An entry that lacks an optional package, or reaches one that does, stays in the project:
+    // a global copy would be incomplete for everyone else.
+    if opts.global.is_some() && !dropped.is_empty() {
+        let mut local: HashSet<String> = HashSet::new();
+        let missing: HashSet<&str> = dropped.iter().map(String::as_str).collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (id, entry) in &wanted {
+                if local.contains(id) {
+                    continue;
+                }
+                let lacks = entry.pkg.all_deps().iter().any(|(n, v)| {
+                    let dep = format!("{n}@{v}");
+                    missing.contains(dep.as_str()) || local.contains(&dep)
+                });
+                if lacks {
+                    local.insert(id.clone());
+                    changed = true;
+                }
+            }
+        }
+        for id in &local {
+            if let Some(e) = wanted.get_mut(id) {
+                e.shared = false;
+            }
+        }
+    }
     let present: HashSet<String> = fs::read_dir(&entries_dir)
         .into_iter()
         .flatten()
@@ -234,7 +271,11 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let ids: Vec<&String> = linker.wanted.keys().collect();
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
-        if let Err(e) = linker.materialize(entry, present.contains(&entry.key)) {
+        let placed = match linker.global_of(entry) {
+            Some(global) => linker.materialize_global(entry, global),
+            None => linker.materialize(entry, present.contains(&entry.key)),
+        };
+        if let Err(e) = placed {
             failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
         }
     });
@@ -252,18 +293,91 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     }
     linker.sweep_temp();
     dropped.sort();
-    let mut entries: Vec<String> = linker.wanted.values().map(|e| e.key.clone()).collect();
-    entries.sort();
-    entries.dedup();
+    let names = |shared: bool| {
+        let mut out: Vec<String> =
+            linker.wanted.values().filter(|e| e.shared == shared).map(|e| e.key.clone()).collect();
+        out.sort();
+        out.dedup();
+        out
+    };
     let root = linker.root_links.lock().map(|r| r.clone()).unwrap_or_default();
-    state::write(opts.dir, &state_of(entries, dropped.is_empty(), root))?;
+    state::write(opts.dir, &state_of(names(false), names(true), dropped.is_empty(), root))?;
     Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false })
 }
 
 impl Linker<'_> {
+    /// The global store, for an entry built there.
+    fn global_of(&self, entry: &Entry) -> Option<&Path> {
+        self.opts.global.as_deref().filter(|_| entry.shared)
+    }
+
+    /// Where an entry's own directory is: under the global store or under the project's `.jpm`.
+    fn root_of(&self, entry: &Entry) -> &Path {
+        self.global_of(entry).unwrap_or(&self.entries_dir)
+    }
+
+    /// Build the entry in the global store unless it is there (checked in full under `verify`).
+    fn materialize_global(&self, entry: &Entry, global: &Path) -> Result<()> {
+        let fin = global.join(&entry.key);
+        if !fin.is_dir() {
+            let temp = global.join(format!(".tmp-{}", temp_suffix()));
+            let built = self.build(entry, &temp).and_then(|()| {
+                fs::rename(&temp, &fin)
+                    .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
+            });
+            match built {
+                Ok(()) => Counts::add(&self.counts.entries, 1),
+                // Another install built it first; its entry is as good as ours.
+                Err(_) if fin.is_dir() => {
+                    remove_tree(&temp);
+                    Counts::add(&self.counts.reused, 1);
+                }
+                Err(e) => {
+                    remove_tree(&temp);
+                    return Err(e);
+                }
+            }
+        } else if self.opts.verify && !self.intact(entry)? {
+            self.swap_in(entry, &fin, global)?;
+        } else {
+            Counts::add(&self.counts.reused, 1);
+        }
+        Ok(())
+    }
+
+    /// Rebuild an entry and take its name in one rename, so no reader sees a partial entry.
+    fn swap_in(&self, entry: &Entry, fin: &Path, root: &Path) -> Result<()> {
+        let temp = root.join(format!(".tmp-{}", temp_suffix()));
+        if let Err(e) = self.build(entry, &temp) {
+            remove_tree(&temp);
+            return Err(e);
+        }
+        let retired = root.join(format!(".tmp-{}", temp_suffix()));
+        let moved = fs::rename(fin, &retired).is_ok();
+        if let Err(e) = fs::rename(&temp, fin) {
+            remove_tree(&temp);
+            if fin.exists() {
+                remove_tree(&retired);
+                Counts::add(&self.counts.reused, 1);
+                return Ok(());
+            }
+            if moved {
+                let _ = fs::rename(&retired, fin);
+            }
+            return Err(Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"));
+        }
+        remove_tree(&retired);
+        Counts::add(&self.counts.repaired, 1);
+        Ok(())
+    }
+
     /// A dep link's target: every entry sits at the same depth, so from `<entry>/node_modules`
-    /// it is always `../../<home>`, one `..` more from under a scope directory.
-    fn dep_target(&self, name: &str, dep: &Entry) -> String {
+    /// it is always `../../<home>`, one `..` more from under a scope directory. A project entry
+    /// reaches a global one by its full path.
+    fn dep_target(&self, entry: &Entry, name: &str, dep: &Entry) -> String {
+        if let Some(global) = self.global_of(dep).filter(|_| !entry.shared) {
+            return global.join(&dep.home).to_string_lossy().into_owned();
+        }
         let up = format!("..{MAIN_SEPARATOR}");
         format!("{up}{up}{}{}", if name.contains('/') { up.as_str() } else { "" }, dep.home)
     }
@@ -307,28 +421,7 @@ impl Linker<'_> {
                 self.sweep(&nm.join(".bin"), &bins, "");
                 return Ok(());
             }
-            let temp = self.temp_name();
-            if let Err(e) = self.build(entry, &temp) {
-                remove_tree(&temp);
-                return Err(e);
-            }
-            let retired = self.temp_name();
-            let moved = fs::rename(&fin, &retired).is_ok();
-            if let Err(e) = fs::rename(&temp, &fin) {
-                remove_tree(&temp);
-                if fin.exists() {
-                    remove_tree(&retired);
-                    Counts::add(&self.counts.reused, 1);
-                    return Ok(());
-                }
-                if moved {
-                    let _ = fs::rename(&retired, &fin);
-                }
-                return Err(Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"));
-            }
-            remove_tree(&retired);
-            Counts::add(&self.counts.repaired, 1);
-            return Ok(());
+            return self.swap_in(entry, &fin, &self.entries_dir);
         }
         let temp = self.temp_name();
         let built = self.build(entry, &temp).and_then(|()| {
@@ -355,17 +448,16 @@ impl Linker<'_> {
 
     /// Every file at its recorded size, every dep link and bin pointing where it should.
     fn intact(&self, entry: &Entry) -> Result<bool> {
-        let nm = self.entries_dir.join(&entry.key).join("node_modules");
+        let nm = self.root_of(entry).join(&entry.key).join("node_modules");
         let pkg_dir = nm.join(&entry.pkg.name);
         let index = self.index(entry)?;
         if !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| m.len() == f.size)) {
             return Ok(false);
         }
         let deps = self.deps_of(entry.pkg)?;
-        if !deps
-            .iter()
-            .all(|(name, dep)| sys::read_link(&nm.join(name)).as_deref() == Some(self.dep_target(name, dep).as_str()))
-        {
+        if !deps.iter().all(|(name, dep)| {
+            sys::read_link(&nm.join(name)).as_deref() == Some(self.dep_target(entry, name, dep).as_str())
+        }) {
             return Ok(false);
         }
         let bin_dir = nm.join(".bin");
@@ -411,14 +503,14 @@ impl Linker<'_> {
                     .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
             }
             let at = nm.join(name);
-            sys::symlink_dir(&self.dep_target(name, dep), &at)
+            sys::symlink_dir(&self.dep_target(entry, name, dep), &at)
                 .map_err(|e| Error::io(&e, format!("cannot link {}", at.display())).with_code("ELINK"))?;
         }
         let bins = bins_of(&deps);
         if !bins.is_empty() {
             let bin_dir = nm.join(".bin");
             fs::create_dir_all(&bin_dir).map_err(|e| Error::io(&e, "cannot create .bin").with_code("ELINK"))?;
-            let final_nm = self.entries_dir.join(&entry.key).join("node_modules");
+            let final_nm = self.root_of(entry).join(&entry.key).join("node_modules");
             for (bin, (dep, target)) in bins {
                 if WIN {
                     let file = final_nm.join(&dep).join(&target);
@@ -507,9 +599,9 @@ impl Linker<'_> {
         for (name, version) in &top.dependencies {
             let id = format!("{name}@{version}");
             let Some(pkg) = self.res.packages.get(&id) else { continue };
-            let real = match (&pkg.local, self.wanted.get(&id)) {
-                (Some(path), _) => self.opts.dir.join(path),
-                (None, Some(entry)) => self.entries_dir.join(&entry.home),
+            let (real, shared) = match (&pkg.local, self.wanted.get(&id)) {
+                (Some(path), _) => (self.opts.dir.join(path), false),
+                (None, Some(entry)) => (self.root_of(entry).join(&entry.home), entry.shared),
                 _ => continue, // dropped, or dev under production
             };
             let at = nm.join(name);
@@ -519,7 +611,8 @@ impl Linker<'_> {
                 fs::create_dir_all(parent)
                     .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
             }
-            let target = relative(parent, &real).to_string_lossy().into_owned();
+            let target = if shared { real.clone() } else { relative(parent, &real) };
+            let target = target.to_string_lossy().into_owned();
             replace_link(&at, &target, nm, true)?;
             links.insert(name.clone(), target);
             direct.push((name.clone(), pkg));
@@ -712,6 +805,7 @@ fn inside(path: &Path, real_root: &Path) -> Result<()> {
 fn standing(
     dir: &Path,
     entries_dir: &Path,
+    global: Option<&Path>,
     tops: &[Top],
     res: &Resolution,
     st: &State,
@@ -719,7 +813,7 @@ fn standing(
 ) -> Option<RootLinks> {
     let mut root = None;
     for top in tops {
-        let found = standing_top(dir, top, res, production)?;
+        let found = standing_top(dir, global, top, res, production)?;
         root.get_or_insert(found);
     }
     let present: HashSet<String> = fs::read_dir(entries_dir)
@@ -728,10 +822,11 @@ fn standing(
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    st.entries.iter().all(|k| present.contains(k)).then_some(root?)
+    let shared = st.shared.is_empty() || global.is_some_and(|g| st.shared.iter().all(|k| g.join(k).is_dir()));
+    (shared && st.entries.iter().all(|k| present.contains(k))).then_some(root?)
 }
 
-fn standing_top(dir: &Path, top: &Top, res: &Resolution, production: bool) -> Option<RootLinks> {
+fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, production: bool) -> Option<RootLinks> {
     let mut read = RootLinks::default();
     let mut bins = Vec::new();
     for (name, version) in &top.dependencies {
@@ -750,7 +845,9 @@ fn standing_top(dir: &Path, top: &Top, res: &Resolution, production: bool) -> Op
             None => {
                 let store = relative(at.parent()?, &dir.join("node_modules").join(".jpm"));
                 let tail = Path::new("node_modules").join(name);
-                if !Path::new(&to).starts_with(&store) || !Path::new(&to).ends_with(&tail) {
+                let within =
+                    Path::new(&to).starts_with(&store) || global.is_some_and(|g| Path::new(&to).starts_with(g));
+                if !within || !Path::new(&to).ends_with(&tail) {
                     return None;
                 }
             }
@@ -788,6 +885,10 @@ pub fn tree_standing(dir: &Path, st: &State) -> bool {
         if !root.bins.iter().all(|b| placed.contains(&if WIN { format!("{b}.cmd") } else { b.clone() })) {
             return false;
         }
+    }
+    // Links into the global store stand only while their entries do: a store can be wiped.
+    if !st.shared.is_empty() && !root.links.keys().all(|name| nm.join(name).is_dir()) {
+        return false;
     }
     let Ok(entries) = fs::read_dir(nm.join(".jpm")) else { return false };
     let present: HashSet<String> = entries

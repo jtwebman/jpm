@@ -236,9 +236,18 @@ impl Ctx {
         json::to_string(&Value::Array(vec![
             self.opts.production.into(),
             store.display().to_string().into(),
+            self.wants_global().into(),
             hosts,
             platform,
         ]))
+    }
+
+    /// The global virtual store is on unless the config says `global-store=false` or this runs
+    /// in a container, whose project mount would not see the store's links.
+    fn wants_global(&self) -> bool {
+        let env = std::env::var("JPM_GLOBAL_STORE").ok().map(|v| !matches!(v.as_str(), "0" | "false" | "off"));
+        let setting = self.opts.flags.global_store.or(env).or(self.config().global_store);
+        setting.unwrap_or_else(|| !Path::new("/.dockerenv").exists() && !Path::new("/run/.containerenv").exists())
     }
 
     fn stamps(&mut self, dir: &Path) -> Option<Stamps> {
@@ -368,10 +377,15 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let locked = lock.packages.len();
     let lock_hash = lock::content_hash(&lock);
     let tarballs = files_of(ctx, &lock);
-    let recorded = lock::recorded_keys(&lock);
+    let global = global_store(ctx, &store);
+    // Shared entries are named by keys computed here, over the graph this platform installs:
+    // a lockfile could claim another project's key and plant an entry every project trusts, and
+    // an entry built without a package another platform needs must not share its name.
+    let recorded = if global.is_some() { None } else { lock::recorded_keys(&lock) };
     let checked = lock::into_resolution(lock, &ctx.base_for());
-    let keys = recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages));
+    let keys = global.is_none().then(|| recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages)));
     let resolution = filter_platform(checked, &platform)?;
+    let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
     for w in &resolution.warnings {
         warn(w);
     }
@@ -387,7 +401,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     let wanted: Vec<&Package> =
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
-    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, &platform);
+    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, global.is_some(), &platform);
     let settled = previous.as_ref().is_some_and(|s| s.hash == hash);
     if !settled {
         fill(&store, &wanted, &dir)?;
@@ -414,6 +428,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         verify: ctx.opts.verify,
         hash: hash.clone(),
         keys,
+        global,
         inputs,
         tarballs: Some(tarballs.clone()),
     };
@@ -435,6 +450,16 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         missing_optional: outcome.dropped,
         stats: outcome.stats,
     })
+}
+
+/// The global virtual store's entry directory, when it is wanted and the store can be written.
+fn global_store(ctx: &Ctx, store: &Store) -> Option<PathBuf> {
+    if !ctx.wants_global() {
+        return None;
+    }
+    let dir = store.links_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 /// Every wanted package in the store. An optional one that fails is skipped with a warning.

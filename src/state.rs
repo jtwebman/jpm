@@ -42,6 +42,8 @@ pub struct State {
     pub hash: String,
     /// Sorted entry names that should exist under `node_modules/.jpm`.
     pub entries: Vec<String>,
+    /// Sorted entry names this tree links to in the global store.
+    pub shared: Vec<String>,
     /// False when something the graph named could not be linked.
     pub complete: bool,
     pub store: String,
@@ -75,6 +77,9 @@ impl State {
         o.insert("version", u64::from(self.version).into());
         o.insert("hash", (&self.hash).into());
         o.insert("entries", Value::from(self.entries.clone()));
+        if !self.shared.is_empty() {
+            o.insert("shared", Value::from(self.shared.clone()));
+        }
         o.insert("complete", self.complete.into());
         o.insert("store", (&self.store).into());
         if self.production {
@@ -156,6 +161,10 @@ impl State {
             version: u32::try_from(count(o.get("version"))?).ok()?,
             hash: o.get("hash")?.as_str()?.to_string(),
             entries: strings(o.get("entries"))?,
+            shared: match o.get("shared") {
+                None => Vec::new(),
+                v => strings(v)?,
+            },
             complete: o.get("complete")?.as_bool()?,
             store: o.get("store")?.as_str()?.to_string(),
             production: o.get("production").and_then(Value::as_bool).unwrap_or(false),
@@ -205,11 +214,18 @@ pub fn stamp_of(file: &Path) -> Option<Stamp> {
 
 /// The one value a warm install compares: the lockfile's content (which decides the graph, its
 /// bins and every store entry), and what this install links out of it, from which store.
-pub fn state_hash(lock_hash: &str, production: bool, store: &Path, platform: &crate::sys::Platform) -> String {
+pub fn state_hash(
+    lock_hash: &str,
+    production: bool,
+    store: &Path,
+    global: bool,
+    platform: &crate::sys::Platform,
+) -> String {
     short_hash(&format!(
-        "jpm-state-2\n{lock_hash}\nproduction:{}\nstore:{}\n{}",
+        "jpm-state-2\n{lock_hash}\nproduction:{}\nstore:{}\nglobal:{}\n{}",
         u8::from(production),
         store.display(),
+        u8::from(global),
         json::to_string(&platform.to_value())
     ))
 }
