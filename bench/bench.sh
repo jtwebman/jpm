@@ -135,7 +135,9 @@ case $W in /*[!/]*) ;; *) die "BENCH_WORK must be an absolute path below /: $W" 
 case $W in *[[:space:]]*) die "BENCH_WORK must not contain spaces: $W" ;; esac
 for p in $PHASES; do case $p in cold | warm | repeat) ;; *) die "unknown phase: $p" ;; esac; done
 for f in $FIXTURES; do case $f in */* | .*) die "bad fixture name: $f" ;; esac; [ -f "$BENCH/fixtures/$f/package.json" ] || die "no fixture: $f"; done
-/usr/bin/time -f %M true >/dev/null 2>&1 ||
+# Windows runs this under Git Bash, timing with measure.exe (built below) in place of GNU time.
+case $(uname -s) in MINGW* | MSYS* | CYGWIN*) WIN=1 ;; *) WIN=0 ;; esac
+[ $WIN = 1 ] || /usr/bin/time -f %M true >/dev/null 2>&1 ||
 	die "needs GNU time at /usr/bin/time (Debian/Ubuntu: apt install time)"
 case $(date +%N) in *N*) die "needs GNU date (date +%N)" ;; esac
 
@@ -171,13 +173,29 @@ envs() {
 		"YARN_NODE_LINKER=node-modules YARN_ENABLE_IMMUTABLE_INSTALLS=false" ;;
 	deno) echo "DENO_DIR=$h/deno DENO_NO_UPDATE_CHECK=1" ;;
 	esac
+	# Windows programs find their per-user dirs here, not under HOME.
+	[ $WIN = 0 ] || echo "USERPROFILE=$h APPDATA=$h/AppData/Roaming LOCALAPPDATA=$h/AppData/Local"
 }
 
 # Runs a command under GNU time; sets ST, WALL (ms), CPU (ms) and RSS (KB).
 # OVER, the cost of the wrapper itself in µs, is taken off the wall time.
+# On Windows the command names $TIMER after its env assignments, and measure.exe
+# times the whole process tree: wall, user plus kernel CPU, and peak memory,
+# which there is the tree's peak commit (Windows keeps no peak RSS for a tree).
 OVER=0
+TIMER=""
 timed() {
 	log=$1; shift
+	if [ $WIN = 1 ]; then
+		rm -f "$W/time"
+		"$@" >"$log" 2>&1
+		ST=$?
+		# shellcheck disable=SC2046
+		set -- $(cat "$W/time" 2>/dev/null) 0 0 0 0
+		WALL=$1 CPU=$2 RSS=$3
+		[ "$4" = 0 ] || ST=$4
+		return
+	fi
 	t0=$(date +%s%N)
 	/usr/bin/time -f '%U %S %M' -o "$W/time" "$@" >"$log" 2>&1
 	ST=$?
@@ -195,6 +213,17 @@ timed() {
 
 JPM=${CARGO_TARGET_DIR:-$ROOT/target}/release/jpm
 [ $DRY = 1 ] || cargo build --release --manifest-path "$ROOT/Cargo.toml" || die "cargo build failed"
+if [ $WIN = 1 ]; then
+	JPM=$JPM.exe
+	# Built by the C# compiler that comes with Windows (.NET Framework 4).
+	MEASURE=$W/tools/measure.exe
+	csc=$(cygpath -u "${WINDIR:-C:/Windows}")/Microsoft.NET/Framework64/v4.0.30319/csc.exe
+	if [ $DRY = 0 ] && [ ! "$MEASURE" -nt "$BENCH/measure.cs" ]; then
+		mkdir -p "$W/tools" && "$csc" -nologo -optimize "-out:$(cygpath -w "$MEASURE")" "$(cygpath -w "$BENCH/measure.cs")" >"$W/logs/measure.log" 2>&1 ||
+			die "could not build measure.exe with $csc; see $W/logs/measure.log"
+	fi
+	TIMER="$MEASURE $(cygpath -w "$W/time")"
+fi
 
 # Deletes a dir under the work dir; stores keep their files read-only.
 wipe() {
@@ -232,6 +261,12 @@ fetch_tools() {
 	TOOL_pnpm=$m/pnpm/../@pnpm/exe.linux-$a/pnpm
 	TOOL_bun=$m/bun/../@oven/bun-linux-$b/bin/bun
 	TOOL_deno=$m/deno/../@deno/linux-$a-glibc/deno
+	if [ $WIN = 1 ]; then
+		TOOL_npm=$m/.bin/npm.cmd TOOL_yarn=$m/.bin/yarn.cmd TOOL_upm=$m/.bin/upm.cmd
+		TOOL_pnpm=$m/pnpm/../@pnpm/exe.win32-$a/pnpm.exe
+		TOOL_bun=$m/bun/../@oven/bun-windows-$b/bin/bun.exe
+		TOOL_deno=$m/deno/../@deno/win32-$a/deno.exe
+	fi
 	deps=""
 	for r in $RUNNERS; do
 		pkg=$(package "$r")
@@ -266,14 +301,22 @@ fetch_aube() {
 	if [ ! -d "$d" ]; then
 		wipe "$d.part"
 		mkdir -p "$d.part" || exit 1
-		if ! curl -fsSL "$url/download/$tag/aube-$tag-$(uname -m)-unknown-linux-gnu.tar.gz" | tar -xz -C "$d.part"; then
+		if [ $WIN = 1 ]; then
+			zip=$d.part/aube.zip
+			curl -fsSL -o "$zip" "$url/download/$tag/aube-$tag-$(uname -m)-pc-windows-msvc.zip" &&
+				unzip -q "$zip" -d "$d.part" && rm -f "$zip"
+		else
+			curl -fsSL "$url/download/$tag/aube-$tag-$(uname -m)-unknown-linux-gnu.tar.gz" | tar -xz -C "$d.part"
+		fi
+		# shellcheck disable=SC2181
+		if [ $? != 0 ]; then
 			wipe "$d.part"
 			echo "skip fetching aube: download failed"
 			return
 		fi
 		mv "$d.part" "$d" || exit 1
 	fi
-	TOOL_aube=$(find "$d" -type f -name aube | head -n 1)
+	TOOL_aube=$(find "$d" -type f \( -name aube -o -name aube.exe \) | head -n 1)
 }
 
 [ $INSTALLED = 1 ] || fetch_tools
@@ -291,7 +334,8 @@ for r in $RUNNERS; do
 		case $r in npm | yarn | upm) command -v node >/dev/null || { echo "skip $r: needs node on PATH"; continue; } ;; esac
 	fi
 	case $bin in /*) ;; */*) bin=$PWD/$bin ;; *) bin=$(command -v "${bin:-$r}") || { echo "skip $r: not found"; continue; } ;; esac
-	[ $DRY = 1 ] || [ -x "$bin" ] || { echo "skip $r: $bin is not executable"; continue; }
+	# Git Bash marks no .cmd executable.
+	[ $DRY = 1 ] || [ -x "$bin" ] || { [ $WIN = 1 ] && [ -f "$bin" ]; } || { echo "skip $r: $bin is not executable"; continue; }
 	eval "BIN_$r=\$bin"
 	ver="?"
 	if [ $DRY = 0 ]; then
@@ -299,12 +343,10 @@ for r in $RUNNERS; do
 		# shellcheck disable=SC2046
 		ver=$(env $(envs "$r" "$W/r/$r/vhome") "$bin" --version 2>&1 | head -n 1 |
 			sed -n 's/^[^0-9]*\([0-9][0-9.]*[0-9]\).*/\1/p')
-		# upm has no --version: its package.json says.
+		# upm has no --version: its package.json says (on Windows .bin holds a shim, not a link).
 		[ -n "$ver" ] || ver=$(sed -n 's/^ *"version": *"\([0-9][^"]*\)".*/\1/p' \
-			"$(dirname "$(readlink -f "$bin")")/../package.json" 2>/dev/null | head -n 1)
-		# upm has no --version: its package.json says.
-		[ -n "$ver" ] || ver=$(sed -n 's/^ *"version": *"\([0-9][^"]*\)".*/\1/p' \
-			"$(dirname "$(readlink -f "$bin")")/../package.json" 2>/dev/null | head -n 1)
+			"$(dirname "$(readlink -f "$bin")")/../package.json" "$W/tools/proj/node_modules/$r/package.json" \
+			2>/dev/null | head -n 1)
 		[ -n "$ver" ] || { echo "skip $r: $bin --version failed"; continue; }
 		case $r$ver in yarn1.*) echo "skip yarn: $ver is yarn classic, not berry"; continue ;; esac
 	fi
@@ -332,14 +374,16 @@ fresh() {
 pm_install() {
 	eval "bin=\$BIN_$1"
 	ST=125 WALL=0 CPU=0 RSS=0
+	# measure.exe starts it with CreateProcess, which wants a Windows path for a .cmd.
+	[ $WIN = 0 ] || bin=$(cygpath -w "$bin")
 	cd "$2/proj" || return
 	# shellcheck disable=SC2046,SC2086
-	timed "$W/logs/$3.log" env $(envs "$1" "$2/home") "$bin" $(args "$1")
+	timed "$W/logs/$3.log" env $(envs "$1" "$2/home") $TIMER "$bin" $(args "$1")
 	cd "$ROOT" || exit 1
 	if [ "$ST" = 0 ]; then : >"$2/ok"; else rm -f "$2/ok"; fi
 }
 
-if [ $DRY = 0 ]; then
+if [ $DRY = 0 ] && [ $WIN = 0 ]; then
 	best=999999999
 	for _ in 1 2 3 4 5; do timed /dev/null env A=1 true; [ "$us" -lt "$best" ] && best=$us; done
 	OVER=$best
