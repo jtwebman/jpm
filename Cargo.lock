@@ -217,6 +217,7 @@ dependencies = [
  "jpm-crypto",
  "rcgen",
  "rustls",
+ "rustls-webpki",
  "serde_json",
  "webpki-roots",
 ]
