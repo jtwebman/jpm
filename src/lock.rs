@@ -837,7 +837,6 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         return Err(fail(format!("unsupported lockfileVersion {}", lock.lockfile_version)));
     }
     let mut known: HashSet<String> = lock.packages.keys().cloned().collect();
-    let mut named: BTreeMap<&str, &str> = BTreeMap::new();
     for (path, ws) in &lock.workspaces {
         let at = format!("workspaces[{path:?}]");
         if !local_path(path) {
@@ -845,9 +844,6 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         }
         if !semver::is_exact(&ws.version) || spec::parse_dep(&ws.name, &ws.version).is_err() {
             return Err(fail(format!("{at}.version must be an exact version")));
-        }
-        if let Some(other) = named.insert(&ws.name, path) {
-            return Err(fail(format!("workspaces[{other:?}] and {at} are both named {}", ws.name)));
         }
         known.insert(format!("{}@link:{path}", ws.name));
     }
