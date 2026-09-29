@@ -282,18 +282,6 @@ fn keeps_entries_missing_an_optional_package_local() {
     assert!(env.read("node_modules/nat/../b/index.js").contains("b@1.0.0"));
 }
 
-/// Everything in the store, made older than a prune's grace period.
-fn age_store(env: &Env) {
-    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
-    let v1 = env.store().join("v1");
-    let shards = std::fs::read_dir(v1.join("pkg")).unwrap().flatten().map(|e| e.path());
-    for dir in shards.chain([v1.join("links")]).collect::<Vec<_>>() {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            std::fs::File::open(e.path()).unwrap().set_modified(old).unwrap();
-        }
-    }
-}
-
 fn pruned(env: &Env, dir: &std::path::Path) -> (u64, u64) {
     let out = env.command_in(dir, &["prune", "--json"]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -311,7 +299,6 @@ fn prunes_what_no_project_uses() {
     std::fs::create_dir_all(&other).unwrap();
     std::fs::write(other.join("package.json"), r#"{ "dependencies": { "a": "1.1.0", "cli": "1" } }"#).unwrap();
     assert!(env.command_in(&other, &["install"]).status().unwrap().success());
-    age_store(&env);
     assert_eq!(pruned(&env, &env.project()), (0, 0), "both projects use everything");
 
     // Only what the removed project used alone goes; the other project still stands.
@@ -326,7 +313,6 @@ fn prunes_what_no_project_uses() {
     std::fs::create_dir_all(&third).unwrap();
     std::fs::write(third.join("package.json"), r#"{ "dependencies": { "cli": "1" } }"#).unwrap();
     assert!(env.command_in(&third, &["install"]).status().unwrap().success());
-    age_store(&env);
     assert_eq!(pruned(&env, &third), (2, 2));
     let again = env.ok(&["install"]);
     assert!(!again.contains("up to date"), "{again}");

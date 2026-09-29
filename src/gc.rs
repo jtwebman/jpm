@@ -1,8 +1,8 @@
 //! Reclaiming space: a project's stale `.jpm` entries, and store content nothing can use.
 //! Mark and sweep, never refcounts: a refcount survives neither a second jpm running nor
 //! `rm -rf node_modules`. The marks come from every project registered with the store: the
-//! global entries its install state names and the packages its lockfile names. Nothing written
-//! in the last hour is touched, and the store's lock keeps a prune and an install apart.
+//! global entries its install state names and the packages its lockfile names. The store's
+//! lock keeps a prune and an install (or fetch) apart, so what is unused goes at once.
 
 use std::collections::HashSet;
 use std::fs;
@@ -12,7 +12,8 @@ use std::time::{Duration, SystemTime};
 use crate::store::{Store, remove_tree};
 use crate::{lock, state, sys};
 
-const GRACE: Duration = Duration::from_secs(3600);
+/// How long a dead process's temp directory is left alone, in case its pid was reused.
+const TMP_GRACE: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Default)]
 pub struct Swept {
@@ -26,9 +27,13 @@ impl Swept {
     }
 }
 
-fn young(path: &Path) -> bool {
-    let Ok(meta) = fs::symlink_metadata(path) else { return true };
-    meta.modified().ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_none_or(|age| age < GRACE)
+/// A temp directory whose process is gone: `<pid>-...` by name, and not written lately.
+fn abandoned(path: &Path, name: &str) -> bool {
+    let pid = name.split('-').next().and_then(|p| p.parse::<u32>().ok());
+    let Ok(meta) = fs::symlink_metadata(path) else { return false };
+    let old =
+        meta.modified().ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_some_and(|a| a >= TMP_GRACE);
+    pid.is_some_and(|p| p > 0 && !sys::alive(p)) && old
 }
 
 /// Bytes a removal really frees: a hardlinked file frees nothing while another link survives.
@@ -53,8 +58,7 @@ pub fn sweep_entries(dir: &Path, keep: &HashSet<String>) -> Swept {
     let mut out = Swept::default();
     for e in fs::read_dir(&entries).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_dir()) || young(&e.path())
-        {
+        if name.starts_with('.') || keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
         out.bytes += freed(&e.path());
@@ -90,10 +94,10 @@ pub fn sweep_shared(links: &Path, keep: &HashSet<String>) -> Swept {
     for e in fs::read_dir(links).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let gone = match name.strip_prefix(".tmp-") {
-            Some(rest) => rest.split('-').next().and_then(|p| p.parse::<u32>().ok()).is_some_and(|p| !sys::alive(p)),
+            Some(rest) => abandoned(&e.path(), rest),
             None => !name.starts_with('.') && !keep.contains(&name),
         };
-        if gone && !young(&e.path()) {
+        if gone {
             out.bytes += freed(&e.path());
             remove_tree(&e.path());
             out.removed += 1;
@@ -119,7 +123,7 @@ pub fn prune_store(pkg_root: &Path, tmp: &Path, used: &HashSet<PathBuf>) -> Swep
                 Some(dir) => !names.contains(dir),
                 None => !name.ends_with(".tmp") && (!used.contains(&path) || !names.contains(&format!("{name}.idx"))),
             };
-            if orphan && !young(&path) {
+            if orphan {
                 out.bytes += freed(&path);
                 if path.is_dir() {
                     remove_tree(&path);
@@ -134,8 +138,7 @@ pub fn prune_store(pkg_root: &Path, tmp: &Path, used: &HashSet<PathBuf>) -> Swep
         let _ = fs::remove_dir(shard.path()); // only when the sweep emptied it
     }
     for e in fs::read_dir(tmp).into_iter().flatten().flatten() {
-        let pid = e.file_name().to_string_lossy().split('-').next().and_then(|p| p.parse::<u32>().ok());
-        if pid.is_some_and(|p| p > 0 && !sys::alive(p)) && !young(&e.path()) {
+        if abandoned(&e.path(), &e.file_name().to_string_lossy()) {
             out.bytes += freed(&e.path());
             remove_tree(&e.path());
             out.removed += 1;
@@ -148,28 +151,22 @@ pub fn prune_store(pkg_root: &Path, tmp: &Path, used: &HashSet<PathBuf>) -> Swep
 mod tests {
     use super::*;
 
-    fn age(path: &Path) {
-        let old = SystemTime::now() - Duration::from_secs(7200);
-        let f = fs::File::open(path).unwrap();
-        f.set_modified(old).unwrap();
-    }
-
     #[test]
-    fn prunes_orphans_but_not_young_or_kept() {
+    fn prunes_torn_and_unused_content() {
         let root = crate::store::tests::scratch("gc");
         let shard = root.join("pkg").join("ab");
         fs::create_dir_all(shard.join("kept")).unwrap();
         fs::write(shard.join("kept.idx"), "x").unwrap();
         fs::create_dir_all(shard.join("torn")).unwrap();
-        fs::create_dir_all(shard.join("fresh")).unwrap();
-        age(&shard.join("torn"));
         fs::create_dir_all(shard.join("unused")).unwrap();
         fs::write(shard.join("unused.idx"), "x").unwrap();
-        age(&shard.join("unused"));
+        // A live process's temp directory stays, however it looks.
+        let tmp = root.join("tmp").join(format!("{}-x", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
         let used: HashSet<PathBuf> = [shard.join("kept")].into();
         let out = prune_store(&root.join("pkg"), &root.join("tmp"), &used);
         assert_eq!(out.removed, 2);
-        assert!(shard.join("kept").exists() && shard.join("fresh").exists() && !shard.join("torn").exists());
+        assert!(shard.join("kept").exists() && !shard.join("torn").exists() && tmp.exists());
         assert!(!shard.join("unused").exists() && !shard.join("unused.idx").exists());
         remove_tree(&root);
     }
@@ -180,7 +177,6 @@ mod tests {
         let entries = dir.join("node_modules").join(".jpm");
         for name in ["a@1.0.0-x", "b@1.0.0-y", ".tmp-1"] {
             fs::create_dir_all(entries.join(name)).unwrap();
-            age(&entries.join(name));
         }
         let keep: HashSet<String> = ["a@1.0.0-x".to_string()].into();
         assert_eq!(sweep_entries(&dir, &keep).removed, 1);
