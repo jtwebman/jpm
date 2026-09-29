@@ -421,30 +421,34 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
     };
     let walk_pick: Option<&resolve::OnPick> = if prefetching { Some(&on_pick) } else { None };
-    let lock = plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone()))
-        // A required package that cannot run here fails now, not once the prefetch is done.
-        .and_then(|lock| filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &platform).map(|_| lock));
+    let global = global_store(ctx, &store);
+    let planned =
+        plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone())).and_then(|lock| {
+            // What is needed of the lockfile itself, before it is taken apart into the graph.
+            let facts = (lock.workspaces.len(), lock.packages.len(), lock::content_hash(&lock), files_of(ctx, &lock));
+            // Shared entries are named by keys computed here, over the graph this platform
+            // installs: a lockfile could claim another project's key and plant an entry every
+            // project trusts, and an entry built without a package another platform needs must
+            // not share its name.
+            let recorded = if global.is_some() { None } else { lock::recorded_keys(&lock) };
+            let checked = lock::into_resolution(lock, &ctx.base_for());
+            let keys = global.is_none().then(|| recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages)));
+            // A required package that cannot run here fails now, not once the prefetch is done.
+            Ok((facts, keys, filter_platform(checked, &platform)?))
+        });
     ui::phase("planned");
     // Nothing more is queued; a failed plan also drops what is still waiting.
-    fetcher.close(lock.is_err());
-    let lock = lock?;
+    fetcher.close(planned.is_err());
+    let ((workspaces, locked, lock_hash, tarballs), keys, resolution) = planned?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
     }
-    // What is needed of the lockfile itself, before it is taken apart into the graph.
-    let workspaces = lock.workspaces.len();
-    let locked = lock.packages.len();
-    let lock_hash = lock::content_hash(&lock);
-    let tarballs = files_of(ctx, &lock);
-    let global = global_store(ctx, &store);
-    // Shared entries are named by keys computed here, over the graph this platform installs:
-    // a lockfile could claim another project's key and plant an entry every project trusts, and
-    // an entry built without a package another platform needs must not share its name.
-    let recorded = if global.is_some() { None } else { lock::recorded_keys(&lock) };
-    let checked = lock::into_resolution(lock, &ctx.base_for());
-    let keys = global.is_none().then(|| recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages)));
-    let resolution = filter_platform(checked, &platform)?;
+    if let (None, Some(f)) = (ctx.global_setting(), ctx.framework) {
+        info(&format!(
+            "building packages in the project, not the global store: {f} needs them inside it (global-store=true overrides)"
+        ));
+    }
     let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
     for w in &resolution.warnings {
         warn(w);
@@ -656,14 +660,8 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
 /// The global virtual store's entry directory, when it is wanted and the store can be written.
 fn global_store(ctx: &Ctx, store: &Store) -> Option<PathBuf> {
     if !ctx.wants_global() {
-        if let (None, Some(f)) = (ctx.global_setting(), ctx.framework) {
-            info(&format!(
-                "building packages in the project, not the global store: {f} needs them inside it (global-store=true overrides)"
-            ));
-        }
         return None;
     }
-
     let dir = store.links_dir();
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
@@ -1257,13 +1255,10 @@ fn yarn_1(file: &str, text: &str) -> bool {
 }
 
 pub fn counts(lock: &Lockfile) -> String {
-    let res = lock::from_lockfile(lock, &|_| String::new());
-    let all: Vec<&Package> = res.packages.values().filter(|p| p.local.is_none()).collect();
-    let optional = all.iter().filter(|p| p.optional).count();
-    let dev = all.iter().filter(|p| p.dev).count();
+    let (all, optional, dev) = lock::tally(lock);
     let n = lock.workspaces.len();
     let ws = if n > 0 { format!(", {n} workspace{}", if n == 1 { "" } else { "s" }) } else { String::new() };
-    format!("{} packages, {optional} optional, {dev} dev{ws}", all.len())
+    format!("{all} packages, {optional} optional, {dev} dev{ws}")
 }
 
 // --- add and remove -------------------------------------------------------------------------

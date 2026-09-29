@@ -275,9 +275,7 @@ pub fn from_lockfile(lock: &Lockfile, base_for: &dyn Fn(&str) -> String) -> Reso
 
 /// `from_lockfile`, taking the lockfile apart instead of copying it.
 pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Resolution {
-    let shipped = reach(&lock, &|top, name| top.prod.contains(name), true);
-    let required =
-        reach(&lock, &|top, name| !top.specs.as_ref().is_some_and(|s| s.optional().contains_key(name)), false);
+    let (shipped, required) = shipped_required(&lock);
     let mut packages = BTreeMap::new();
     for (path, ws) in lock.workspaces {
         packages.insert(
@@ -342,6 +340,24 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
         overrides: lock.root.overrides,
     };
     Resolution { root, packages, warnings: Vec::new() }
+}
+
+/// What ships (the rest is dev-only) and what is required (the rest is optional).
+fn shipped_required(lock: &Lockfile) -> (HashSet<String>, HashSet<String>) {
+    let shipped = reach(lock, &|top, name| top.prod.contains(name), true);
+    let required =
+        reach(lock, &|top, name| !top.specs.as_ref().is_some_and(|s| s.optional().contains_key(name)), false);
+    (shipped, required)
+}
+
+/// The packages, and how many are optional and dev-only, as `into_resolution` marks them,
+/// without converting the lockfile.
+pub fn tally(lock: &Lockfile) -> (usize, usize, usize) {
+    let (shipped, required) = shipped_required(lock);
+    let keys = lock.packages.keys().filter(|k| split_key(k).is_some() && !is_link(k));
+    keys.fold((0, 0, 0), |(all, optional, dev), k| {
+        (all + 1, optional + usize::from(!required.contains(k)), dev + usize::from(!shipped.contains(k)))
+    })
 }
 
 struct Top<'a> {
@@ -1119,6 +1135,21 @@ package d@1.0.0
         assert_eq!(format_json(&again).unwrap(), format_json(&lock).unwrap());
         // The stored subgraphs are the ones hashing the graph gives.
         assert_eq!(recorded_keys(&again).unwrap(), crate::keys::store_keys(&res.packages));
+    }
+
+    #[test]
+    fn tallies_as_the_graph_marks() {
+        let linked = "jpm-lock 2\nhash 0\nroot\n  spec dependencies l link:../l\n  spec optionalDependencies a ^1\n  dep l link:../l\n  dep a 1.0.0\n\
+                      package l@link:../l\n  version 1.0.0\npackage a@1.0.0\n  integrity sha512-a\n";
+        for lock in [sample(), parse_lockfile(linked, LOCKFILE).unwrap()] {
+            let res = from_lockfile(&lock, &|_| String::new());
+            let all: Vec<&Package> = res.packages.values().filter(|p| p.local.is_none()).collect();
+            let optional = all.iter().filter(|p| p.optional).count();
+            let dev = all.iter().filter(|p| p.dev).count();
+            assert_eq!(tally(&lock), (all.len(), optional, dev));
+        }
+        assert_eq!(tally(&sample()), (4, 1, 1));
+        assert_eq!(tally(&parse_lockfile(linked, LOCKFILE).unwrap()), (1, 1, 0));
     }
 
     #[test]
