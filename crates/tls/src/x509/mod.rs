@@ -107,12 +107,18 @@ impl From<Code> for Error {
 
 /// At most this many intermediates on a path.
 const MAX_INTERMEDIATES: usize = 6;
+/// At most this many certificates in a chain. Each search step scans them all, so a long chain
+/// of junk would make the step budget slow to spend. webpki has no such limit.
+const MAX_CHAIN: usize = 64;
 
 /// Check `chain` (DER certificates, the server's first, then whatever intermediates it sent in
 /// any order) for `host` (a DNS name or an IP address literal) at `now` (seconds since the Unix
 /// epoch). The server certificate's public key on success.
 pub fn verify_server<'a>(chain: &[&'a [u8]], host: &str, now: u64, anchors: &[Anchor]) -> Result<PublicKey<'a>, Error> {
     let (&leaf_der, rest) = chain.split_first().ok_or(Error::from(Code::Encoding))?;
+    if chain.len() > MAX_CHAIN {
+        return Err(Code::TooComplex.into());
+    }
     let leaf = cert::parse(leaf_der)?;
     let mut search = Search {
         certs: rest.iter().map(|der| cert::parse(der)).collect(),

@@ -27,6 +27,10 @@ const BUF_LEN: usize = 5 + MAX_CIPHER_12 + MAX_PLAIN;
 /// The longest handshake message accepted. Certificate chains are the longest in practice and
 /// stay far below this.
 const MAX_HANDSHAKE: usize = 1 << 16;
+/// The most alerts and change_cipher_spec records ignored while waiting for one handshake
+/// message (or TLS 1.2 change_cipher_spec). The server is not authenticated yet, so it gets
+/// only a few (as in rustls).
+const MAX_IGNORED: usize = 32;
 
 /// One direction's key: the AEAD key, the IV and the sequence number.
 pub(crate) struct Keys {
@@ -210,6 +214,11 @@ impl<S: Read + Write> Conn<S> {
                 if !k.key.open(&k.nonce(n), aad, &mut self.buf[a..b], &tag) {
                     return Err(Error::Tls(alert::BAD_RECORD_MAC, "tls: bad record mac"));
                 }
+                // RFC 8446 section 5.4: in TLS 1.3 the limit counts the content type and the
+                // padding too.
+                if b - a > MAX_PLAIN + usize::from(self.tls13) {
+                    return Err(Error::Tls(alert::RECORD_OVERFLOW, "tls: record overflow"));
+                }
                 if self.tls13 {
                     // The content type is the last non-zero byte; zeros after it are padding.
                     let Some(i) = self.buf[a..b].iter().rposition(|&x| x != 0) else {
@@ -226,9 +235,6 @@ impl<S: Read + Write> Conn<S> {
                             "tls: unexpected message: bad inner content type",
                         ));
                     }
-                }
-                if b - a > MAX_PLAIN {
-                    return Err(Error::Tls(alert::RECORD_OVERFLOW, "tls: record overflow"));
                 }
             }
         }
@@ -254,6 +260,7 @@ impl<S: Read + Write> Conn<S> {
 
     /// The next whole handshake message, header included.
     pub(crate) fn read_hs(&mut self) -> Result<Vec<u8>> {
+        let mut ignored = 0;
         loop {
             if let Some(m) = self.hs_message()? {
                 return Ok(m);
@@ -263,7 +270,11 @@ impl<S: Read + Write> Conn<S> {
                 HANDSHAKE if self.plaintext().is_empty() => {
                     return Err(Error::Tls(alert::DECODE_ERROR, "tls: decode error: empty handshake record"));
                 }
-                HANDSHAKE => self.take_hs(),
+                HANDSHAKE => {
+                    self.take_hs();
+                    continue;
+                }
+                _ if !self.hs.is_empty() => return Err(interleaved()),
                 ALERT => match self.alert() {
                     Err(Error::Closed) => {
                         let e =
@@ -272,10 +283,10 @@ impl<S: Read + Write> Conn<S> {
                     }
                     r => r?,
                 },
-                _ if !self.hs.is_empty() => return Err(interleaved()),
                 CHANGE_CIPHER_SPEC if self.ccs_ok && self.plaintext() == [1] => {}
                 _ => return Err(Error::Tls(alert::UNEXPECTED_MESSAGE, "tls: unexpected message during the handshake")),
             }
+            ignore(&mut ignored)?;
         }
     }
 
@@ -301,9 +312,13 @@ impl<S: Read + Write> Conn<S> {
 
     /// TLS 1.2: the server's change_cipher_spec, alone in its record and between messages.
     pub(crate) fn read_ccs(&mut self) -> Result<()> {
+        let mut ignored = 0;
         loop {
             match self.next_record()? {
-                ALERT => self.alert()?,
+                ALERT => {
+                    self.alert()?;
+                    ignore(&mut ignored)?;
+                }
                 CHANGE_CIPHER_SPEC if self.hs.is_empty() && self.plaintext() == [1] => return Ok(()),
                 _ => {
                     return Err(Error::Tls(
@@ -378,6 +393,15 @@ impl<S: Read + Write> Conn<S> {
         }
         e.into()
     }
+}
+
+/// Count one more record ignored during the handshake; too many is an error.
+fn ignore(n: &mut usize) -> Result<()> {
+    *n += 1;
+    if *n > MAX_IGNORED {
+        return Err(Error::Tls(alert::UNEXPECTED_MESSAGE, "tls: unexpected message: too many ignored records"));
+    }
+    Ok(())
 }
 
 /// RFC 8446 section 5.1: handshake messages must not span a key change.

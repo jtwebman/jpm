@@ -740,6 +740,15 @@ fn not_a_tls_server() {
     refused(raw(&[22, 3, 3, 0, 4, 2, 1, 0, 1]), "handshake message too long", Some(DECODE_ERROR));
     // A ServerHello interrupted by another record.
     refused(raw(&[22, 3, 3, 0, 2, 2, 0, 23, 3, 3, 0, 1, 0]), "inside a handshake message", Some(UNEXPECTED_MESSAGE));
+    // Or by an alert, even a warning.
+    refused(
+        raw(&[22, 3, 3, 0, 2, 2, 0, 21, 3, 3, 0, 2, 1, 112]),
+        "inside a handshake message",
+        Some(UNEXPECTED_MESSAGE),
+    );
+    // Warnings before the ServerHello are ignored, but only so many.
+    let warnings = [21, 3, 3, 0, 2, 1, 112].repeat(33);
+    refused(raw(&warnings), "too many ignored records", Some(UNEXPECTED_MESSAGE));
     // An early end, between records and inside one.
     for b in [&[][..], &[22, 3, 3], &[22, 3, 3, 0, 10, 2, 0]] {
         let (r, _) = try_connect(raw(b), &[]);
@@ -750,8 +759,11 @@ fn not_a_tls_server() {
 #[test]
 fn records_between_messages() {
     let inject = |b: &[u8]| Script { inject: b.to_vec(), ..Script::default() };
-    // TLS 1.3: change_cipher_spec is ignored during the handshake, however many; only [1].
+    // TLS 1.3: change_cipher_spec is ignored during the handshake; only [1], and only 32 in a
+    // row (with the script's own).
     exchange(inject(&[20, 3, 3, 0, 1, 1]));
+    exchange(inject(&[20, 3, 3, 0, 1, 1].repeat(31)));
+    refused(inject(&[20, 3, 3, 0, 1, 1].repeat(32)), "too many ignored records", Some(UNEXPECTED_MESSAGE));
     refused(inject(&[20, 3, 3, 0, 1, 2]), "tls: unexpected message", Some(UNEXPECTED_MESSAGE));
     refused(inject(&[20, 3, 3, 0, 2, 1, 1]), "tls: unexpected message", Some(UNEXPECTED_MESSAGE));
     refused(inject(&[20, 3, 3, 0, 0]), "tls: unexpected message", Some(UNEXPECTED_MESSAGE));
@@ -769,8 +781,10 @@ fn records_between_messages() {
     refused(inject12(&[23, 3, 3, 0, 1, 1]), "tls: unexpected message", Some(UNEXPECTED_MESSAGE));
     refused(inject12(&[22, 3, 3, 0, 4, 0, 0, 0, 0]), "tls: unexpected message", Some(UNEXPECTED_MESSAGE));
     refused(inject12(&[21, 3, 3, 0, 2, 2, 40]), "tls: received alert handshake_failure", None);
-    // A warning is ignored in TLS 1.2.
+    // A warning is ignored in TLS 1.2, up to 32 in a row.
     exchange(inject12(&[21, 3, 3, 0, 2, 1, 112]));
+    exchange(inject12(&[21, 3, 3, 0, 2, 1, 112].repeat(32)));
+    refused(inject12(&[21, 3, 3, 0, 2, 1, 112].repeat(33)), "too many ignored records", Some(UNEXPECTED_MESSAGE));
 }
 
 #[test]
@@ -789,7 +803,8 @@ fn application_data_records() {
         f.send_padded(APP, b"padded", 100)?;
         f.send(APP, b"")?;
         f.send_padded(APP, b"", 1000)?;
-        f.send_padded(APP, &[7; 1 << 14], 239)?;
+        f.send_padded(APP, &[7; 1 << 14], 0)?;
+        f.send_padded(APP, b"", 1 << 14)?;
         f.close_notify()
     });
     let (r, _) = try_connect_then(script, |s| {
@@ -799,8 +814,11 @@ fn application_data_records() {
         assert_eq!(got.len(), 6 + (1 << 14));
     });
     r.unwrap();
-    // One byte of padding more is over the ciphertext limit.
-    let script = Script::default().after(|f| f.send_padded(APP, &[7; 1 << 14], 240));
+    // The inner plaintext, content type and padding included, is 2^14 + 1 bytes at most (RFC 8446
+    // section 5.4), though the ciphertext has room for more.
+    let script = Script::default().after(|f| f.send_padded(APP, &[7; 1 << 14], 1));
+    read_fails(script, "tls: record overflow", Some(RECORD_OVERFLOW));
+    let script = Script::default().after(|f| f.send_padded(APP, b"", (1 << 14) + 1));
     read_fails(script, "tls: record overflow", Some(RECORD_OVERFLOW));
 }
 
