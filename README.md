@@ -47,6 +47,7 @@ cargo build --release    # target/release/jpm
 
 ```sh
 jpm install                          # install the project's dependencies
+jpm                                  # the same: no command is install
 jpm add vue@^3 nanoid                # save to package.json, then install
 jpm add --dev vitest                 # save as a dev dependency
 jpm remove nanoid                    # remove from package.json, then install

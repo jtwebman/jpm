@@ -58,6 +58,28 @@ fn installs_an_isolated_tree() {
 }
 
 #[test]
+fn no_command_installs() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    let out = env.ok(&[]);
+    assert!(out.contains("Installed"), "{out}");
+    assert!(env.exists("node_modules/b"));
+    // Flags without a command are install's.
+    let out = env.ok(&["--frozen-lockfile"]);
+    assert!(out.contains("up to date"), "{out}");
+    env.manifest(json!({ "dependencies": { "b": "2.0.0" } }));
+    let out = env.jpm(&["--frozen-lockfile"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("out of date"));
+    let out = env.jpm(&["--lock"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--lock only applies to fetch"));
+    for help in ["--help", "-h"] {
+        let out = env.ok(&[help]);
+        assert!(out.contains("Usage"), "{out}");
+    }
+}
+
+#[test]
 fn links_bins_and_runs_scripts() {
     let r = registry();
     let env = Env::new(&r);
