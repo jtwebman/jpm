@@ -97,7 +97,14 @@ struct Ctx {
     scriptless: bool,
     /// Each local tarball's stamp from just before this command checked or read it.
     stamped: Mutex<BTreeMap<String, Stamp>>,
+    /// A framework the tree depends on that needs every package inside the project.
+    framework: std::sync::OnceLock<Option<&'static str>>,
 }
+
+/// Frameworks that fail when a package's real path is outside the project: Next's Turbopack
+/// compiles nothing outside its root, and Nuxt imports what it did not declare, which only the
+/// project's hidden hoist provides.
+const PROJECT_LAYOUT: [&str; 2] = ["next", "nuxt"];
 
 struct Project {
     dir: PathBuf,
@@ -132,6 +139,7 @@ impl Ctx {
             binless: Vec::new(),
             scriptless: false,
             stamped: Mutex::default(),
+            framework: std::sync::OnceLock::new(),
         }
     }
 
@@ -272,9 +280,37 @@ impl Ctx {
     /// The global virtual store is on unless the config says `global-store=false` or this runs
     /// in a container, whose project mount would not see the store's links.
     fn wants_global(&self) -> bool {
+        self.global_setting().unwrap_or_else(|| {
+            self.framework().is_none()
+                && !Path::new("/.dockerenv").exists()
+                && !Path::new("/run/.containerenv").exists()
+        })
+    }
+
+    /// `--[no-]global-store`, `JPM_GLOBAL_STORE` or `global-store`, when one is given.
+    fn global_setting(&self) -> Option<bool> {
         let env = std::env::var("JPM_GLOBAL_STORE").ok().map(|v| !matches!(v.as_str(), "0" | "false" | "off"));
-        let setting = self.opts.flags.global_store.or(env).or(self.config().global_store);
-        setting.unwrap_or_else(|| !Path::new("/.dockerenv").exists() && !Path::new("/run/.containerenv").exists())
+        self.opts.flags.global_store.or(env).or(self.config().global_store)
+    }
+
+    /// The first of `PROJECT_LAYOUT` that the root or a workspace depends on, read once.
+    fn framework(&self) -> Option<&'static str> {
+        *self.framework.get_or_init(|| {
+            let dir = self.root.clone()?;
+            let root = project::read_manifest(&dir.join("package.json")).ok()?;
+            let workspaces = project::find_workspaces(&dir, &root).unwrap_or_default();
+            let manifests = std::iter::once(&root).chain(workspaces.iter().map(|w| &w.manifest));
+            let names: HashSet<&str> = manifests
+                .flat_map(|m| {
+                    [&m.dependencies, &m.dev_dependencies, &m.optional_dependencies]
+                        .into_iter()
+                        .chain(m.peer_dependencies.as_ref())
+                        .flat_map(|d| d.keys().map(String::as_str))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            PROJECT_LAYOUT.into_iter().find(|f| names.contains(f))
+        })
     }
 
     fn stamps(&mut self, dir: &Path) -> Option<Stamps> {
@@ -620,8 +656,14 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
 /// The global virtual store's entry directory, when it is wanted and the store can be written.
 fn global_store(ctx: &Ctx, store: &Store) -> Option<PathBuf> {
     if !ctx.wants_global() {
+        if let (None, Some(f)) = (ctx.global_setting(), ctx.framework()) {
+            info(&format!(
+                "building packages in the project, not the global store: {f} needs them inside it (global-store=true overrides)"
+            ));
+        }
         return None;
     }
+
     let dir = store.links_dir();
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)

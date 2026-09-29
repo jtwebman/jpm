@@ -13,6 +13,12 @@
 //! With the global virtual store, entries are built once in `<store>/v1/links` and the project
 //! links its direct deps straight to them: a warm install makes only those links.
 
+//!
+//! `node_modules/.jpm/node_modules` is the hidden hoist: a link to one entry of every package,
+//! which Node reaches from any entry in the project after the entry's own `node_modules`. A
+//! package that imports what it did not declare (`@nuxt/vite-builder` imports `unplugin`) still
+//! finds it, as under pnpm's `.pnpm/node_modules`. Entries in the global store resolve from the
+//! store and cannot see it, so it is made only when the project builds entries of its own.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -28,6 +34,8 @@ use crate::util::{relative, temp_suffix};
 use crate::{pool, sys};
 
 const WIN: bool = cfg!(windows);
+/// The hidden hoist, under `.jpm`: no entry key is spelled like it.
+pub const HOIST: &str = "node_modules";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
 
@@ -302,6 +310,12 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     });
     if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
         return Err(e);
+    }
+    let hoist = entries_dir.join(HOIST);
+    if linker.wanted.values().any(|e| !e.shared) {
+        linker.hoist(&hoist)?;
+    } else if hoist.exists() {
+        remove_tree(&hoist);
     }
     for (i, top) in tops.iter().enumerate() {
         if let Some(parent) = top.nm.parent() {
@@ -716,6 +730,48 @@ impl Linker<'_> {
                 Counts::add(&self.counts.removed, 1);
             }
         }
+    }
+
+    /// One entry of every package name in the hidden hoist: the root's own version where it
+    /// has one, else the highest. Links that are already right stay; the rest converge.
+    fn hoist(&self, dir: &Path) -> Result<()> {
+        let direct = &self.res.root.dependencies;
+        let rank = |e: &Entry| (direct.get(&e.pkg.name) == Some(&e.pkg.version), crate::semver::parse(&e.pkg.version));
+        let mut pick: BTreeMap<&str, &Entry> = BTreeMap::new();
+        for e in self.wanted.values() {
+            let better = pick.get(e.pkg.name.as_str()).is_none_or(|have| {
+                let (a, b) = (rank(e), rank(have));
+                a > b || (a == b && e.key < have.key)
+            });
+            if better {
+                pick.insert(&e.pkg.name, e);
+            }
+        }
+        fs::create_dir_all(dir)
+            .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
+        let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
+        let failures: Mutex<Vec<Error>> = Mutex::default();
+        pool::run(pool::disk_threads(), pick, |(name, e), _| {
+            let at = dir.join(name);
+            let parent = at.parent().unwrap_or(dir);
+            let real = self.root_of(e).join(&e.home);
+            let target = if e.shared { real } else { relative(parent, &real) };
+            let made = if name.contains('/') {
+                fs::create_dir_all(parent)
+                    .map_err(|err| Error::io(&err, "cannot create a scope directory").with_code("ELINK"))
+            } else {
+                Ok(())
+            }
+            .and_then(|()| replace_link(&at, &target.to_string_lossy(), dir, true));
+            if let Err(err) = made {
+                failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(err);
+            }
+        });
+        if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
+            return Err(e);
+        }
+        self.sweep(dir, &keep, "");
+        Ok(())
     }
 
     /// An install killed mid-entry leaves a `.tmp-*`: it goes once its pid is gone and it is an

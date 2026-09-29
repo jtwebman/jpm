@@ -302,8 +302,13 @@ turn this off.
 The global virtual store is on by default. Turn it off with `global-store=false` in `.npmrc`,
 `JPM_GLOBAL_STORE=0` or `--no-global-store`. It is off inside containers (`/.dockerenv` or
 `/run/.containerenv`), where a mounted project would not see the store, and when the store
-cannot be written. Tools that expect a package's real path to sit inside the project may need
-it off.
+cannot be written. It is also off, with a note, for a project that depends on `next` or `nuxt`:
+Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
+declare. `global-store=true` overrides that.
+
+Packages built in the project also get a hidden hoist, `node_modules/.jpm/node_modules`: one
+version of every package, which Node reaches when a package imports something it did not
+declare, as pnpm does with `.pnpm/node_modules`.
 
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects
