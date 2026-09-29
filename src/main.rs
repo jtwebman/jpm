@@ -25,6 +25,7 @@ mod registry;
 mod resolve;
 mod rules;
 mod run;
+mod runtime;
 mod semver;
 mod shim;
 mod spec;

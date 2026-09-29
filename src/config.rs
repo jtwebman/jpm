@@ -40,6 +40,8 @@ pub struct Config {
     pub proxy: Option<String>,
     pub https_proxy: Option<String>,
     pub noproxy: Option<String>,
+    /// `node-mirror:release` (pnpm's), else `NODEJS_ORG_MIRROR`: where Node runtimes come from.
+    pub node_mirror: Option<String>,
 }
 
 /// What the command line says, over every file.
@@ -251,6 +253,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         proxy: set("proxy"),
         https_proxy: set("https-proxy"),
         noproxy: set("noproxy"),
+        node_mirror: set("node-mirror:release")
+            .or_else(|| std::env::var("NODEJS_ORG_MIRROR").ok().filter(|m| !m.is_empty())),
     })
 }
 
@@ -340,6 +344,7 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     // A relative cafile is from where jpm runs, as npm takes it.
     config.cafile = config.cafile.map(|f| path(&f.to_string_lossy()));
     crate::http::configure(&config)?;
+    crate::runtime::configure(config.node_mirror.as_deref());
     Ok(config)
 }
 

@@ -12,6 +12,7 @@ use crate::json::{self, Object, Value};
 use crate::project::{RootManifest, Workspace, local_path, local_shape};
 use crate::registry::tarball_url;
 use crate::rules::Override;
+use crate::runtime::{self, Variant};
 use crate::semver;
 use crate::spec::{self, Kind};
 use crate::util::write_atomic;
@@ -49,6 +50,8 @@ pub struct LockEntry {
     pub build: bool,
     /// The sha256 of the patch applied to it.
     pub patch: Option<String>,
+    /// A runtime's builds, one per platform, in place of `integrity`.
+    pub variants: Vec<Variant>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -139,6 +142,10 @@ impl LockEntry {
         }
         if let Some(h) = &self.patch {
             o.insert("patch", h.into());
+        }
+        if !self.variants.is_empty() {
+            let one = |v: &Variant| json::obj([("integrity", (&v.integrity).into()), ("file", (&v.file).into())]);
+            o.insert("variants", Value::Object(self.variants.iter().map(|v| (v.platform.clone(), one(v))).collect()));
         }
         o.into()
     }
@@ -242,6 +249,13 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
             let derivable = p.resolved == tarball_url(&base_for(&p.name), &p.name, &p.version);
             (None, (!derivable).then(|| p.resolved.clone()))
         };
+        // A runtime's integrity, bins and platform are this machine's: its variants are the facts.
+        if let Some(variants) = &p.runtime {
+            let subgraph = keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string);
+            let e = LockEntry { version, subgraph, variants: variants.clone(), ..LockEntry::default() };
+            packages.insert(key.clone(), e);
+            continue;
+        }
         packages.insert(
             key.clone(),
             LockEntry {
@@ -261,6 +275,7 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
                 scripts: p.scripts,
                 build: p.build,
                 patch: p.patch.clone(),
+                variants: Vec::new(),
             },
         );
     }
@@ -306,7 +321,7 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             (None, None) => tarball_url(&base_for(name), name, &version),
         };
         let list = |l: Vec<String>| (!l.is_empty()).then_some(l);
-        let package = Package {
+        let mut package = Package {
             name: name.to_string(),
             version,
             resolved,
@@ -327,8 +342,12 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             scripts: e.scripts,
             build: e.build,
             patch: e.patch,
+            runtime: (!e.variants.is_empty()).then_some(e.variants),
             ..Package::default()
         };
+        if package.runtime.is_some() {
+            runtime::apply(&mut package, base_for);
+        }
         packages.insert(key, package);
     }
     let root = Root {
@@ -537,6 +556,9 @@ fn text_body(lock: &Lockfile) -> String {
         if let Some(h) = &e.patch {
             line(&mut out, true, "patch", &[h]);
         }
+        for v in &e.variants {
+            line(&mut out, true, "variant", &[&v.platform, &v.integrity, &v.file]);
+        }
     }
     out
 }
@@ -696,6 +718,9 @@ fn parse_text(text: &str) -> Result<Lockfile> {
                 "scripts" if t.len() == 1 => e.scripts = true,
                 "build" if t.len() == 1 => e.build = true,
                 "patch" => e.patch = Some(arg(1)?),
+                "variant" if t.len() == 4 => {
+                    e.variants.push(Variant { platform: arg(1)?, integrity: arg(2)?, file: arg(3)? })
+                }
                 _ => edge(
                     word,
                     &t,
@@ -925,7 +950,11 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         {
             return Err(fail(format!("{at}.subgraph is not a digest")));
         }
-        if e.integrity.is_empty() {
+        if let Some((name, version)) = split_key(key).and_then(|(n, v)| Some((n, v.strip_prefix(runtime::PROTOCOL)?))) {
+            check_runtime(&at, name, version, e)?;
+        } else if !e.variants.is_empty() {
+            return Err(fail(format!("{at} has variants, which only a runtime has")));
+        } else if e.integrity.is_empty() {
             return Err(fail(format!("{at}.integrity must be a non-empty string")));
         }
         if e.patch.as_ref().is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit())) {
@@ -984,6 +1013,32 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         }
     }
     check_top(lock.root.specs.as_ref(), &lock.root.dependencies, "root", &Deps::new())
+}
+
+/// A runtime is its builds and nothing else: no edges, bins, scripts or patch of its own, and one
+/// build per platform, each checked before it names a download.
+fn check_runtime(at: &str, name: &str, version: &str, e: &LockEntry) -> Result<()> {
+    let bare = e.version.as_deref() == Some(version)
+        && e.integrity.is_empty()
+        && e.dependencies.is_empty()
+        && e.optional_dependencies.is_empty()
+        && e.bin.is_empty()
+        && e.peer_dependencies.is_empty()
+        && e.os.is_empty()
+        && e.cpu.is_empty()
+        && e.libc.is_empty()
+        && !e.scripts
+        && e.patch.is_none();
+    if !bare || e.variants.is_empty() {
+        return Err(fail(format!("{at} is a runtime: a version and one variant per platform only")));
+    }
+    for (i, v) in e.variants.iter().enumerate() {
+        runtime::check_variant(name, v).map_err(|why| fail(format!("{at}: {why}")))?;
+        if e.variants[..i].iter().any(|o| o.platform == v.platform) {
+            return Err(fail(format!("{at} has two variants for {}", v.platform)));
+        }
+    }
+    Ok(())
 }
 
 /// Every direct dep of a top is in its specs: `dev` is read out of them.
@@ -1059,6 +1114,12 @@ fn escapes(value: &str) -> bool {
 fn check_key(key: &str) -> Result<Option<String>> {
     let bad = || fail(format!("package key {key:?} is not name@version"));
     let (name, version) = split_key(key).filter(|(_, v)| !v.is_empty()).ok_or_else(bad)?;
+    if let Some(v) = version.strip_prefix(runtime::PROTOCOL) {
+        if !runtime::NAMES.contains(&name) || !semver::is_exact(v) {
+            return Err(fail(format!("package key {key:?} is not a runtime at an exact version")));
+        }
+        return Ok(Some(version.to_string()));
+    }
     // Almost every key is `name@1.2.3`: checked directly, without building a spec.
     if version.as_bytes()[0].is_ascii_digit() && semver::is_exact(version) {
         spec::check_name(name, key).map_err(|_| fail(format!("package key {key:?} is not a valid package name")))?;
@@ -1242,6 +1303,49 @@ package d@1.0.0
             text.replace("git+https://github.com/u/r.git", "git+https://-oProxyCommand=x/r.git"),
             text.replace("git+https://github.com/u/r.git", "git+https://github.com/u/r"),
             text.replace("  version 1.0.0\n", ""),
+        ] {
+            assert!(parse_lockfile(&bad, LOCKFILE).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn locks_a_runtime_with_every_platforms_build() {
+        let sha = "sha256-dLsPOoAwfFKUIcPthFF7j1Q4Z3CfQeU81z35nmRCr00=";
+        let here = crate::runtime::platform_key(&crate::sys::Platform::current());
+        let text = format!(
+            "jpm-lock 2\nhash 0\nroot\n  spec devDependencies node runtime:22\n  dep node runtime:22.0.0\n\
+             package node@runtime:22.0.0\n  version 22.0.0\n  variant {here} {sha} node-v22.0.0-{here}.tar.gz\n\
+             \x20 variant zz-other {sha} node-v22.0.0-zz.tar.gz\n"
+        );
+        let lock = parse_lockfile(&text, LOCKFILE).unwrap();
+        crate::runtime::configure(None);
+        let res = from_lockfile(&lock, &|_| String::new());
+        let node = &res.packages["node@runtime:22.0.0"];
+        assert_eq!((node.version.as_str(), node.integrity.as_str(), node.dev), ("22.0.0", sha, true));
+        assert_eq!(node.resolved, format!("https://nodejs.org/download/release/v22.0.0/node-v22.0.0-{here}.tar.gz"));
+        assert!(node.bin.contains_key("node") && node.os.is_none());
+        let again = format_lockfile(&to_lockfile(&res, &|_| String::new())).unwrap();
+        assert!(again.contains(&format!("  variant {here} {sha} node-v22.0.0-{here}.tar.gz\n")), "{again}");
+        assert!(!again.contains("integrity") && !again.contains("  bin "), "this machine's facts stay out: {again}");
+        // A platform with no build: the package says it does not run here.
+        let other = text.replace(&format!("variant {here} "), "variant yy-other ");
+        let res = from_lockfile(&parse_lockfile(&other, LOCKFILE).unwrap(), &|_| String::new());
+        assert!(res.packages["node@runtime:22.0.0"].os.is_some());
+        for bad in [
+            text.replace("  version 22.0.0\n", ""),
+            text.replace("  version 22.0.0\n", "  version 22.0.1\n"),
+            text.replace("node@runtime:22.0.0\n", "npm@runtime:22.0.0\n"),
+            text.replace("runtime:22.0.0", "runtime:22"),
+            text.replace("  version 22.0.0\n", "  version 22.0.0\n  integrity sha512-x\n"),
+            text.replace("  version 22.0.0\n", "  version 22.0.0\n  dep a 1.0.0\n"),
+            text.replace("  version 22.0.0\n", "  version 22.0.0\n  bin node ../../x\n"),
+            text.replace("node-v22.0.0-zz.tar.gz", "../../zz.tar.gz"),
+            text.replace("zz-other", &here),
+            text.replace(" node-v22.0.0-zz.tar.gz", ""),
+            text.replace(&format!("{sha} node-v22.0.0-zz"), "md5-x node-v22.0.0-zz"),
+            format!("{text}package a@1.0.0\n  integrity sha512-a\n  variant linux-x64 {sha} a.tgz\n"),
+            text.replace(&format!("  variant {here} {sha} node-v22.0.0-{here}.tar.gz\n"), "")
+                .replace(&format!("  variant zz-other {sha} node-v22.0.0-zz.tar.gz\n"), ""),
         ] {
             assert!(parse_lockfile(&bad, LOCKFILE).is_err(), "{bad}");
         }

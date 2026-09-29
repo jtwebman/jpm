@@ -94,6 +94,9 @@ Notes
   github:u/r, u/r, gitlab:, bitbucket:, git+https://, git+ssh:// and git:// are git
   dependencies, #<commit>, #<branch|tag> or #semver:<range>; locked to a commit (git ls-remote),
   fetched as the host's archive or with git. A git package's prepare script is an install script.
+  node@runtime:<range> (bun@, deno@ too) installs that runtime as a package, its binary in
+  node_modules/.bin, locked with every platform's build; add saves it to devEngines.runtime
+  (--dev) or engines.runtime, as pnpm does. Node comes from nodejs.org or node-mirror:release.
   With no {LOCKFILE}, install writes one from package-lock.json, npm-shrinkwrap.json,
   pnpm-lock.yaml, bun.lock or yarn.lock: the same versions, resolved again only where package.json
   moved.

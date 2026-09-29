@@ -145,6 +145,9 @@ pub struct Package {
     pub build: bool,
     /// The sha256 of the patch applied to its files.
     pub patch: Option<String>,
+    /// A runtime (`runtime:`): every platform's build. `integrity`, `resolved` and `bin` are
+    /// this platform's.
+    pub runtime: Option<Vec<crate::runtime::Variant>>,
 }
 
 impl Package {
