@@ -91,6 +91,8 @@ struct Ctx {
     /// Another manager's lockfile as read, stamped first.
     foreign_read: Option<(String, Option<Stamp>)>,
     binless: Vec<String>,
+    /// The foreign lockfile read never says which packages have install scripts.
+    scriptless: bool,
     /// Each local tarball's stamp from just before this command checked or read it.
     stamped: Mutex<BTreeMap<String, Stamp>>,
 }
@@ -125,6 +127,7 @@ impl Ctx {
             source: None,
             foreign_read: None,
             binless: Vec::new(),
+            scriptless: false,
             stamped: Mutex::default(),
         }
     }
@@ -733,21 +736,56 @@ fn import(
         }
     };
     ctx.binless.clear();
+    ctx.scriptless = false;
     ctx.source = None;
     Ok(lock)
 }
 
-/// pnpm records only `hasBin`: a converted lockfile reads those bins out of the packages.
+/// What a converted lockfile leaves out, read from the packages once they are in the store:
+/// the bins pnpm marks only as `hasBin`, and which packages have install scripts, which bun.lock
+/// never says (a `preinstall`, `install` or `postinstall`, or a `binding.gyp`, as the registry
+/// decides `hasInstallScript`). Only what installs on this platform is fetched, in parallel, as
+/// the install would next.
 fn fill_bins(ctx: &Ctx, lock: &mut Lockfile, store: &Store, dir: &Path) -> Result<()> {
     let base = ctx.base_for();
-    for key in &ctx.binless {
-        let Some((name, version)) = crate::graph::split_key(key) else { continue };
-        let Some(entry) = lock.packages.get_mut(key) else { continue };
-        let url = entry.resolved.clone().unwrap_or_else(|| crate::registry::tarball_url(&base(name), name, version));
-        store.ensure(&tarball_of(dir, &url, None), &entry.integrity)?;
+    let mut keys = ctx.binless.clone();
+    if ctx.scriptless {
+        let here = filter_platform(lock::from_lockfile(lock, &base), &Platform::current())?;
+        keys.extend(
+            here.packages.iter().filter(|(_, p)| p.local.is_none() && p.source.is_none()).map(|(k, _)| k.clone()),
+        );
+        keys.sort();
+        keys.dedup();
+    }
+    let jobs: Vec<(String, Tarball, String)> = keys
+        .iter()
+        .filter_map(|key| {
+            let (name, version) = crate::graph::split_key(key)?;
+            let e = lock.packages.get(key)?;
+            let url = e.resolved.clone().unwrap_or_else(|| crate::registry::tarball_url(&base(name), name, version));
+            Some((key.clone(), tarball_of(dir, &url, None), e.integrity.clone()))
+        })
+        .collect();
+    let fetched = pool::map(pool::network_threads(), jobs, |(key, tarball, integrity)| {
+        let got = store.ensure(&tarball, &integrity);
+        (key, got)
+    });
+    for (key, got) in fetched {
+        let binless = ctx.binless.contains(&key);
+        let index = match got {
+            Ok(index) => index,
+            // Not needed for its bins: the install that follows reports it, or skips it if optional.
+            Err(_) if !binless => continue,
+            Err(e) => return Err(e),
+        };
+        let Some(entry) = lock.packages.get_mut(&key) else { continue };
         let text = std::fs::read_to_string(store.file(&entry.integrity, "package.json")?).unwrap_or_default();
-        if let Ok(m) = Manifest::from_json(&text) {
+        let manifest = Manifest::from_json(&text).ok();
+        if binless && let Some(m) = &manifest {
             entry.bin = m.bins();
+        }
+        if ctx.scriptless {
+            entry.scripts = manifest.is_some_and(|m| m.scripts) || index.files.iter().any(|f| f.path == "binding.gyp");
         }
     }
     Ok(())
@@ -929,6 +967,7 @@ fn foreign_lock(
         warn(w);
     }
     ctx.binless = loaded.binless;
+    ctx.scriptless = loaded.scriptless;
     Ok(loaded.lock)
 }
 

@@ -22,6 +22,8 @@ pub struct ForeignLock {
     pub lock: Lockfile,
     /// Keys of packages whose bins the file does not name (pnpm records only hasBin).
     pub binless: Vec<String>,
+    /// The file never says which packages have install scripts (bun.lock).
+    pub scriptless: bool,
     pub warnings: Vec<String>,
 }
 
@@ -87,7 +89,9 @@ pub fn load(
         _ => return Err(fail(format!("jpm does not read {file}"))),
     };
     hold_to(file, &mut source, manifest)?;
-    build(file, source, manifest, base_for)
+    let mut out = build(file, source, manifest, base_for)?;
+    out.scriptless = file == "bun.lock";
+    Ok(out)
 }
 
 /// The versions a file that cannot be brought over whole (out of date, with workspaces, an older
@@ -830,7 +834,7 @@ fn build(
         .filter(|key| seen.contains(key))
         .map(|key| format!("{file} settles a peer of {key} two ways; jpm links the highest"))
         .collect();
-    Ok(ForeignLock { lock, binless, warnings })
+    Ok(ForeignLock { lock, binless, scriptless: false, warnings })
 }
 
 /// The key an edge reaches, refused when the file has it from no registry.
