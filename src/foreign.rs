@@ -148,6 +148,11 @@ fn read_yarn(text: &str) -> Prefer {
 /// A key as the resolver asks for it: registry name and range. Berry writes `name@npm:range`
 /// for a plain range, where yarn 1 would mean an alias; `name@npm:real@range` is one in both.
 fn yarn_key(key: &str, berry: bool) -> Option<(String, String)> {
+    // A patched package, `name@patch:<source>#<path>`: the range of its source.
+    let at = key.get(1..)?.find('@')? + 1;
+    if let Some((range, _)) = crate::patch::yarn(&key[..at], &key[at + 1..]) {
+        return yarn_key(&format!("{}@{range}", &key[..at]), false);
+    }
     let plain = key.get(1..).and_then(|k| k.find("@npm:")).filter(|&i| berry && !key[i + 6..].contains('@'));
     let key = match plain {
         Some(i) => format!("{}@{}", &key[..=i], &key[i + 6..]),

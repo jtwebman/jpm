@@ -42,6 +42,31 @@ impl Patch {
     }
 }
 
+/// yarn's `patch:<source>#<path>[::<params>]` in place of `dep`'s range, its source url-encoded
+/// (`x@npm%3A1.2.3`): the range it stands for, and the patch as a `patchedDependencies` key and
+/// path (`~/` is the project root). yarn's builtin patches (`optional!builtin<compat/…>`) only
+/// matter under Plug'n'Play: the range, and no patch.
+pub fn yarn(dep: &str, value: &str) -> Option<(String, Option<(String, String)>)> {
+    let (source, path) = value.strip_prefix("patch:")?.split_once('#')?;
+    let mut bytes = Vec::with_capacity(source.len());
+    let mut rest = source.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        let hex = tail.get(..2).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match hex.filter(|_| b == b'%') {
+            Some(h) => (bytes.push(h), rest = &tail[2..]),
+            None => (bytes.push(b), rest = tail),
+        };
+    }
+    let source = String::from_utf8(bytes).ok()?;
+    let at = source.get(1..)?.find('@')? + 1;
+    let (name, range) = (&source[..at], &source[at + 1..]);
+    let range = range.strip_prefix("npm:").filter(|r| semver::valid_range(r)).unwrap_or(range);
+    let own = if name == dep { range.to_string() } else { format!("npm:{name}@{range}") };
+    let path = path.split("::").next().unwrap_or(path);
+    let patch = (!path.contains("builtin<")).then(|| (format!("{name}@{range}"), path.trim_start_matches("~/").into()));
+    Some((own, patch))
+}
+
 /// Which package each patch goes to, `key -> hash`, over `(key, name, version)`. As pnpm picks: a
 /// version's own patch first, then a range's, then the name's. A patch no package takes is an
 /// error, as it is in pnpm, and so are two ranges that both take one version.
@@ -527,6 +552,30 @@ mod tests {
         assert!(!dir.parent().unwrap().join("z").exists());
         assert_eq!(read(&dir, "y"), "y\n", "nothing written by a refused patch");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_yarns_patch_protocol() {
+        let (range, patch) = yarn("x", "patch:x@npm%3A1.2.3#./.yarn/patches/x-npm-1.2.3-abc.patch").unwrap();
+        assert_eq!(
+            (range.as_str(), patch),
+            ("1.2.3", Some(("x@1.2.3".into(), "./.yarn/patches/x-npm-1.2.3-abc.patch".into())))
+        );
+        let scoped =
+            "patch:@s/x@npm%3A%5E2.0.0#~/.yarn/patches/x.patch::version=2.1.0&hash=abc&locator=app%40workspace%3A.";
+        assert_eq!(
+            yarn("@s/x", scoped).unwrap(),
+            ("^2.0.0".into(), Some(("@s/x@^2.0.0".into(), ".yarn/patches/x.patch".into())))
+        );
+        assert_eq!(yarn("y", "patch:x@1.0.0#p.patch").unwrap().0, "npm:x@1.0.0", "an alias stays one");
+        for builtin in ["optional!builtin<compat/typescript>", "~builtin<compat/fsevents>"] {
+            assert_eq!(
+                yarn("typescript", &format!("patch:typescript@npm%3A^5#{builtin}")).unwrap(),
+                ("^5".into(), None)
+            );
+        }
+        assert_eq!(yarn("x", "^1.0.0"), None);
+        assert_eq!(yarn("x", "patch:x@1.0.0"), None);
     }
 
     #[test]

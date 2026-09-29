@@ -127,6 +127,17 @@ to a diff as `git diff` writes it, with paths relative to the package. A hunk wh
 match, a path that leaves the package, or a patch that no package in the tree takes stops the
 install, as in pnpm.
 
+yarn's `patch:` protocol is read too, in the root package.json's `resolutions` and dependencies:
+
+```json
+"resolutions": { "lodash@npm:4.17.21": "patch:lodash@npm%3A4.17.21#./.yarn/patches/lodash-npm-4.17.21-6382451519.patch" }
+```
+
+The package is the source before the `#` and the patch the path after it (`~/` is the project
+root). yarn's builtin patches (`optional!builtin<compat/typescript>`) are for Plug'n'Play and
+are skipped; the package is installed as published. A `patch:` range in a workspace's
+package.json is refused unless it is a builtin one.
+
 A patched package is a copy of its own, built under a key that includes the patch's hash; so is
 every package that depends on it. The clean package in the store is not changed. jpm.lock
 records the patch's sha256 on the package (`patch <hash>`): editing, adding or removing a patch

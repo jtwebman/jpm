@@ -205,6 +205,14 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     }
     rules.patched(pnpm.and_then(|p| p.get("patchedDependencies")), "package.json pnpm.patchedDependencies");
     rules.patched(doc.get("patchedDependencies"), "package.json patchedDependencies");
+    // yarn's `patch:` ranges; the root's only.
+    for group in ["dependencies", "devDependencies", "optionalDependencies"] {
+        for (name, range) in doc.get(group).and_then(Value::as_object).into_iter().flatten() {
+            if let Some((_, Some((key, path)))) = range.as_str().and_then(|r| crate::patch::yarn(name, r)) {
+                rules.add_patch(key, path);
+            }
+        }
+    }
     rules.pnpm(pnpm.and_then(|p| p.get("overrides")), "package.json pnpm.overrides");
     rules.npm(doc.get("overrides"));
     rules.yarn(doc.get("resolutions"));
@@ -244,13 +252,15 @@ impl Rules {
         for (key, path) in v.and_then(Value::as_object).into_iter().flatten() {
             let (name, _) = name_range(key);
             match path.as_str() {
-                Some(path) if spec::check_name(&name, key).is_ok() => {
-                    if !self.patches.iter().any(|(k, _)| k == key) {
-                        self.patches.push((key.clone(), path.to_string()));
-                    }
-                }
+                Some(path) if spec::check_name(&name, key).is_ok() => self.add_patch(key.clone(), path.to_string()),
                 _ => ui::warn(&format!("{file}: patch {key} is not one jpm reads; it is ignored")),
             }
+        }
+    }
+
+    fn add_patch(&mut self, key: String, path: String) {
+        if !self.patches.iter().any(|(k, _)| *k == key) {
+            self.patches.push((key, path));
         }
     }
 
@@ -341,7 +351,16 @@ impl Rules {
                 ui::warn(&format!("package.json resolutions {key}: jpm applies it to every {p}'s {name}"));
             }
             let parent = parent.map(|(p, r)| (p, r.as_deref().map(npm)));
-            self.push(Manager::Yarn, (parent, name, range.as_deref().map(npm)), &npm(value));
+            let value = match crate::patch::yarn(&name, value) {
+                Some((range, patch)) => {
+                    if let Some((key, path)) = patch {
+                        self.add_patch(key, path);
+                    }
+                    range
+                }
+                None => npm(value),
+            };
+            self.push(Manager::Yarn, (parent, name, range.as_deref().map(npm)), &value);
         }
     }
 
@@ -349,6 +368,13 @@ impl Rules {
     /// its catalogs, the most specific first.
     pub fn apply(&self, root: &mut RootManifest) -> Result<()> {
         root.overrides = self.resolved(root)?;
+        for group in [&mut root.dependencies, &mut root.dev_dependencies, &mut root.optional_dependencies] {
+            for (name, range) in group.iter_mut() {
+                if let Some((source, _)) = crate::patch::yarn(name, range) {
+                    *range = source;
+                }
+            }
+        }
         let dir = self.file.parent().unwrap_or(Path::new(""));
         root.patches.clear();
         for (key, path) in &self.patches {

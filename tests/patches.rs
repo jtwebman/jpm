@@ -181,3 +181,36 @@ fn a_patch_changes_the_entries_above_it() {
     assert_eq!(std::fs::read_link(env.path("node_modules/a")).unwrap(), plain);
     assert_eq!(env.read("node_modules/a/../b/index.js"), "module.exports = 'b@1.0.0'");
 }
+
+#[test]
+fn applies_yarns_patch_protocol() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".yarn/patches/b-npm-1.0.0-abc.patch", &diff("b@1.0.0", "yarn"));
+    // `yarn patch-commit -s`: a resolution to the patched source.
+    let patched = "patch:b@npm%3A1.0.0#./.yarn/patches/b-npm-1.0.0-abc.patch";
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@npm:1.0.0": patched } }));
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/a/../b/index.js"), "module.exports = 'yarn'");
+    assert!(env.lock()["packages"]["b@1.0.0"]["patch"].is_string());
+    // In place of a dependency's range, `~/` for the root, with yarn's parameters.
+    let dep =
+        "patch:b@npm%3A1.0.0#~/.yarn/patches/b-npm-1.0.0-abc.patch::version=1.0.0&hash=abc&locator=app%40workspace%3A.";
+    env.manifest(json!({ "dependencies": { "b": dep } }));
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'yarn'");
+    assert!(env.read("jpm.lock").contains("  spec dependencies b 1.0.0\n"));
+    // yarn.lock names the patched package by its patch: read for the version it gave.
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    let key = dep.replace("::version=1.0.0&hash=abc", "");
+    let lock = format!("__metadata:\n  version: 8\n\n\"b@{key}\":\n  version: 1.0.0\n  resolution: \"b@{dep}\"\n");
+    env.write("yarn.lock", &lock);
+    env.ok(&["ci"]);
+    assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'yarn'");
+    // yarn's builtin patches are for Plug'n'Play: the package as published.
+    env.manifest(json!({ "dependencies": { "b": "patch:b@npm%3A^1.0.0#optional!builtin<compat/b>" } }));
+    std::fs::remove_file(env.path("yarn.lock")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'b@1.0.0'");
+    assert!(!env.read("jpm.lock").contains("patch"));
+}
