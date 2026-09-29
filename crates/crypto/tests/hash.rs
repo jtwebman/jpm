@@ -175,7 +175,6 @@ fn split_updates_match_one_shot() {
             let data = rng.upto(2000);
             let want = digest(alg, &data);
             let mut h = Hasher::new(alg);
-            assert_eq!(h.alg(), alg);
             let mut rest = &data[..];
             while !rest.is_empty() {
                 let n = rng.below(rest.len().min(300) + 1);

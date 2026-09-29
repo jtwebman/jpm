@@ -915,7 +915,7 @@ mod bench {
                     n += p.versions().count();
                 }
             }
-            let serde = t.elapsed();
+            let packument = t.elapsed();
             let t = std::time::Instant::now();
             let mut m = 0;
             for d in &docs {
@@ -937,7 +937,7 @@ mod bench {
             }
             let full = t.elapsed();
             println!(
-                "round {round}: serde_json packument {serde:?} ({n} versions) | scan {scan:?} ({m}) | full parse {full:?}"
+                "round {round}: Packument::parse {packument:?} ({n} versions) | scan {scan:?} ({m}) | full parse {full:?}"
             );
         }
     }

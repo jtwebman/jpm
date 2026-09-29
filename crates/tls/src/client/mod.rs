@@ -47,10 +47,6 @@ impl<S: Read + Write> Stream<S> {
         self.alpn.as_deref()
     }
 
-    pub fn get_ref(&self) -> &S {
-        &self.conn.io
-    }
-
     fn fail(&mut self, e: Error) -> io::Error {
         if !matches!(&e, Error::Io(_)) {
             self.failed = true;
