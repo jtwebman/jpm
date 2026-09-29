@@ -71,10 +71,12 @@ pub fn auth_for(auth: &BTreeMap<String, String>, url: &str) -> Option<String> {
     if !scheme.eq_ignore_ascii_case("https") && !auth.contains_key(&format!("{INSECURE}//{host}/")) {
         return None;
     }
-    // Some servers read `\` as `/`: a dot segment spelled either way is refused.
+    // Some servers read `\` as `/`: a dot segment spelled either way is refused. Tomcat drops a
+    // `;param` from a segment, so `..;` and `.;` are dot segments too; any `..`-led one is refused.
     let path = rest[host.len()..path_end].replace('\\', "/");
     let lower = path.to_ascii_lowercase();
-    if path.split('/').any(|s| s == "." || s == "..") || lower.contains("%2e") || lower.contains("%5c") {
+    let dots = |s: &str| s.starts_with("..") || s.split(';').next() == Some(".");
+    if path.split('/').any(dots) || lower.contains("%2e") || lower.contains("%5c") {
         return None;
     }
     let mut dart = format!("//{}", &rest[..path_end]);
@@ -363,15 +365,34 @@ impl Registry {
     }
 }
 
-/// `*` within a segment, `**` across them, `?` one character.
+/// `*` within a segment, `**` across them, `?` one character. A table over (pattern, name)
+/// positions, filled from the ends: time is pattern length times name length, and no recursion.
+/// A pattern past `MAX_PATTERN` bytes matches nothing.
 fn wildcard(p: &[u8], s: &[u8]) -> bool {
-    match p.first() {
-        None => s.is_empty(),
-        Some(b'*') if p.get(1) == Some(&b'*') => (0..=s.len()).any(|i| wildcard(&p[2..], &s[i..])),
-        Some(b'*') => (0..=s.len()).take_while(|&i| i == 0 || s[i - 1] != b'/').any(|i| wildcard(&p[1..], &s[i..])),
-        Some(b'?') => s.first().is_some_and(|c| *c != b'/') && wildcard(&p[1..], &s[1..]),
-        Some(c) => s.first() == Some(c) && wildcard(&p[1..], &s[1..]),
+    const MAX_PATTERN: usize = 1024;
+    if p.len() > MAX_PATTERN {
+        return false;
     }
+    // `next[j]`: whether the pattern after the current token matches `s[j..]`.
+    let mut next = vec![false; s.len() + 1];
+    next[s.len()] = true;
+    let mut end = p.len();
+    while end > 0 {
+        let across = end >= 2 && p[end - 2..end] == *b"**";
+        let start = if across { end - 2 } else { end - 1 };
+        let mut cur = vec![false; s.len() + 1];
+        for j in (0..=s.len()).rev() {
+            let c = s.get(j);
+            cur[j] = match p[start] {
+                b'*' => next[j] || (c.is_some_and(|c| across || *c != b'/') && cur[j + 1]),
+                b'?' => c.is_some_and(|c| *c != b'/') && next[j + 1],
+                lit => c == Some(&lit) && next[j + 1],
+            };
+        }
+        next = cur;
+        end = start;
+    }
+    next[0]
 }
 
 // --- picking a version ------------------------------------------------------------------------
@@ -572,6 +593,11 @@ mod tests {
             "https://r.test/npm/./a",
             "https://r.test/npm/\\..\\other",
             "https://r.test/npm/%5c..%5cother",
+            "https://r.test/npm/..;/other",
+            "HTTPS://r.test/npm/..;",
+            "https://r.test/npm/..;x/other",
+            "https://r.test/npm/.;/a",
+            "https://r.test/npm/.;x=1/a",
         ] {
             assert_eq!(auth_for(&auth, url), None, "{url}");
         }
@@ -583,6 +609,27 @@ mod tests {
         assert!(!wildcard(b"*", b"@s/a"));
         assert!(wildcard(b"**", b"@s/a"));
         assert!(wildcard(b"a?c", b"abc"));
+        assert!(!wildcard(b"a?c", b"a/c"));
+        assert!(wildcard(b"@s/a*-*", b"@s/ab-c-d"));
+        assert!(!wildcard(b"@*a", b"@s/a"));
+        assert!(wildcard(b"@**a", b"@s/a"));
+        assert!(wildcard(b"***", b"@s/a"));
+        assert!(!wildcard(b"a", b"ab") && !wildcard(b"ab", b"a") && wildcard(b"", b""));
+    }
+
+    #[test]
+    fn globs_in_bounded_time() {
+        // Exponential backtracking on `**`, and a recursion per pattern byte, were a hang and a
+        // stack overflow. Run in a thread so a regression fails here instead of hanging.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let stars = format!("{}x", "**".repeat(80));
+            let r = wildcard(stars.as_bytes(), "a".repeat(200).as_bytes());
+            let long = "*".repeat(100_000);
+            tx.send((r, wildcard(long.as_bytes(), b"a"), wildcard(&[b'*'; 1024], b"a"))).unwrap();
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("wildcard hung");
+        assert_eq!(got, (false, false, true));
     }
 
     fn doc() -> Packument {

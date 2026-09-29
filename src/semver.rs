@@ -93,6 +93,12 @@ fn num(s: &str) -> Option<u64> {
     s.parse().ok()
 }
 
+/// A major, minor or patch: node-semver refuses one above `Number.MAX_SAFE_INTEGER`, which
+/// also leaves room for the `+ 1` of a range's upper bound.
+fn core_num(s: &str) -> Option<u64> {
+    num(s).filter(|n| *n < 1 << 53)
+}
+
 fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-'
 }
@@ -135,9 +141,9 @@ pub fn parse(v: &str) -> Option<Version> {
         return None;
     }
     let mut parts = core.split('.');
-    let major = num(parts.next()?)?;
-    let minor = num(parts.next()?)?;
-    let patch = num(parts.next()?)?;
+    let major = core_num(parts.next()?)?;
+    let minor = core_num(parts.next()?)?;
+    let patch = core_num(parts.next()?)?;
     if parts.next().is_some() {
         return None;
     }
@@ -186,7 +192,7 @@ fn parse_partial(s: &str) -> Option<Partial> {
         match p {
             None => Some(None),
             Some("x" | "X" | "*") => Some(None),
-            Some(p) => num(p).map(Some),
+            Some(p) => core_num(p).map(Some),
         }
     };
     let mut pieces = core.split('.');
@@ -250,7 +256,7 @@ fn expand(op: &str, q: &Partial, inc_pr: bool) -> Vec<Comparator> {
         }
         // A caret on 0.x pins the minor, on 0.0.x the patch.
         return match q.patch {
-            Some(p) if mi == 0 => vec![low, lt(0, 0, p + 1)],
+            Some(p) if mi == 0 => vec![low, lt(0, 0, p.saturating_add(1))],
             _ => vec![low, lt(0, mi.saturating_add(1), 0)],
         };
     }
@@ -267,9 +273,9 @@ fn expand(op: &str, q: &Partial, inc_pr: bool) -> Vec<Comparator> {
         if op == ">" || op == "<=" {
             o = if op == ">" { ">=" } else { "<" };
             if q.minor.is_none() {
-                major += 1;
+                major = major.saturating_add(1);
             } else {
-                minor += 1;
+                minor = minor.saturating_add(1);
             }
         }
         let op = to_op(o);
@@ -306,7 +312,7 @@ fn hyphen(a: &Partial, b: &Partial, inc_pr: bool) -> Vec<Comparator> {
         match (b.minor, b.patch) {
             (None, _) => out.push(lt(ma.saturating_add(1), 0, 0)),
             (Some(mi), None) => out.push(lt(ma, mi.saturating_add(1), 0)),
-            (Some(mi), Some(p)) if b.pre.is_empty() && inc_pr => out.push(lt(ma, mi, p + 1)),
+            (Some(mi), Some(p)) if b.pre.is_empty() && inc_pr => out.push(lt(ma, mi, p.saturating_add(1))),
             (Some(mi), Some(p)) => {
                 out.push(Comparator { op: Op::Le, v: Version::new(ma, mi, p, b.pre.clone()) });
             }
@@ -439,6 +445,20 @@ mod tests {
             let _ = valid_range(&range);
             let _ = satisfies("1.0.0", &range);
         }
+        // Parts above 2^53-1 are refused, as node-semver does; at the limit, bounds still hold.
+        let safe = (1u64 << 53) - 1;
+        assert!(parse(&format!("{}.0.0", safe + 1)).is_none());
+        assert!(!satisfies("1.0.0", &format!(">{max}")) && !valid_range(&format!(">{max}")));
+        for (v, range) in [
+            (format!("0.{safe}.0"), format!("^0.{safe}.0")),
+            (format!("0.0.{safe}"), format!("^0.0.{safe}")),
+            (format!("{safe}.0.0"), format!("^{safe}.0.0")),
+            (format!("{safe}.{safe}.{safe}"), format!("<={safe}.{safe}")),
+            (format!("{safe}.{safe}.{safe}"), format!("1 - {safe}.{safe}.{safe}")),
+        ] {
+            assert!(satisfies(&v, &range), "{v} {range}");
+        }
+        assert!(!satisfies(&format!("{safe}.0.0"), &format!(">{safe}")));
     }
 
     #[test]

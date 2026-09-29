@@ -220,9 +220,10 @@ impl Store {
         let (unpacked, temp, digest) =
             self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512))?;
         let integrity = format!("sha512-{}", to_base64(&digest));
+        // Only a broken entry is replaced: one with no index yet may be another adopt's, mid-publish.
         let result = match self.index(&integrity) {
             Some(index) if self.intact(&integrity, &index) => Ok(index),
-            _ => unpacked.and_then(|index| self.publish(&integrity, index, &temp, true)),
+            hit => unpacked.and_then(|index| self.publish(&integrity, index, &temp, hit.is_some())),
         };
         remove_tree(&temp);
         Ok((result?, integrity))
@@ -239,24 +240,16 @@ impl Store {
         for _ in 0..3 {
             let temp = tmp_root.join(temp_suffix());
             let (source, length) = self.open(tarball)?;
-            let mut input = Hashing { inner: source, hash: hasher.clone(), failed: None };
-            // A small tarball is read whole first: its connection goes back to the pool at network
-            // speed, not at the pace of its writes. A big one unpacks as it downloads.
-            let unpacked = if length.is_some_and(|n| n < STREAM_MIN) {
-                let mut bytes = Vec::with_capacity(length.unwrap_or(0) as usize);
-                match input.read_to_end(&mut bytes) {
-                    Ok(_) => extract(bytes.as_slice(), &temp),
-                    Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
-                }
-            } else {
-                extract(&mut input, &temp)
+            // One budget for every byte read, unpacked or drained.
+            let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
+            let unpacked = match small_head(&mut input, length) {
+                Ok(head) => extract(head.as_slice().chain(&mut input), &temp),
+                Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
             };
             // The rest still counts toward the hash; a source that never ends is refused.
-            let drained = io::copy(&mut (&mut input).take(crate::tar::MAX_ARCHIVE), &mut io::sink()).and_then(|_| {
-                match input.read(&mut [0u8; 1])? {
-                    0 => Ok(()),
-                    _ => Err(io::Error::other("tarball larger than 1 GiB")),
-                }
+            let drained = io::copy(&mut input, &mut io::sink()).and_then(|_| match input.inner.limit() {
+                0 => Err(io::Error::other("tarball larger than 1 GiB")),
+                _ => Ok(()),
             });
             if let Some(dropped) = input.failed.take() {
                 remove_tree(&temp);
@@ -450,6 +443,19 @@ pub fn extract(mut source: impl Read, dest: &Path) -> Result<Index> {
     Ok(Index { files: files.into_values().collect(), unpacked_size })
 }
 
+/// A small tarball is read whole first: its connection goes back to the pool at network speed,
+/// not at the pace of its writes. The length is only a hint (a chunked or gzipped body can
+/// run past it), so at most `STREAM_MIN + 1` bytes are held; the rest unpacks as it downloads,
+/// as a big tarball does whole.
+fn small_head(input: &mut impl Read, length: Option<u64>) -> io::Result<Vec<u8>> {
+    let mut head = Vec::new();
+    if let Some(n) = length.filter(|n| *n < STREAM_MIN) {
+        head.reserve(n as usize);
+        input.take(STREAM_MIN + 1).read_to_end(&mut head)?;
+    }
+    Ok(head)
+}
+
 /// Passes bytes through while hashing them, and remembers a read error: the connection
 /// dropped, which is worth another try, where bad bytes are not.
 struct Hashing<R> {
@@ -574,6 +580,24 @@ pub mod tests {
         let bad = sha512(b"other");
         assert_eq!(store.ensure(&Tarball::File(file), &bad).unwrap_err().code, "EINTEGRITY");
         assert!(!store.has(&bad));
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn holds_little_of_a_body_longer_than_its_length() {
+        // A chunked or gzipped body can run past its Content-Length: only a small head is held.
+        let mut long = io::repeat(0).take(4 * STREAM_MIN);
+        assert_eq!(small_head(&mut long, Some(10)).unwrap().len() as u64, STREAM_MIN + 1);
+        assert!(small_head(&mut io::repeat(0).take(10), None).unwrap().is_empty());
+        // What was held unpacks with the rest.
+        let big = vec![b'x'; 2 * STREAM_MIN as usize];
+        let tar = build(&[("package/big.js", 0o644, &big), ("package/a.js", 0o644, b"a")]);
+        let mut input = tar.as_slice();
+        let head = small_head(&mut input, Some(100)).unwrap();
+        assert_eq!(head.len() as u64, STREAM_MIN + 1);
+        let dir = scratch("head");
+        let index = extract(head.as_slice().chain(input), &dir.join("x")).unwrap();
+        assert_eq!(index.unpacked_size, big.len() as u64 + 1);
         remove_tree(&dir);
     }
 
