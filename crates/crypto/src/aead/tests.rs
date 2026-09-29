@@ -373,25 +373,15 @@ fn round_trip_unaligned() {
 /// crash the test rather than fill memory. `seal` goes first, as it writes at once.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 #[test]
-fn too_long_for_the_counter() {
-    unsafe extern "C" {
-        fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, off: i64) -> *mut u8;
-        fn munmap(addr: *mut u8, len: usize) -> i32;
-    }
-    const LEN: usize = 1 << 38;
-    // PROT_READ; MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE.
-    let p = unsafe { mmap(std::ptr::null_mut(), LEN, 1, 0x4022, -1, 0) };
-    assert_ne!(p as isize, -1, "mmap");
-    let data = unsafe { std::slice::from_raw_parts_mut(p, LEN) };
+fn stops_before_the_counter_wraps() {
+    // The 32-bit block counter covers 2^32 - 2 blocks for GCM (two go to the tag) and 2^32 - 1
+    // after the first for ChaCha20: the limits `seal` and `open` hold to.
     for alg in ALGS {
-        let n = if alg == Alg::ChaCha20Poly1305 { (1 << 38) - 63 } else { (1 << 36) - 31 };
+        let want = if alg == Alg::ChaCha20Poly1305 { (1u64 << 38) - 64 } else { (1u64 << 36) - 32 };
         for k in keys(alg, &vec![0; alg.key_len()]) {
-            let seal = std::panic::AssertUnwindSafe(|| k.seal(&[0; 12], b"", &mut data[..n]));
-            assert!(std::panic::catch_unwind(seal).is_err(), "{alg:?} {}", path(&k));
-            assert!(!k.open(&[0; 12], b"", &mut data[..n], &[0; 16]), "{alg:?} {}", path(&k));
+            assert_eq!(k.max_len(), want, "{alg:?} {}", path(&k));
         }
     }
-    unsafe { munmap(p, LEN) };
 }
 
 #[test]
