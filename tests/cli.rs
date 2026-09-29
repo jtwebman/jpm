@@ -223,7 +223,7 @@ fn names_the_dependency_forms_it_does_not_read() {
     for (spec, says) in [
         ("catalog:", "x@catalog:, but no catalogs are defined here or above"),
         ("github:watson/ci-info#v1", "git dependencies are not supported yet: github:watson/ci-info#v1"),
-        ("file:../dir", "directory dependencies are not supported yet: file:../dir"),
+        ("portal:../dir", r#""portal:" dependencies are not supported yet"#),
     ] {
         env.manifest(json!({ "dependencies": { "x": spec } }));
         let out = env.jpm(&["install"]);

@@ -32,6 +32,8 @@ pub struct Options<'a> {
     pub dedupe: bool,
     /// The workspaces, each a top like the root, as `(path, manifest)`.
     pub workspaces: Vec<(String, RootManifest)>,
+    /// The directories the tops depend on by path.
+    pub dirs: Vec<Dir>,
     /// Reads a tarball dependency's package.json, given its source and the integrity it is
     /// pinned to, if any. `dist.integrity` in what comes back is its bytes' integrity.
     pub tarball: Option<&'a TarballReader<'a>>,
@@ -42,6 +44,20 @@ pub struct Options<'a> {
     /// `legacy-peer-deps`: a peer is linked to what the tree has, and never added.
     pub legacy_peers: bool,
     pub threads: usize,
+}
+
+/// A directory a top depends on (`link:` or `file:`), at its root-relative path. A `file:`
+/// directory inside the project is a top, as a workspace is: its dependencies install in its own
+/// `node_modules`. A `link:` one, or one outside the project, is only linked: nothing is written
+/// there, and its dependencies are its own.
+#[derive(Debug, Clone)]
+pub struct Dir {
+    pub path: String,
+    /// What the first top to depend on it calls it: a top is keyed by one name.
+    pub name: String,
+    pub top: bool,
+    /// Its package.json, if it has one (a top must).
+    pub manifest: Option<RootManifest>,
 }
 
 #[derive(Debug, Default)]
@@ -136,6 +152,15 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         state.started.insert(found.key());
         state.records.insert(found.key(), found.clone());
         local.insert(found.name.clone(), found);
+    }
+    // A `file:` directory inside the project is a top, as a workspace is, never linked by name.
+    for dir in opts.dirs.iter().filter(|d| d.top) {
+        let m = dir.manifest.clone().unwrap_or_default();
+        let found = dir_record(dir, &m)?;
+        let key = found.key();
+        tops.insert(key.clone(), Top { prod: m.prod(), manifest: m });
+        state.started.insert(key.clone());
+        state.records.insert(key, found);
     }
     let mut locked_versions: HashMap<String, Vec<String>> = HashMap::new();
     for p in opts.locked.iter().flat_map(|l| l.packages.values()) {
@@ -249,6 +274,10 @@ impl Walk<'_> {
             push(source);
             return Ok(());
         }
+        if spec.kind == Kind::Directory {
+            push(self.dir(from, &spec)?);
+            return Ok(());
+        }
         if self.tops.contains_key(from)
             && let Some(ws) = self.local_for(&spec, from)?
         {
@@ -349,7 +378,7 @@ impl Walk<'_> {
 
     /// A path is read from the package.json that declares it, so only a top may have one.
     fn source_of(&self, fetch_spec: &str, from: &str) -> Result<String> {
-        if !fetch_spec.starts_with("file:") {
+        if !fetch_spec.starts_with("file:") && !fetch_spec.starts_with("link:") {
             return Ok(fetch_spec.to_string());
         }
         let base = if from == ROOT {
@@ -358,12 +387,46 @@ impl Walk<'_> {
             self.tops.get(from).and_then(|_| lock(&self.state).records.get(from).and_then(|r| r.local.clone()))
         };
         let Some(base) = base else {
-            return Err(Error::new(
-                "EINVALIDSPEC",
-                "a local tarball can be a dependency of the root or a workspace only",
-            ));
+            return Err(Error::new("EINVALIDSPEC", "only the root and workspaces may depend on a path"));
         };
-        Ok(spec::tarball_source(fetch_spec, &base))
+        Ok(spec::source_at(fetch_spec, &base))
+    }
+
+    /// A directory edge's version, `link:<path>`: the top there when it goes by this name, else
+    /// a record of the directory, linked as it is.
+    fn dir(&self, from: &str, spec: &Spec) -> Result<String> {
+        let source = self.source_of(&spec.fetch_spec, from)?;
+        let path = &source[5..]; // `link:` or `file:`
+        if path.is_empty() {
+            return Err(Error::new("EINVALIDSPEC", "a package cannot depend on the project's own directory"));
+        }
+        let version = format!("link:{path}");
+        if self.tops.contains_key(&format!("{}@{version}", spec.name)) {
+            return Ok(version);
+        }
+        let m = self.opts.dirs.iter().find(|d| d.path == path).and_then(|d| d.manifest.as_ref());
+        let found = Package {
+            name: spec.name.clone(),
+            version: m
+                .and_then(|m| m.version.clone())
+                .filter(|v| semver::is_exact(v))
+                .unwrap_or_else(|| "0.0.0".into()),
+            local: Some(path.to_string()),
+            linked: true,
+            bin: m.map(RootManifest::bins).unwrap_or_default(),
+            ..Package::default()
+        };
+        let mut s = lock(&self.state);
+        if spec.fetch_spec.starts_with("file:") && (path == ".." || path.starts_with("../")) {
+            s.warnings.insert(format!(
+                "{source} is outside the project: it is linked, and its dependencies are its own to install"
+            ));
+        }
+        if s.started.insert(found.key()) {
+            s.edges.insert(found.key(), Vec::new());
+            s.records.insert(found.key(), found);
+        }
+        Ok(version)
     }
 
     /// The locked version an edge can keep. Never for a tag; for an alias only when the locked
@@ -812,6 +875,30 @@ fn record(name: &str, m: &Manifest, source: Option<&str>) -> Package {
         scripts: m.scripts,
         ..Package::default()
     }
+}
+
+/// A directory's version: its package.json's, else `0.0.0`.
+pub fn dir_version(m: &RootManifest) -> String {
+    m.version.clone().filter(|v| !v.is_empty()).unwrap_or_else(|| "0.0.0".into())
+}
+
+/// A `file:` directory walked as a top: a workspace named by the dependency on it.
+fn dir_record(dir: &Dir, m: &RootManifest) -> Result<Package> {
+    let version = dir_version(m);
+    if !local_path(&dir.path) || !semver::is_exact(&version) {
+        return Err(Error::new("EWORKSPACE", format!("file:{} has an invalid version ({version})", dir.path)));
+    }
+    let shape = local_shape(m);
+    Ok(Package {
+        name: dir.name.clone(),
+        version,
+        local: Some(dir.path.clone()),
+        specs: shape.specs,
+        bin: shape.bin,
+        peer_dependencies: shape.peer_dependencies,
+        peers: shape.peers,
+        ..Package::default()
+    })
 }
 
 /// A workspace as a package: named and versioned by its manifest, placed by its path.

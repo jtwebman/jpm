@@ -1,5 +1,5 @@
 //! Dependency specs, as `npm-package-arg` reads them: versions, ranges, tags, `npm:` aliases,
-//! `workspace:` ranges and tarballs.
+//! `workspace:` ranges, tarballs and directories.
 
 use crate::error::{Error, Result};
 use crate::semver;
@@ -13,6 +13,9 @@ pub enum Kind {
     Workspace,
     /// `fetch_spec` is an http(s) url as given, or `file:` and a clean relative `/` path.
     Tarball,
+    /// `fetch_spec` is `link:` or `file:` and a clean relative `/` path, which may start with
+    /// `../`: a directory, linked where it is.
+    Directory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,30 +41,33 @@ fn ends_as_tarball(s: &str) -> bool {
     TARBALL_EXT.iter().any(|ext| lower.ends_with(ext))
 }
 
-/// A CLI argument that is a tarball on its own (a url, a `file:`, `./` or `../` path, or a file
-/// name ending as a tarball does), as a tarball spec's `fetch_spec`.
-pub fn bare_tarball(arg: &str) -> Result<Option<String>> {
+/// A CLI argument that names no package, only where one is (a url, a `file:`, `link:`, `./` or
+/// `../` path, or a file name ending as a tarball does), as its spec's `fetch_spec`.
+pub fn bare_source(arg: &str) -> Result<Option<String>> {
     let pathish = arg.starts_with("file:")
+        || arg.starts_with("link:")
         || arg.starts_with("./")
         || arg.starts_with("../")
         || arg.starts_with(".\\")
         || arg.starts_with("..\\");
     if is_url(arg) || pathish {
-        return tarball(arg, arg);
+        return path(arg, arg);
     }
     if !arg.contains('@') && ends_as_tarball(arg) {
-        return tarball(&format!("file:{arg}"), arg);
+        return path(&format!("file:{arg}"), arg);
     }
     Ok(None)
 }
 
-/// Where a tarball spec's bytes are, as a lockfile key spells it: a url as given, a path joined
-/// onto `base`, the root-relative directory of the package.json that declared it.
-pub fn tarball_source(fetch_spec: &str, base: &str) -> String {
-    match fetch_spec.strip_prefix("file:") {
-        Some(path) => format!("file:{}", join_path(base, path)),
-        None => fetch_spec.to_string(),
+/// Where a tarball or directory spec points, as a lockfile spells it: a url as given, a path
+/// joined onto `base`, the root-relative directory of the package.json that declared it.
+pub fn source_at(fetch_spec: &str, base: &str) -> String {
+    for protocol in ["file:", "link:"] {
+        if let Some(path) = fetch_spec.strip_prefix(protocol) {
+            return format!("{protocol}{}", join_path(base, path));
+        }
     }
+    fetch_spec.to_string()
 }
 
 /// A CLI argument such as `foo@^1.2`, `@scope/foo@latest` or `foo@npm:bar@^1`.
@@ -95,7 +101,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     let mut fetch_name = name.to_string();
     let mut s = spec.trim().to_string();
     unsupported(&s, raw)?;
-    let source = tarball(&s, raw)?;
+    let source = path(&s, raw)?;
     let mut local = false;
     if let Some(rest) = s.strip_prefix("workspace:") {
         local = true;
@@ -120,7 +126,8 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         fetch_spec,
     };
     if let Some(source) = source {
-        return Ok(make(Kind::Tarball, source));
+        let dir = source.starts_with("link:") || source.starts_with("file:") && !ends_as_tarball(&source);
+        return Ok(make(if dir { Kind::Directory } else { Kind::Tarball }, source));
     }
     if local {
         return Ok(make(Kind::Workspace, s));
@@ -140,7 +147,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 6] = ["link:", "patch:", "portal:", "catalog:", "jsr:", "exec:"];
+    const PROTOCOLS: [&str; 5] = ["patch:", "portal:", "catalog:", "jsr:", "exec:"];
     const GIT: [&str; 10] = [
         "git:",
         "git+https:",
@@ -169,19 +176,22 @@ fn unsupported(s: &str, raw: &str) -> Result<()> {
     Ok(())
 }
 
-/// A tarball spec's `fetch_spec`, or `None` when `s` is not one. A path must be relative and
-/// end as a tarball does: a directory is a workspace's job.
-fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
+/// A tarball's or a directory's `fetch_spec`, or `None` when `s` is neither: a url, or a path
+/// relative to package.json. `file:` (or a bare `./` path) ending as a tarball does is a
+/// tarball; any other is a directory, as every `link:` is.
+fn path(s: &str, raw: &str) -> Result<Option<String>> {
     if is_url(s) {
         if !valid_url(s) {
             return Err(invalid(format!("Invalid url \"{s}\" of package \"{raw}\"")));
         }
         return Ok(Some(s.to_string()));
     }
-    let path = if let Some(p) = s.strip_prefix("file:") {
-        p
+    let (protocol, path) = if let Some(p) = s.strip_prefix("file:") {
+        ("file:", p)
+    } else if let Some(p) = s.strip_prefix("link:") {
+        ("link:", p)
     } else if ["/", "\\", "./", ".\\", "../", "..\\", "~/", "~\\"].iter().any(|p| s.starts_with(p)) {
-        s
+        ("file:", s)
     } else {
         return Ok(None);
     };
@@ -191,12 +201,10 @@ fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
     if clean.starts_with('/') || clean.starts_with('~') || joined.contains(':') {
         return Err(invalid(format!("Invalid path \"{path}\" of package \"{raw}\": give it relative to package.json")));
     }
-    if !ends_as_tarball(&clean) {
-        return Err(invalid(format!(
-            "directory dependencies are not supported yet: {s} (in package \"{raw}\"); only a tarball (.tgz, .tar.gz or .tar) installs from a path"
-        )));
+    if protocol == "link:" && ends_as_tarball(&joined) {
+        return Err(invalid(format!("Invalid path \"{path}\" of package \"{raw}\": link: names a directory")));
     }
-    Ok(Some(format!("file:{joined}")))
+    Ok(Some(format!("{protocol}{joined}")))
 }
 
 fn valid_url(s: &str) -> bool {
@@ -323,10 +331,30 @@ mod tests {
         for drive in ["file:C:/x.tgz", "file:./C:/x.tgz", "./x/../C:\\x.tgz", "file:c:x.tgz", "file:a:s.tgz"] {
             assert!(parse_dep("lib", drive).is_err(), "{drive}");
         }
-        assert!(parse_dep("lib", "./dir").is_err());
-        assert_eq!(bare_tarball("lib-1.0.0.tgz").unwrap().as_deref(), Some("file:lib-1.0.0.tgz"));
-        assert_eq!(bare_tarball("vue@^3").unwrap(), None);
-        assert_eq!(tarball_source("file:../x.tgz", "packages/a"), "file:packages/x.tgz");
+        assert_eq!(bare_source("lib-1.0.0.tgz").unwrap().as_deref(), Some("file:lib-1.0.0.tgz"));
+        assert_eq!(bare_source("vue@^3").unwrap(), None);
+        assert_eq!(source_at("file:../x.tgz", "packages/a"), "file:packages/x.tgz");
+    }
+
+    #[test]
+    fn reads_directories() {
+        let dir = |spec: &str| parse_dep("d", spec).map(|s| (s.kind, s.fetch_spec));
+        let is = |spec: &str, want: &str| assert_eq!(dir(spec).unwrap(), (Kind::Directory, want.to_string()), "{spec}");
+        is("file:../dir", "file:../dir");
+        is("./dir", "file:dir");
+        is("../a/./b/../c", "file:../a/c");
+        is("file:.", "file:");
+        is("link:../../x/", "link:../../x");
+        is("link:x\\y", "link:x/y");
+        // A tarball by its name, and a path that leaves package.json's side are not directories.
+        assert_eq!(dir("./x.tgz").unwrap().0, Kind::Tarball);
+        for bad in ["link:/abs", "link:~/x", "link:C:/x", "link:./c:x", "file:/abs/dir", "link:x.tgz", "link:a:b"] {
+            assert!(dir(bad).is_err(), "{bad}");
+        }
+        assert_eq!(bare_source("link:../x").unwrap().as_deref(), Some("link:../x"));
+        assert_eq!(bare_source("./libs/x").unwrap().as_deref(), Some("file:libs/x"));
+        assert_eq!(source_at("link:../../x", "packages/a"), "link:x");
+        assert_eq!(source_at("file:../../../x", "packages/a"), "file:../x");
     }
 
     #[test]
@@ -342,9 +370,7 @@ mod tests {
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in
-            ["link:../x", "patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js"]
-        {
+        for spec in ["patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js"] {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }
@@ -362,9 +388,6 @@ mod tests {
         ];
         for spec in git {
             assert!(msg(spec).starts_with("git dependencies are not supported yet"), "{spec}");
-        }
-        for spec in ["file:../dir", "file:.", "./dir"] {
-            assert!(msg(spec).starts_with("directory dependencies are not supported yet"), "{spec}");
         }
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {

@@ -732,7 +732,7 @@ fn plan(
     };
     if let Some(l) = &existing
         && moved.is_empty()
-        && lock::same_tree(l, &project.manifest, &project.workspaces)
+        && lock::same_tree(l, &project.manifest, &tops(project)?)
         && !ctx.dedupe
     {
         let mut l = l.clone();
@@ -873,11 +873,13 @@ fn resolve_lock(
         project.workspaces.iter().map(|w| (w.path.clone(), w.manifest.clone())).collect();
     // Locked subtrees were resolved under the old overrides: walked afresh, locked versions preferred.
     let overridden = existing.as_ref().is_some_and(|l| l.root.overrides != project.manifest.overrides);
+    let dirs = find_dirs(project)?;
     let options = |locked| resolve::Options {
         registry,
         locked,
         dedupe: ctx.dedupe || overridden,
         workspaces: workspaces.clone(),
+        dirs: dirs.clone(),
         tarball: Some(reader),
         on_pick,
         prefer,
@@ -937,6 +939,58 @@ fn current_lock(dir: &Path) -> Option<Lockfile> {
             None
         }
     }
+}
+
+/// Every directory the tops depend on by path (`link:`, `file:`), and what each `file:`
+/// directory inside the project depends on in turn: those are tops too, as workspaces are. One
+/// outside the project is only linked, as `link:` is: jpm writes nothing outside the project.
+fn find_dirs(project: &Project) -> Result<Vec<resolve::Dir>> {
+    let workspaces: HashSet<&str> = project.workspaces.iter().map(|w| w.path.as_str()).collect();
+    let mut tops: Vec<(String, RootManifest)> = vec![(String::new(), project.manifest.clone())];
+    tops.extend(project.workspaces.iter().map(|w| (w.path.clone(), w.manifest.clone())));
+    let mut out: Vec<resolve::Dir> = Vec::new();
+    let mut i = 0;
+    while let Some((base, m)) = tops.get(i).cloned() {
+        i += 1;
+        for (name, range, _) in m.edges() {
+            // A bad spec is the resolve's to report, with where it came from.
+            let Some(s) = spec::parse_dep(&name, &range).ok().filter(|s| s.kind == Kind::Directory) else { continue };
+            let source = spec::source_at(&s.fetch_spec, &base);
+            let path = source[5..].to_string();
+            let outside = path == ".." || path.starts_with("../");
+            let top = source.starts_with("file:") && !outside && !path.is_empty() && !workspaces.contains(&*path);
+            let at = out.iter().position(|d| d.path == path);
+            if at.is_some_and(|at| out[at].top || !top) {
+                continue;
+            }
+            let file = project.dir.join(&path).join("package.json");
+            let manifest = match project::read_manifest(&file) {
+                Ok(m) => Some(m),
+                Err(e) if top => return Err(e.context(format!("{name}@{range}"))),
+                Err(_) => None,
+            };
+            if top {
+                tops.push((path.clone(), manifest.clone().unwrap_or_default()));
+            }
+            let dir = resolve::Dir { path, name, top, manifest };
+            match at {
+                Some(at) => out[at] = dir,
+                None => out.push(dir),
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The workspaces, and the `file:` directories walked as tops, as the lockfile records both.
+fn tops(project: &Project) -> Result<Vec<Workspace>> {
+    let mut all = project.workspaces.clone();
+    for d in find_dirs(project)?.into_iter().filter(|d| d.top) {
+        let manifest = d.manifest.unwrap_or_default();
+        let version = resolve::dir_version(&manifest);
+        all.push(Workspace { dir: project.dir.join(&d.path), path: d.path, name: d.name, version, manifest });
+    }
+    Ok(all)
 }
 
 /// A tarball dependency's package.json, with `dist` naming the source and its bytes' integrity.
@@ -1120,7 +1174,7 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
         return Err(fail("EOPTION", "add needs at least one spec"));
     }
     let group = opts.group.unwrap_or("dependencies");
-    let bare: Vec<Option<String>> = specs.iter().map(|s| spec::bare_tarball(s)).collect::<Result<_>>()?;
+    let bare: Vec<Option<String>> = specs.iter().map(|s| spec::bare_source(s)).collect::<Result<_>>()?;
     let parsed: Vec<Option<spec::Spec>> = specs
         .iter()
         .zip(&bare)
@@ -1135,8 +1189,8 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
     let registry = ctx.registry(&store);
     let mut added: Vec<Added> = Vec::new();
     for ((raw, spec), bare) in specs.iter().zip(&parsed).zip(&bare) {
-        let tarball = spec.as_ref().is_none_or(|s| s.kind == Kind::Tarball);
-        if tarball {
+        let located = spec.as_ref().is_none_or(|s| matches!(s.kind, Kind::Tarball | Kind::Directory));
+        if located {
             let fetch_spec =
                 from_cwd(&edit.file, bare.as_deref().or(spec.as_ref().map(|s| s.fetch_spec.as_str())).unwrap_or(""));
             let name = match spec {
@@ -1144,15 +1198,20 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
                 None => {
                     let base =
                         crate::util::relative(&edit.project.dir, edit.file.parent().unwrap_or(&edit.project.dir));
-                    let source = spec::tarball_source(&fetch_spec, &base.to_string_lossy().replace('\\', "/"));
-                    let m = read_tarball(&ctx, &store, &edit.project.dir, &source, None)?;
-                    if m.name.is_empty() {
+                    let source = spec::source_at(&fetch_spec, &base.to_string_lossy().replace('\\', "/"));
+                    let name = if spec::parse_dep("x", &fetch_spec)?.kind == Kind::Directory {
+                        let file = edit.project.dir.join(&source[5..]).join("package.json");
+                        project::read_manifest(&file)?.name.unwrap_or_default()
+                    } else {
+                        read_tarball(&ctx, &store, &edit.project.dir, &source, None)?.name.clone()
+                    };
+                    if name.is_empty() {
                         return Err(fail(
                             "EINVALIDSPEC",
                             format!("{raw} has no name in its package.json: add it as <name>@{raw}"),
                         ));
                     }
-                    m.name.clone()
+                    name
                 }
             };
             let range = spec::parse_dep(&name, &fetch_spec)?.fetch_spec;
@@ -1183,13 +1242,16 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
 /// A path `add` is given is the shell's, read from cwd; the package.json keeps it from its own
 /// directory.
 fn from_cwd(file: &Path, fetch_spec: &str) -> String {
-    let Some(path) = fetch_spec.strip_prefix("file:") else { return fetch_spec.to_string() };
+    let (protocol, path) = fetch_spec.split_at(fetch_spec.find(':').map_or(0, |i| i + 1));
+    if protocol != "file:" && protocol != "link:" {
+        return fetch_spec.to_string();
+    }
     let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let at = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
     let (Some(at_dir), Some(name)) = (at.parent(), at.file_name()) else { return fetch_spec.to_string() };
     let base = file.parent().unwrap_or(Path::new("."));
     let rel = crate::util::relative(&real(base), &real(at_dir)).join(name);
-    format!("file:{}", rel.to_string_lossy().replace('\\', "/"))
+    format!("{protocol}{}", rel.to_string_lossy().replace('\\', "/"))
 }
 
 pub fn remove(names: &[String], opts: Opts) -> Result<(Vec<String>, InstallResult)> {
@@ -1240,7 +1302,7 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
     };
     if let Some(l) = &existing
         && moved.is_empty()
-        && lock::same_tree(l, &project.manifest, &project.workspaces)
+        && lock::same_tree(l, &project.manifest, &tops(&project)?)
     {
         let mut l = l.clone();
         if l.hash.is_none() && write {
@@ -1337,8 +1399,8 @@ fn pick_all(ctx: &Ctx, store: &Store, specs: &[String]) -> Result<Vec<Arc<Manife
         return Err(fail("EOPTION", "needs at least one spec"));
     }
     let parsed: Vec<spec::Spec> = specs.iter().map(|s| spec::parse_spec(s)).collect::<Result<_>>()?;
-    if let Some(t) = parsed.iter().find(|s| s.kind == Kind::Tarball) {
-        return Err(fail("EINVALIDSPEC", format!("{} is a tarball, not a registry spec", t.raw)));
+    if let Some(t) = parsed.iter().find(|s| matches!(s.kind, Kind::Tarball | Kind::Directory)) {
+        return Err(fail("EINVALIDSPEC", format!("{} is not a registry spec", t.raw)));
     }
     let registry = ctx.registry(store);
     pool::map(pool::network_threads(), parsed, |s| registry.pick(&s, None, false)).into_iter().collect()
@@ -1730,7 +1792,7 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
 /// Where the specs install, made the context's root; the config stays the one already read.
 fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>)> {
     let parsed: Vec<spec::Spec> = specs.iter().map(|s| spec::parse_spec(s)).collect::<Result<_>>()?;
-    if let Some(l) = parsed.iter().find(|s| matches!(s.kind, Kind::Workspace | Kind::Tarball)) {
+    if let Some(l) = parsed.iter().find(|s| matches!(s.kind, Kind::Workspace | Kind::Tarball | Kind::Directory)) {
         return Err(fail("EINVALIDSPEC", format!("exec installs registry packages, not {}", l.raw)));
     }
     let store = ctx.store(false);
