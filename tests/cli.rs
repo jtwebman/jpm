@@ -20,10 +20,9 @@ fn registry() -> Registry {
         pkg("argv", "1.0.0", json!({ "bin": { "argv": "bin/argv.js" } })).file(
             "bin/argv.js",
             0o755,
-            "#!/usr/bin/env node
-console.log(JSON.stringify(process.argv.slice(2)))
-",
+            "#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)))\n",
         ),
+        pkg("next", "1.0.0", json!({ "dependencies": { "b": "1.0.0" } })),
         pkg("host", "1.0.0", json!({})),
         pkg("host", "2.0.0", json!({})),
         pkg("plugin", "1.0.0", json!({ "peerDependencies": { "host": ">=1" } })),
@@ -270,7 +269,7 @@ fn entries(dir: &std::path::Path) -> Vec<String> {
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.starts_with('.'))
+        .filter(|n| !n.starts_with('.') && n != "node_modules") // the hidden hoist
         .collect();
     out.sort();
     out
@@ -1027,4 +1026,45 @@ fn reads_catalogs_from_package_json() {
     );
     env.ok(&["install"]);
     assert!(env.read("packages/one/node_modules/b/index.js").contains("b@1.1.0"));
+}
+
+#[test]
+fn hoists_one_of_every_package_for_undeclared_imports() {
+    let r = registry();
+    let env = Env::new(&r);
+    // b@1.1.0 through a, b@2.0.0 through @scope/lib; b is not a root dependency.
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@2.0.0"), "the highest");
+    assert!(env.read("node_modules/.jpm/node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+    assert!(!env.exists("node_modules/b"), "the hoist is not the root's node_modules");
+    // The root's own version wins, and the hoist follows the tree.
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1", "b": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@1.0.0"));
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(!env.exists("node_modules/.jpm/node_modules/a"), "gone with its package");
+    // Prune drops the unused entries and keeps the hoist.
+    env.ok(&["prune"]);
+    assert!(!entries(&env.project()).iter().any(|e| e.starts_with("a@")));
+    assert!(env.read("node_modules/.jpm/node_modules/b/index.js").contains("b@1.0.0"));
+    // Entries in the global store resolve from the store: no hoist there.
+    env.ok(&["install"]);
+    assert!(!env.exists("node_modules/.jpm/node_modules"));
+}
+
+#[test]
+fn builds_in_the_project_for_frameworks_that_need_it() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "next": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("building packages in the project") && out.contains("next"), "{out}");
+    assert_eq!(entries(&env.project()).len(), 2, "next and b, in the project");
+    assert!(env.exists("node_modules/.jpm/node_modules/b"), "with the hidden hoist");
+    // An explicit setting still wins.
+    let out = env.command(&["install"]).env("JPM_GLOBAL_STORE", "1").output().unwrap();
+    assert!(out.status.success());
+    assert!(link_of(&env.project(), "next").contains("v1"), "{}", link_of(&env.project(), "next"));
 }
