@@ -112,8 +112,9 @@ pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, S
 }
 
 /// Whether cmd.exe runs `word` as a batch file (a bin's `.cmd` shim), whose `%*` reads the
-/// arguments a second time.
-pub fn is_batch(word: &str, cwd: &Path) -> bool {
+/// arguments a second time. Looked up as the shell will: in `cwd`, then `first` (the `.bin`
+/// directories put ahead on the child's PATH), then PATH.
+pub fn is_batch(word: &str, cwd: &Path, first: &[std::path::PathBuf]) -> bool {
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into()).to_ascii_lowercase();
     let exts: Vec<&str> = pathext.split(';').filter(|e| !e.is_empty()).collect();
     let lower = word.to_ascii_lowercase();
@@ -124,6 +125,7 @@ pub fn is_batch(word: &str, cwd: &Path) -> bool {
     };
     let mut dirs = vec![cwd.to_path_buf()];
     if !word.contains(['/', '\\']) {
+        dirs.extend(first.iter().cloned());
         dirs.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
     }
     for dir in dirs {
