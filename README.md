@@ -32,7 +32,7 @@ another directory. Each platform has its own build:
 | Windows arm64 | `jpm-windows-arm64.exe` | `aarch64-pc-windows-msvc`        |
 
 The Linux builds are static, so they run on glibc and musl (Alpine) alike. Tests run on Linux
-for now; macOS and Windows builds are not yet tested in CI.
+and Windows; macOS builds are not yet tested in CI.
 
 Or build it:
 

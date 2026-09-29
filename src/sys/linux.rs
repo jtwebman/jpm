@@ -1,6 +1,6 @@
 //! Linux: hardlinks file by file, and the C library read off the loader that is installed.
 
-pub use super::unix::{alive, clone_dir, exec, read_link, symlink_dir};
+pub use super::unix::{alive, clone_dir, exec, links_to, read_link, symlink_dir};
 
 /// musl's loader is `/lib/ld-musl-<arch>.so.1`; a system without one is glibc. Read off the
 /// system, not this binary, which is static and would say musl on any machine.
