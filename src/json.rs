@@ -770,9 +770,11 @@ mod tests {
     #[test]
     fn refuses_deep_nesting_on_a_small_stack() {
         // The limit, not the stack, must stop a hostile document: a quarter of the 2 MiB a pool
-        // thread gets is enough, even unoptimized.
+        // thread gets is enough, even unoptimized. Windows' unoptimized frames are larger (depth
+        // 128 needs over 512 KiB there); still well under the 1 MiB its main thread gets.
+        let kib = if cfg!(all(windows, debug_assertions)) { 768 } else { 512 };
         std::thread::Builder::new()
-            .stack_size(512 * 1024)
+            .stack_size(kib * 1024)
             .spawn(|| {
                 let ok = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
                 assert!(parse(&ok).is_ok());

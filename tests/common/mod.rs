@@ -258,7 +258,22 @@ impl Env {
     }
 
     pub fn read(&self, rel: &str) -> String {
-        std::fs::read_to_string(self.project().join(rel)).unwrap_or_default()
+        std::fs::read_to_string(self.path(rel)).unwrap_or_default()
+    }
+
+    /// `rel` under the project, a `..` leaving a link's target as it would on unix (Windows
+    /// takes `a/..` off by the letters, whatever `a` is).
+    pub fn path(&self, rel: &str) -> PathBuf {
+        let mut at = self.project();
+        for part in rel.split('/') {
+            if part == ".." {
+                at = std::fs::canonicalize(&at).unwrap_or(at);
+                at.pop();
+            } else {
+                at.push(part);
+            }
+        }
+        at
     }
 
     pub fn manifest(&self, value: Value) {
@@ -298,7 +313,7 @@ impl Env {
     }
 
     pub fn exists(&self, rel: &str) -> bool {
-        std::fs::symlink_metadata(self.project().join(rel)).is_ok()
+        std::fs::symlink_metadata(self.path(rel)).is_ok()
     }
 
     /// The lockfile as JSON, through `jpm lock --json` (the file itself is jpm's text format).

@@ -192,7 +192,9 @@ fn links_the_root_listed_as_a_workspace() {
     env.write("play/x/dir/package.json", r#"{ "name": "x" }"#);
     let out = env.ok(&["install"]);
     assert!(out.contains("workspaces play/x and play/x/dir are both named x; jpm installs only play/x"), "{out}");
-    assert_eq!(link_of(&env.project().join("a"), "root"), "../..");
+    // `../..` on unix, absolute as a junction: either way, the project itself.
+    let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+    assert_eq!(real(env.project().join("a/node_modules/root")), real(env.project()));
     assert!(env.exists("a/node_modules/.bin/root-cli"));
     // Installed once, as the root.
     assert!(env.exists("node_modules/b") && !env.exists("node_modules/root") && !env.exists("play/x/dir/node_modules"));
@@ -281,7 +283,7 @@ fn shares_entries_through_the_global_store() {
     let target = link_of(&env.project(), "a");
     // Built once in the store; the project links its direct deps straight there.
     assert!(entries(&env.project()).is_empty());
-    assert!(target.starts_with(&*links.to_string_lossy()), "{target}");
+    assert!(std::path::Path::new(&target).starts_with(&links), "{target}");
     assert_eq!(std::fs::read_dir(&links).unwrap().count(), 2);
     assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
 
@@ -297,7 +299,9 @@ fn shares_entries_through_the_global_store() {
     // Off, the project builds its own entries; on again, it links back.
     env.ok(&["install", "--no-global-store"]);
     assert_eq!(entries(&env.project()).len(), 2);
-    assert!(link_of(&env.project(), "a").starts_with(".jpm"));
+    // Relative on unix, absolute as a junction: either way, into the project's own entries.
+    let nm = env.project().join("node_modules");
+    assert!(nm.join(link_of(&env.project(), "a")).starts_with(nm.join(".jpm")));
     assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
     env.ok(&["install"]);
     assert_eq!(link_of(&env.project(), "a"), target);
@@ -448,6 +452,7 @@ fn hands_npm_commands_only_to_the_system_npm() {
     assert!(!planted.exists());
 }
 
+#[cfg(unix)]
 fn which_npm() -> bool {
     ["/usr/bin/npm", "/bin/npm"].iter().any(|p| std::path::Path::new(p).exists())
 }

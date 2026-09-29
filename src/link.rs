@@ -481,9 +481,7 @@ impl Linker<'_> {
             return Ok(false);
         }
         let deps = self.deps_of(entry.pkg)?;
-        if !deps.iter().all(|(name, dep)| {
-            sys::read_link(&nm.join(name)).as_deref() == Some(self.dep_target(entry, name, dep).as_str())
-        }) {
+        if !deps.iter().all(|(name, dep)| sys::links_to(&nm.join(name), &self.dep_target(entry, name, dep))) {
             return Ok(false);
         }
         let bin_dir = nm.join(".bin");
@@ -495,7 +493,7 @@ impl Linker<'_> {
                 }) {
                     return Ok(false);
                 }
-            } else if sys::read_link(&bin_dir.join(&bin)).as_deref() != Some(bin_link(&dep, &target).as_str()) {
+            } else if !sys::links_to(&bin_dir.join(&bin), &bin_link(&dep, &target)) {
                 return Ok(false);
             }
         }
@@ -831,7 +829,7 @@ fn replace_link(at: &Path, target: &str, within: &Path, dir: bool) -> Result<()>
         return Err(fail(format!("refusing to link outside {}: {}", within.display(), at.display())));
     }
     for attempt in 0..4 {
-        if sys::read_link(at).as_deref() == Some(target) {
+        if sys::links_to(at, target) {
             return Ok(());
         }
         let _ = remove_link(at);
@@ -903,15 +901,19 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
         let to = sys::read_link(&at)?;
         match pkg.and_then(|p| p.local.as_ref()) {
             Some(path) => {
-                if Path::new(&to) != relative(at.parent()?, &dir.join(path)) {
+                if !sys::links_to(&at, &relative(at.parent()?, &dir.join(path)).to_string_lossy()) {
                     return None;
                 }
             }
             None => {
-                let store = relative(at.parent()?, &dir.join("node_modules").join(".jpm"));
+                // Relative to the link (unix) or absolute (a junction).
+                let local = dir.join("node_modules").join(".jpm");
+                let store = relative(at.parent()?, &local);
                 let tail = Path::new("node_modules").join(name);
-                let within =
-                    Path::new(&to).starts_with(&store) || global.is_some_and(|g| Path::new(&to).starts_with(g));
+                let to_path = Path::new(&to);
+                let within = to_path.starts_with(&store)
+                    || to_path.starts_with(&local)
+                    || global.is_some_and(|g| to_path.starts_with(g));
                 if !within || !Path::new(&to).ends_with(&tail) {
                     return None;
                 }
@@ -941,7 +943,7 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
 pub fn tree_standing(dir: &Path, st: &State) -> bool {
     let nm = dir.join("node_modules");
     let Some(root) = st.root.as_ref().filter(|_| st.complete) else { return false };
-    if !root.links.iter().all(|(name, target)| sys::read_link(&nm.join(name)).as_deref() == Some(target.as_str())) {
+    if !root.links.iter().all(|(name, target)| sys::links_to(&nm.join(name), target)) {
         return false;
     }
     if !root.bins.is_empty() {

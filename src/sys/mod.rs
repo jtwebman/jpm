@@ -5,7 +5,10 @@
 //! - `clone_dir(src, dst)`: copy a whole package directory in one step where the filesystem can
 //!   (macOS `clonefile`); `Ok(false)` means "not here", and the caller links file by file.
 //! - `symlink_dir(target, at)`: a link to a directory, `target` relative to `at`'s directory.
-//! - `read_link(at)`: a link's target as `symlink_dir` was given it.
+//! - `read_link(at)`: a link's target: as `symlink_dir` was given it on unix, absolute on
+//!   Windows, where a junction keeps no other form.
+//! - `links_to(at, target)`: whether the link at `at` leads where `symlink_dir(target, at)`
+//!   would make it, whichever form `target` is in.
 //! - `alive(pid)`: whether a process could still be writing under that pid.
 //! - `libc()`: `glibc` or `musl` on Linux, `None` elsewhere.
 //! - `exec(command)`: run a command in place of this process, returning only on failure or,
@@ -30,7 +33,7 @@ mod windows;
 pub use windows::*;
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-pub use unix::{alive, clone_dir, exec, read_link, symlink_dir};
+pub use unix::{alive, clone_dir, exec, links_to, read_link, symlink_dir};
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn libc() -> Option<&'static str> {
     None

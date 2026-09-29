@@ -13,6 +13,10 @@ pub fn read_link(at: &Path) -> Option<String> {
     std::fs::read_link(at).ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+pub fn links_to(at: &Path, target: &str) -> bool {
+    read_link(at).as_deref() == Some(target)
+}
+
 pub fn alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else { return true };
     // SAFETY: signal 0 only asks whether the process exists; nothing is sent.
