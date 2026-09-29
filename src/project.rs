@@ -171,8 +171,20 @@ pub fn local_shape(m: &RootManifest) -> LocalShape {
 }
 
 /// Whether a workspace path can be trusted where it is used: relative, `/`-separated, never up.
+/// `.` is the root, listed as a workspace of its own.
 pub fn local_path(path: &str) -> bool {
-    !path.is_empty() && !path.contains('\\') && !path.split('/').any(|p| p.is_empty() || p == "." || p == "..")
+    path == ROOT_PATH
+        || !path.is_empty() && !path.contains('\\') && !path.split('/').any(|p| p.is_empty() || p == "." || p == "..")
+}
+
+/// The path of the root when its own `workspaces` lists it (`.`): a workspace others link to
+/// by its name, installed once, as the root.
+pub const ROOT_PATH: &str = ".";
+
+/// Whether the root lists itself as a workspace, and has a name to be linked by.
+pub fn lists_root(m: &RootManifest) -> bool {
+    m.name.as_ref().is_some_and(|n| !n.is_empty())
+        && patterns(m).is_ok_and(|(p, _)| p.iter().any(|p| p.is_empty() || p == "."))
 }
 
 #[derive(Debug, Clone)]
@@ -228,10 +240,16 @@ fn patterns(m: &RootManifest) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// Every workspace under `dir`, pattern by pattern, sorted within one, each at its first match.
+/// Of two with one name the first is kept and the other left out with a warning, as pnpm lets
+/// a test fixture share its parent's name; but when something would link to that name, which
+/// one it means is ambiguous, and that is an error. The root, when it lists itself, is first.
 pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
     let (patterns, mut exclude) = patterns(m)?;
     exclude.push("**/node_modules/**".into());
     let mut found: Vec<Workspace> = Vec::new();
+    // (kept path, its version, left-out path, its version, name)
+    let mut twins: Vec<(String, String, String, String, String)> = Vec::new();
+    let root = lists_root(m).then(|| (m.name.clone().unwrap_or_default(), m.version.clone().unwrap_or_default()));
     for pattern in &patterns {
         let mut paths = glob::expand(dir, pattern, &exclude);
         paths.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
@@ -247,11 +265,33 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
             let manifest = read_manifest(&file)?;
             let name = manifest.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| basename(&path));
             let version = manifest.version.clone().filter(|v| !v.is_empty()).unwrap_or_else(|| "0.0.0".into());
-            if let Some(other) = found.iter().find(|w| w.name == name) {
-                return Err(workspace_error(&format!("workspaces {} and {path} are both named {name}", other.path)));
+            let first = match &root {
+                Some((n, v)) if *n == name => Some((ROOT_PATH.to_string(), v.clone())),
+                _ => found.iter().find(|w| w.name == name).map(|w| (w.path.clone(), w.version.clone())),
+            };
+            if let Some((first, first_version)) = first {
+                twins.push((first, first_version, path, version, name));
+                continue;
             }
             found.push(Workspace { path, dir: at, name, version, manifest });
         }
+    }
+    for (first, first_version, path, version, name) in &twins {
+        let links = |t: &RootManifest| {
+            [&t.dependencies, &t.dev_dependencies, &t.optional_dependencies]
+                .into_iter()
+                .chain(t.peer_dependencies.as_ref())
+                .filter_map(|group| group.get(name))
+                .any(|range| {
+                    spec::parse_dep(name, range).is_ok_and(|s| links_to(&s, first_version) || links_to(&s, version))
+                })
+        };
+        if std::iter::once(m).chain(found.iter().map(|w| &w.manifest)).any(links) {
+            return Err(workspace_error(&format!(
+                "workspaces {first} and {path} are both named {name}, and a dependency on {name} could mean either"
+            )));
+        }
+        crate::ui::warn(&format!("workspaces {first} and {path} are both named {name}; jpm installs only {first}"));
     }
     Ok(found)
 }
@@ -411,6 +451,49 @@ mod tests {
         }
         let m = RootManifest::parse(r#"{"workspaces":["packages/{a,b}"]}"#, Path::new("package.json")).unwrap();
         assert_eq!(patterns(&m).unwrap().0, ["packages/{a,b}"]);
+    }
+
+    fn tree(files: &[(&str, &str)]) -> PathBuf {
+        let dir = crate::store::tests::scratch("project");
+        for (path, text) in files {
+            let file = dir.join(path).join("package.json");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn keeps_the_first_of_two_workspaces_with_one_name() {
+        let fixture = r#"{"name":"t","version":"0.0.0"}"#;
+        let dir = tree(&[
+            (".", r#"{"workspaces":["play/**"]}"#),
+            ("play/a", fixture),
+            ("play/a/dir/b", fixture),
+            ("play/c", r#"{"name":"c","dependencies":{"t":"workspace:*"}}"#),
+        ]);
+        let found = |dir: &Path| find_workspaces(dir, &read_manifest(&dir.join("package.json")).unwrap());
+        // Something links to the name: ambiguous.
+        let e = found(&dir).unwrap_err();
+        assert!(e.message.contains("play/a and play/a/dir/b are both named t, and a dependency"), "{}", e.message);
+        // Nothing does: the first stays.
+        std::fs::write(dir.join("play/c/package.json"), r#"{"name":"c","dependencies":{"t":"^2"}}"#).unwrap();
+        let paths: Vec<String> = found(&dir).unwrap().into_iter().map(|w| w.path).collect();
+        assert_eq!(paths, ["play/a", "play/c"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_the_root_listed_as_a_workspace() {
+        let m = |w: &str| RootManifest::parse(&format!(r#"{{"name":"r","workspaces":{w}}}"#), Path::new("p")).unwrap();
+        assert!(lists_root(&m(r#"[".", "a"]"#)) && lists_root(&m(r#"["./"]"#)));
+        assert!(!lists_root(&m(r#"["a", "*"]"#)));
+        assert!(local_path(".") && !local_path("./a") && !local_path("a/."));
+        // A workspace under the root's name is a second copy of it.
+        let dir = tree(&[(".", r#"{"name":"r","workspaces":[".","a"]}"#), ("a", r#"{"name":"r"}"#)]);
+        let ws = find_workspaces(&dir, &read_manifest(&dir.join("package.json")).unwrap()).unwrap();
+        assert!(ws.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

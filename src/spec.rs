@@ -94,6 +94,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     check_name(name, raw)?;
     let mut fetch_name = name.to_string();
     let mut s = spec.trim().to_string();
+    unsupported(&s, raw)?;
     let source = tarball(&s, raw)?;
     let mut local = false;
     if let Some(rest) = s.strip_prefix("workspace:") {
@@ -137,6 +138,37 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     Ok(make(Kind::Tag, s))
 }
 
+/// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
+fn unsupported(s: &str, raw: &str) -> Result<()> {
+    const PROTOCOLS: [&str; 6] = ["link:", "patch:", "portal:", "catalog:", "jsr:", "exec:"];
+    const GIT: [&str; 10] = [
+        "git:",
+        "git+https:",
+        "git+http:",
+        "git+ssh:",
+        "git+file:",
+        "git@",
+        "github:",
+        "gitlab:",
+        "bitbucket:",
+        "gist:",
+    ];
+    let lower = s.to_ascii_lowercase();
+    if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
+        return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
+    }
+    // `user/repo` is github shorthand, with an optional `#ref`.
+    let repo = s.split('#').next().unwrap_or(s);
+    let shorthand = repo.split_once('/').is_some_and(|(user, name)| {
+        let ok = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+        ok(user) && ok(name) && !user.starts_with(['.', '-'])
+    });
+    if shorthand || GIT.iter().any(|p| lower.starts_with(p)) {
+        return Err(invalid(format!("git dependencies are not supported yet: {s} (in package \"{raw}\")")));
+    }
+    Ok(())
+}
+
 /// A tarball spec's `fetch_spec`, or `None` when `s` is not one. A path must be relative and
 /// end as a tarball does: a directory is a workspace's job.
 fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
@@ -160,7 +192,7 @@ fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
     }
     if !ends_as_tarball(&clean) {
         return Err(invalid(format!(
-            "Invalid path \"{path}\" of package \"{raw}\": only a tarball (.tgz, .tar.gz or .tar) installs from a path"
+            "directory dependencies are not supported yet: {s} (in package \"{raw}\"); only a tarball (.tgz, .tar.gz or .tar) installs from a path"
         )));
     }
     Ok(Some(format!("file:{}", join_path("", &clean))))
@@ -299,6 +331,41 @@ mod tests {
             assert!(parse_dep(bad, "1").is_err(), "{bad:?}");
         }
         assert!(parse_dep("foo", "not a tag").is_err());
+        assert!(parse_dep("foo", "not/a tag").unwrap_err().message.starts_with("Invalid tag"));
+    }
+
+    #[test]
+    fn names_the_forms_it_does_not_read() {
+        let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
+        assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
+        for spec in
+            ["link:../x", "patch:x@1#p.patch", "portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js"]
+        {
+            let prefix = &spec[..=spec.find(':').unwrap()];
+            assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
+        }
+        assert_eq!(
+            msg("github:watson/ci-info#v1"),
+            r#"git dependencies are not supported yet: github:watson/ci-info#v1 (in package "x@github:watson/ci-info#v1")"#
+        );
+        let git = [
+            "watson/ci-info",
+            "watson/ci-info#semver:^3",
+            "git+https://github.com/a/b.git",
+            "git+ssh://git@github.com/a/b",
+            "git://github.com/a/b",
+            "git@github.com:a/b.git",
+        ];
+        for spec in git {
+            assert!(msg(spec).starts_with("git dependencies are not supported yet"), "{spec}");
+        }
+        for spec in ["file:../dir", "file:.", "./dir"] {
+            assert!(msg(spec).starts_with("directory dependencies are not supported yet"), "{spec}");
+        }
+        // Still read as before.
+        for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
+            assert!(parse_dep("x", spec).is_ok(), "{spec}");
+        }
         assert_eq!(escape_name("@a/b").unwrap(), "@a%2fb");
     }
 }

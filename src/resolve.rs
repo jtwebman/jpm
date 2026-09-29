@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root};
 use crate::manifest::Manifest;
 use crate::pool::{self, Queue};
-use crate::project::{RootManifest, declared_peers, local_path, local_shape};
+use crate::project::{self, RootManifest, declared_peers, local_path, local_shape};
 use crate::registry::{Registry, tarball_url};
 use crate::semver;
 use crate::spec::{self, Kind, Spec};
@@ -119,6 +119,15 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         tops.insert(key.clone(), Top { prod: m.prod(), manifest: m.clone() });
         state.started.insert(key.clone());
         state.records.insert(key, found.clone());
+        local.insert(found.name.clone(), found);
+    }
+    // The root listed as a workspace of its own: linked to by name, walked only as the root.
+    if project::lists_root(manifest)
+        && let Ok(found) = local_record(project::ROOT_PATH, manifest)
+    {
+        let found = Package { specs: None, peer_dependencies: None, peers: None, ..found };
+        state.started.insert(found.key());
+        state.records.insert(found.key(), found.clone());
         local.insert(found.name.clone(), found);
     }
     let mut locked_versions: HashMap<String, Vec<String>> = HashMap::new();
