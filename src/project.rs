@@ -289,7 +289,7 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
             }
             let manifest = read_manifest(&file)?;
             let name = manifest.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| basename(&path));
-            let version = manifest.version.clone().filter(|v| !v.is_empty()).unwrap_or_else(|| "0.0.0".into());
+            let version = manifest.version.clone().filter(|v| semver::is_exact(v)).unwrap_or_else(|| "0.0.0".into());
             let first = match &root {
                 Some((n, v)) if *n == name => Some((ROOT_PATH.to_string(), v.clone())),
                 _ => found.iter().find(|w| w.name == name).map(|w| (w.path.clone(), w.version.clone())),
