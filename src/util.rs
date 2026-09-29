@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ring::digest;
+use jpm_crypto::hash::{Alg, digest};
 
 use crate::error::{Error, Result};
 
@@ -73,12 +73,11 @@ pub fn from_hex(text: &str) -> Option<Vec<u8>> {
 
 /// 128 bits of sha256 as 22 characters of base64url: a short key for a subgraph or an input set.
 pub fn short_hash(text: &str) -> String {
-    let d = digest::digest(&digest::SHA256, text.as_bytes());
-    to_base64_url(&d.as_ref()[..16])
+    to_base64_url(&digest(Alg::Sha256, text.as_bytes())[..16])
 }
 
 pub fn sha256_hex(text: &str) -> String {
-    digest::digest(&digest::SHA256, text.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    digest(Alg::Sha256, text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -95,7 +94,7 @@ fn token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| {
         let mut seed = [0u8; 6];
-        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut seed).unwrap_or_default();
+        jpm_crypto::rand::fill(&mut seed);
         to_base64_url(&seed)
     })
 }

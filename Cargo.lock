@@ -194,7 +194,6 @@ dependencies = [
  "jpm-crypto",
  "junction",
  "libc",
- "ring",
  "rustls",
  "serde_json",
  "webpki-roots",
