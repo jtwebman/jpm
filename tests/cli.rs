@@ -929,3 +929,17 @@ fn skips_a_dev_dependency_for_another_platform() {
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success() && text.contains("EBADPLATFORM") && text.contains("packages/core"), "{text}");
 }
+
+#[test]
+fn installs_a_workspace_versioned_latest() {
+    let r = registry();
+    let env = Env::new(&r);
+    // puppeteer's private test package: npm installs it, as 0.0.0 here.
+    env.manifest(json!({ "name": "root", "workspaces": ["test"], "dependencies": { "t": "workspace:*" } }));
+    env.write(
+        "test/package.json",
+        r#"{ "name": "t", "version": "latest", "private": true, "dependencies": { "b": "1.0.0" } }"#,
+    );
+    env.ok(&["install"]);
+    assert!(env.exists("node_modules/t") && env.exists("test/node_modules/b"));
+}
