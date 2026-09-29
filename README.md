@@ -273,16 +273,19 @@ or `ignore-scripts=true` in .npmrc turns every script off.
 `prefer-offline`, `min-release-age`, `before` and `min-release-age-exclude`, and the network
 settings below.
 
-jpm has its own TLS and trusts Mozilla's root certificates. Behind a proxy that inspects TLS,
-or for a registry with a private CA, tell it which certificates to trust, as with npm:
+jpm has its own TLS and trusts Mozilla's root certificates and the operating system's: the
+Windows certificate store (the current user's `ROOT`, which includes the machine's and group
+policy's), or on Linux the distribution's CA bundle (`SSL_CERT_FILE` names another). A company
+proxy that inspects TLS usually installs its root there, so it works without settings. For a
+registry with a private CA, or a root only in a file, tell jpm which certificates to trust, as
+with npm:
 
 - `NODE_EXTRA_CA_CERTS=/path/ca.pem` adds the certificates in a PEM file to Mozilla's roots, as
   Node does.
 - `cafile=/path/ca.pem` in `.npmrc` trusts the certificates in the file *instead of* Mozilla's
-  roots (and of `NODE_EXTRA_CA_CERTS`), as it does in npm. `ca="-----BEGIN CERTIFICATE-----\n…"`
+  and the system's roots (and of `NODE_EXTRA_CA_CERTS`), as it does in npm. `ca="-----BEGIN CERTIFICATE-----\n…"`
   does the same with the PEM text on one line, `\n` for its line breaks; `ca[]=` once per
   certificate lists several. `cafile` wins when both are set.
-- The system's own bundle works as either: `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt`.
 - `strict-ssl=false` turns the certificate checks off, and jpm warns on every run that it is
   off. The connection is still encrypted, but anyone on the network can pose as the registry.
 

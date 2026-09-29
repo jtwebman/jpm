@@ -11,6 +11,8 @@
 //!   would make it, whichever form `target` is in.
 //! - `alive(pid)`: whether a process could still be writing under that pid.
 //! - `libc()`: `glibc` or `musl` on Linux, `None` elsewhere.
+//! - `system_roots()`: the certificates the OS trusts (DER): the Windows `ROOT` store, the Linux
+//!   CA bundle; none on macOS, whose keychain is not read yet.
 //! - `exec(command)`: run a command in place of this process, returning only on failure or,
 //!   where a process cannot be replaced, with the command's exit code.
 //! - `leave_interrupts_to_children()`: while children run, Ctrl+C is theirs to act on (Windows;
@@ -54,6 +56,10 @@ pub use unix::{alive, clone_dir, exec, leave_interrupts_to_children, links_to, r
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn libc() -> Option<&'static str> {
     None
+}
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn system_roots() -> Vec<Vec<u8>> {
+    Vec::new()
 }
 
 /// What a package's `os`, `cpu` and `libc` fields are matched against, in Node's spelling.
