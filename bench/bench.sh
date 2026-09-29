@@ -12,6 +12,7 @@ SAMPLES=3
 MIN_FREE=3
 KEEP=0
 DRY=0
+INSTALLED=0
 BINS=""
 W=${BENCH_WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/jpm-bench}
 
@@ -20,16 +21,20 @@ usage() {
 usage: bench/bench.sh [options]
        bench/bench.sh --report results/<stamp>.tsv
 
-  -r, --runners a,b     package managers (default: those found of $ALL)
+  -r, --runners a,b     package managers (default: $ALL)
   -f, --fixtures a,b    fixtures from bench/fixtures (default: nitro,nuxt,next)
   -n, --samples N       runs per phase (default: 3)
       --phases a,b      cold, warm, repeat (default: all three)
       --bin name=path   use this binary for a runner (repeatable)
+      --installed       use the managers on PATH instead of fetching the latest
       --min-free GB     stop when the work dir has less free space (default: 3)
       --keep            keep the projects and caches afterwards
       --dry-run         print what would run
       --report FILE     print the tables for a results file
   -h, --help            this text
+
+Every run fetches the latest release of each manager into the work dir,
+unless --installed or --bin says otherwise. jpm is built from this tree.
 
 Work dir: \$BENCH_WORK (now $W).
 EOF
@@ -116,6 +121,7 @@ while [ $# -gt 0 ]; do
 	--bin) BINS="$BINS ${2:?}"; shift ;;
 	--min-free) MIN_FREE=${2:?}; shift ;;
 	--keep) KEEP=1 ;;
+	--installed) INSTALLED=1 ;;
 	--dry-run) DRY=1 ;;
 	--report) report "${2:?}"; exit ;;
 	-h | --help) usage; exit ;;
@@ -187,14 +193,99 @@ timed() {
 
 [ $DRY = 1 ] || mkdir -p "$W/logs" "$BENCH/results" || exit 1
 
+JPM=${CARGO_TARGET_DIR:-$ROOT/target}/release/jpm
+[ $DRY = 1 ] || cargo build --release --manifest-path "$ROOT/Cargo.toml" || die "cargo build failed"
+
+# Deletes a dir under the work dir; stores keep their files read-only.
+wipe() {
+	case $1 in "$W"/?*) ;; *) die "refusing to delete $1" ;; esac
+	[ -e "$1" ] || return 0
+	chmod -R u+w "${1:?}"
+	rm -rf "${1:?}"
+	[ ! -e "$1" ] || die "could not delete $1"
+}
+
+# The npm package each manager is published as.
+package() {
+	case $1 in
+	npm | pnpm | upm | bun | deno) echo "$1" ;;
+	yarn) echo "@yarnpkg/cli-dist" ;;
+	esac
+}
+
+# The latest release of each manager asked for, into $W/tools: the npm packages
+# installed by the jpm just built (a fresh project, so "latest" is resolved
+# again; the store is kept, so an unchanged version is not downloaded twice),
+# and aube from its GitHub releases. Sets TOOL_<runner>.
+# shellcheck disable=SC2034 # the TOOL_ variables are read through eval
+fetch_tools() {
+	t=$W/tools
+	m=$t/proj/node_modules
+	case $(uname -m) in
+	x86_64 | amd64) a=x64 b=x64 ;;
+	aarch64 | arm64) a=arm64 b=aarch64 ;;
+	*) a=none b=none ;;
+	esac
+	TOOL_npm=$m/.bin/npm TOOL_yarn=$m/.bin/yarn TOOL_upm=$m/.bin/upm
+	# The native binaries, not the node launchers their packages put in .bin:
+	# each is a dependency of its package, so a sibling of it.
+	TOOL_pnpm=$m/pnpm/../@pnpm/exe.linux-$a/pnpm
+	TOOL_bun=$m/bun/../@oven/bun-linux-$b/bin/bun
+	TOOL_deno=$m/deno/../@deno/linux-$a-glibc/deno
+	deps=""
+	for r in $RUNNERS; do
+		pkg=$(package "$r")
+		[ -n "$pkg" ] && [ -z "$(given "$r")" ] && deps="$deps${deps:+, }\"$pkg\": \"latest\""
+	done
+	if [ -n "$deps" ]; then
+		echo "fetching the latest: $deps"
+		if [ $DRY = 0 ]; then
+			wipe "$t/proj"
+			mkdir -p "$t/proj" && printf '{ "private": true, "dependencies": { %s } }\n' "$deps" >"$t/proj/package.json"
+			# The latest, even one published minutes ago: no minimum release age.
+			(cd "$t/proj" && JPM_STORE=$t/store "$JPM" install --ignore-scripts --min-release-age 0 \
+				>"$W/logs/tools.log" 2>&1) ||
+				die "could not fetch the managers; see $W/logs/tools.log"
+		fi
+	fi
+	case " $RUNNERS " in *" aube "*) [ -n "$(given aube)" ] || fetch_aube ;; esac
+}
+
+# shellcheck disable=SC2034
+fetch_aube() {
+	echo "fetching the latest aube"
+	[ $DRY = 0 ] || return
+	url=https://github.com/aubepkg/aube/releases
+	tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url/latest") || { echo "skip fetching aube: curl failed"; return; }
+	tag=${tag##*/}
+	case $tag in v[0-9]*) ;; *) echo "skip fetching aube: no release found"; return ;; esac
+	d=$W/tools/aube/$tag
+	if [ ! -d "$d" ]; then
+		wipe "$d.part"
+		mkdir -p "$d.part" || exit 1
+		if ! curl -fsSL "$url/download/$tag/aube-$tag-$(uname -m)-unknown-linux-gnu.tar.gz" | tar -xz -C "$d.part"; then
+			wipe "$d.part"
+			echo "skip fetching aube: download failed"
+			return
+		fi
+		mv "$d.part" "$d" || exit 1
+	fi
+	TOOL_aube=$(find "$d" -type f -name aube | head -n 1)
+}
+
+[ $INSTALLED = 1 ] || fetch_tools
+
 # Find each runner, print its version once (a first-run download is not timed).
 FOUND=""
 for r in $RUNNERS; do
 	case " $ALL " in *" $r "*) ;; *) die "unknown runner: $r (known: $ALL)" ;; esac
 	bin=$(given "$r")
 	if [ -z "$bin" ] && [ "$r" = jpm ]; then
-		bin=${CARGO_TARGET_DIR:-$ROOT/target}/release/jpm
-		[ $DRY = 1 ] || cargo build --release --manifest-path "$ROOT/Cargo.toml" || die "cargo build failed"
+		bin=$JPM
+	elif [ -z "$bin" ] && [ $INSTALLED = 0 ]; then
+		eval "bin=\${TOOL_$r:-}"
+		[ -n "$bin" ] || { echo "skip $r: no latest release fetched"; continue; }
+		case $r in npm | yarn | upm) command -v node >/dev/null || { echo "skip $r: needs node on PATH"; continue; } ;; esac
 	fi
 	case $bin in /*) ;; */*) bin=$PWD/$bin ;; *) bin=$(command -v "${bin:-$r}") || { echo "skip $r: not found"; continue; } ;; esac
 	[ $DRY = 1 ] || [ -x "$bin" ] || { echo "skip $r: $bin is not executable"; continue; }
@@ -205,6 +296,12 @@ for r in $RUNNERS; do
 		# shellcheck disable=SC2046
 		ver=$(env $(envs "$r" "$W/r/$r/vhome") "$bin" --version 2>&1 | head -n 1 |
 			sed -n 's/^[^0-9]*\([0-9][0-9.]*[0-9]\).*/\1/p')
+		# upm has no --version: its package.json says.
+		[ -n "$ver" ] || ver=$(sed -n 's/^ *"version": *"\([0-9][^"]*\)".*/\1/p' \
+			"$(dirname "$(readlink -f "$bin")")/../package.json" 2>/dev/null | head -n 1)
+		# upm has no --version: its package.json says.
+		[ -n "$ver" ] || ver=$(sed -n 's/^ *"version": *"\([0-9][^"]*\)".*/\1/p' \
+			"$(dirname "$(readlink -f "$bin")")/../package.json" 2>/dev/null | head -n 1)
 		[ -n "$ver" ] || { echo "skip $r: $bin --version failed"; continue; }
 		case $r$ver in yarn1.*) echo "skip yarn: $ver is yarn classic, not berry"; continue ;; esac
 	fi
@@ -220,15 +317,6 @@ check_disk() {
 	[ "$free" -ge $((MIN_FREE * 1024 * 1024)) ] && return
 	echo "bench: stopping, less than $MIN_FREE GB free under $W" >&2
 	STOP=1
-}
-
-# Deletes a dir under the work dir; stores keep their files read-only.
-wipe() {
-	case $1 in "$W"/?*) ;; *) die "refusing to delete $1" ;; esac
-	[ -e "$1" ] || return 0
-	chmod -R u+w "${1:?}"
-	rm -rf "${1:?}"
-	[ ! -e "$1" ] || die "could not delete $1"
 }
 
 # A fresh project: no cache, no lockfile, no node_modules.
