@@ -63,22 +63,6 @@ impl Specs {
         o.into()
     }
 
-    /// From an object of string maps; anything else in it is an error for the caller to name.
-    pub fn from_value(v: &crate::json::Value) -> Option<Self> {
-        let o = v.as_object()?;
-        let group = |name: &str| -> Option<Option<Deps>> {
-            match o.get(name) {
-                None => Some(None),
-                Some(g) => crate::json::string_map(g).map(Some),
-            }
-        };
-        Some(Self {
-            dependencies: group("dependencies")?,
-            dev_dependencies: group("devDependencies")?,
-            optional_dependencies: group("optionalDependencies")?,
-        })
-    }
-
     pub fn is_empty(&self) -> bool {
         self.groups().all(|(_, g)| g.is_none_or(BTreeMap::is_empty))
     }
