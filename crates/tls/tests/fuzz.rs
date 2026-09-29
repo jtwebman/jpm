@@ -225,13 +225,21 @@ fn random_records_after_the_handshake() {
         let tls12 = case % 3 == 2;
         let script = Script { tls12, ..Script::default() }.after(move |f| {
             let mut rng = Rng(seed);
+            // An alert of description 0 is a real close_notify, after which a clean end is
+            // right: every alert here is some other one.
+            let not_close = |typ: u8, mut data: Vec<u8>| {
+                if typ == 21 && data.get(1) == Some(&0) {
+                    data[1] = 10;
+                }
+                data
+            };
             for _ in 0..1 + rng.below(4) {
                 let n = rng.below(60);
                 match rng.below(6) {
                     0 => f.send(APP, &rng.bytes(n))?,
                     1 => {
                         let n = rng.below(4);
-                        f.send(21, &rng.bytes(n))?
+                        f.send(21, &not_close(21, rng.bytes(n)))?
                     }
                     2 => {
                         // A handshake message of a random type and length, maybe split.
@@ -244,7 +252,7 @@ fn random_records_after_the_handshake() {
                     }
                     3 => {
                         let (typ, data, pad) = (rng.next() as u8, rng.bytes(n), rng.below(3));
-                        let rec = f.seal(typ, &data, pad);
+                        let rec = f.seal(typ, &not_close(typ, data), pad);
                         f.send_raw(&rec)?;
                     }
                     4 => {

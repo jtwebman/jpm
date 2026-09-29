@@ -49,7 +49,8 @@ fn put(out: &mut Bins, key: &str, target: &str) {
         return;
     }
     let target = rooted(&target.replace('\\', "/"));
-    if matches!(target.as_str(), "" | "." | "..") {
+    // `C:/x` or `C:x` joined onto the package directory on Windows leaves it; `a:b` is a stream.
+    if matches!(target.as_str(), "" | "." | "..") || target.contains(':') {
         return;
     }
     out.insert(key, target);
@@ -101,5 +102,10 @@ mod tests {
         assert_eq!(bins("x", j(r#"{"../../evil": "../../../etc/passwd"}"#)), [("evil".into(), "etc/passwd".into())]);
         assert!(bins("x", j(r#"{"..": "a", "b": ".."}"#)).is_empty());
         assert_eq!(bins("x", j(r#"{"c:\\x": "a\\b"}"#)), [("x".into(), "a/b".into())]);
+        assert!(
+            bins("x", j(r#"{"a": "C:/Windows/x.exe", "b": "c:i.js", "c": "./x/../C:\\y", "d": "a:s"}"#)).is_empty()
+        );
+        let lock: BTreeMap<String, String> = [("x".to_string(), "C:/Windows/x.exe".to_string())].into();
+        assert!(clean_map(&lock).is_empty());
     }
 }

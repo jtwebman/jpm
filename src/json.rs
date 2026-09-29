@@ -408,7 +408,11 @@ impl<'a> Scan<'a> {
 
     fn hex4(&mut self) -> Result<u32> {
         let digits = self.src.get(self.pos..self.pos + 4).ok_or_else(|| self.fail("short \\u escape"))?;
-        let s = std::str::from_utf8(digits).map_err(|_| self.fail("bad \\u escape"))?;
+        // `from_str_radix` alone would take a sign: `\u+041`.
+        let s = std::str::from_utf8(digits)
+            .ok()
+            .filter(|s| s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| self.fail("bad \\u escape"))?;
         let v = u32::from_str_radix(s, 16).map_err(|_| self.fail("bad \\u escape"))?;
         self.pos += 4;
         Ok(v)
@@ -818,6 +822,9 @@ mod tests {
             "-",
             "\"a\nb\"",
             "\"\\x\"",
+            "\"\\u+041\"",
+            "\"\\u-041\"",
+            "\"\\ud83d\\u+e00\"",
             "tru",
             "{\"a\" 1}",
             "[1 2]",

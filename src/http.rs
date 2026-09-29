@@ -475,10 +475,11 @@ fn is_stale(e: &io::Error) -> bool {
     )
 }
 
-/// The status and headers, names lowercased. An interim 1xx is skipped.
+/// The status and headers, names lowercased. An interim 1xx is skipped, but counts toward the
+/// one `MAX_HEAD` budget: a server cannot send them forever.
 fn read_head(conn: &mut impl BufRead) -> io::Result<(u16, Vec<(String, String)>)> {
+    let mut total = 0;
     loop {
-        let mut total = 0;
         let mut line = String::new();
         let mut next = |line: &mut String| -> io::Result<()> {
             line.clear();
@@ -770,6 +771,10 @@ mod tests {
         let (status, headers) = read_head(&mut &text[..]).unwrap();
         assert_eq!(status, 200);
         assert_eq!(headers[1], ("transfer-encoding".to_string(), "chunked".to_string()));
+        // Endless interim responses run out of the one budget.
+        let mut endless = b"HTTP/1.1 100 Continue\r\n\r\n".repeat(MAX_HEAD / 25 + 1);
+        endless.extend_from_slice(b"HTTP/1.1 200 OK\r\n\r\n");
+        assert!(read_head(&mut &endless[..]).unwrap_err().to_string().contains("too large"));
     }
 
     /// A one-connection server that answers each request with the next canned response, so a

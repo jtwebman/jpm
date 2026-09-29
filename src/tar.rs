@@ -50,15 +50,16 @@ fn read_limited(
         let pax_size =
             if meta_kind { None } else { next.get("size").or(global.get("size")).and_then(|s| s.parse::<u64>().ok()) };
         let size = pax_size.unwrap_or_else(|| num(&header[124..136]));
+        // Before the checksum: a bad header's size is still what `padded` is given.
+        if size > MAX_ENTRY {
+            return Err(bad(format!("Tar entry {} declares {size} bytes", name(&header))));
+        }
         if !checksum_ok(&header) {
             // The header is untrusted, but its size is the only way forward.
             skip(&mut input, padded(size))?;
             next.clear();
             long_name.clear();
             continue;
-        }
-        if size > MAX_ENTRY {
-            return Err(bad(format!("Tar entry {} declares {size} bytes", name(&header))));
         }
         if meta_kind && size > MAX_META {
             return Err(bad(format!("Tar header entry of {size} bytes")));
@@ -183,7 +184,7 @@ fn parse_pax(data: &[u8]) -> BTreeMap<String, String> {
     while at < data.len() {
         let Some(space) = data[at..].iter().position(|b| *b == b' ').map(|p| p + at) else { break };
         let Some(len) = std::str::from_utf8(&data[at..space]).ok().and_then(|s| s.parse::<usize>().ok()) else { break };
-        if len == 0 || at + len > data.len() || space + 1 > at + len {
+        if len == 0 || len > data.len() - at || space - at >= len {
             break;
         }
         let record = String::from_utf8_lossy(&data[space + 1..at + len]);
@@ -313,6 +314,18 @@ pub mod tests {
         h.truncate(h.len() - BLOCK * 2);
         h.extend(build(&[("package/short", 0o644, b"z")]));
         assert_eq!(list(&h)[0].0, "long/name.js");
+    }
+
+    #[test]
+    fn refuses_sizes_that_overflow() {
+        // A bad-checksum header declaring a base-256 size of u64::MAX.
+        let mut a = build(&[("package/a", 0o644, b"1")]);
+        a[124] = 0x80;
+        a[125..136].fill(0xff);
+        assert!(read_entries(a.as_slice(), |_, _, _, _| Ok(())).unwrap_err().message.contains("declares"));
+        // A pax record whose length runs past the end of usize.
+        assert!(parse_pax(b"3 018446744073709551615 x=y\n").is_empty());
+        assert_eq!(parse_pax(b"3 06 a=b\n")["a"], "b");
     }
 
     #[test]
