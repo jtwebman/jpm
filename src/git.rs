@@ -73,7 +73,7 @@ pub fn fetch(source: &str, work: &Path, dest: &Path) -> Result<Index> {
     if let Some(archive) = archive_url(url, commit) {
         // No credentials: a registry's token is never a git host's business.
         match http::open(&archive, &BTreeMap::new()) {
-            Ok((mut body, _)) => return extract(&mut *body, dest).map_err(|e| e.context(source)),
+            Ok((mut body, _)) => return extract(&mut *body, dest, false).map_err(|e| e.context(source)),
             // Private, or not there: git may have credentials for it.
             Err(e) if e.code == "E404" => {}
             Err(e) => return Err(e),
@@ -109,7 +109,7 @@ fn clone(url: &str, commit: &str, work: &Path, dest: &Path, source: &str) -> Res
     ]);
     let mut child = archive.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| missing(&e, source))?;
     let mut out = child.stdout.take().ok_or_else(|| Error::new("EGIT", "no output"))?;
-    let index = extract(&mut out, dest);
+    let index = extract(&mut out, dest, false);
     drop(out); // should the reader stop early, a closed pipe ends git too
     let status = child.wait().map_err(|e| missing(&e, source))?;
     if !status.success() {

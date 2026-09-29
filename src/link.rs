@@ -693,7 +693,7 @@ impl Linker<'_> {
             }
         }
         for f in &index.files {
-            let (from, to) = (src.join(&f.path), dest.join(&f.path));
+            let (from, to) = (src.join(index.stored(&f.path)), dest.join(&f.path));
             if !copy && !self.copy_only.load(Ordering::Relaxed) {
                 match fs::hard_link(&from, &to) {
                     Ok(()) => {
