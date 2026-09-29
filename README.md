@@ -483,7 +483,7 @@ jpm has its own TLS and cryptography, in three crates:
   speed. It uses the CPU's AES, carry-less multiply and SHA instructions where it has them and
   constant-time portable code where it does not.
 - `crates/pk` (`jpm-pk`): X25519, P-256, P-384 and RSA signature checks, built for size: they
-  run a few times per connection, not per byte.
+  run a few times per connection, not per byte. Ed25519 checks too, for Node's release keys.
 - Both are tested against RFC and NIST vectors, the Wycheproof suites, and ring on random
   inputs.
 - `crates/tls` (`jpm-tls`): a TLS 1.3 and 1.2 client (ECDHE and AEAD suites only) and Web PKI
