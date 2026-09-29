@@ -303,7 +303,9 @@ fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
     assert!(state.contains("\"inputs\"") && state.contains("\"packages/w\""), "{state}");
     assert!(up_to_date());
     // A workspace's link or bin gone: linked again.
-    std::fs::remove_file(env.path("packages/w/node_modules/cli")).unwrap();
+    // A symlink on unix, a junction (a directory) on Windows.
+    let link = env.path("packages/w/node_modules/cli");
+    std::fs::remove_dir(&link).or_else(|_| std::fs::remove_file(&link)).unwrap();
     assert!(!up_to_date());
     assert!(env.exists("packages/w/node_modules/cli"));
     std::fs::remove_file(env.path(bin)).unwrap();
@@ -1349,7 +1351,12 @@ fn finds_the_framework_in_workspaces_and_edits() {
     env.write("w/package.json", r#"{ "name": "w", "dependencies": { "next": "1.0.0" } }"#);
     let out = env.ok(&["install"]);
     assert!(out.contains("building packages in the project"), "{out}");
-    assert!(link_of(&env.project(), "a").starts_with(".jpm"), "{}", link_of(&env.project(), "a"));
+    // Relative on unix, absolute as a junction: either way, into the project's own entries.
+    let local = |env: &Env, name: &str| {
+        let nm = env.project().join("node_modules");
+        nm.join(link_of(&env.project(), name)).starts_with(nm.join(".jpm"))
+    };
+    assert!(local(&env, "a"), "{}", link_of(&env.project(), "a"));
     // Added and removed: the edited package.json decides, not the one read before the edit.
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
@@ -1357,7 +1364,7 @@ fn finds_the_framework_in_workspaces_and_edits() {
     assert!(link_of(&env.project(), "a").contains("v1"), "{}", link_of(&env.project(), "a"));
     let out = env.ok(&["add", "next@1.0.0"]);
     assert!(out.contains("building packages in the project"), "{out}");
-    assert!(link_of(&env.project(), "next").starts_with(".jpm"), "{}", link_of(&env.project(), "next"));
+    assert!(local(&env, "next"), "{}", link_of(&env.project(), "next"));
     env.ok(&["remove", "next"]);
     assert!(link_of(&env.project(), "a").contains("v1"), "{}", link_of(&env.project(), "a"));
 }
