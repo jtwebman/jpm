@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::json::Value;
+use crate::patch::Patch;
 use crate::project::RootManifest;
 use crate::{semver, spec, ui};
 
@@ -141,6 +142,8 @@ pub struct Rules {
     overrides: Vec<Override>,
     /// pnpm-workspace.yaml's word on which packages may run install scripts.
     pub builds: BTreeMap<String, bool>,
+    /// `patchedDependencies`: each key, and the file it names.
+    patches: Vec<(String, String)>,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -169,9 +172,7 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     let doc = &root.doc;
     let pnpm = doc.get("pnpm");
     if let Some(y) = read_yaml(&dir.join(PNPM_WORKSPACE))? {
-        if truthy(y.get("patchedDependencies")) {
-            return Err(Error::new("EPATCH", format!("jpm does not apply the patches {PNPM_WORKSPACE} names")));
-        }
+        rules.patched(y.get("patchedDependencies"), PNPM_WORKSPACE);
         for key in UNREAD {
             if truthy(y.get(key)) {
                 ui::warn(&format!(
@@ -202,9 +203,8 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             }
         }
     }
-    if truthy(doc.get("patchedDependencies")) || truthy(pnpm.and_then(|p| p.get("patchedDependencies"))) {
-        return Err(Error::new("EPATCH", "jpm does not apply the patches package.json names"));
-    }
+    rules.patched(pnpm.and_then(|p| p.get("patchedDependencies")), "package.json pnpm.patchedDependencies");
+    rules.patched(doc.get("patchedDependencies"), "package.json patchedDependencies");
     rules.pnpm(pnpm.and_then(|p| p.get("overrides")), "package.json pnpm.overrides");
     rules.npm(doc.get("overrides"));
     rules.yarn(doc.get("resolutions"));
@@ -238,6 +238,22 @@ fn pnpm_selector(s: &str) -> Option<Selector> {
 }
 
 impl Rules {
+    /// pnpm's `name`, `name@version` and `name@range` keys, bun's `name@version`, each naming a
+    /// diff. A key given twice keeps its first file: pnpm-workspace.yaml's, then package.json's.
+    fn patched(&mut self, v: Option<&Value>, file: &str) {
+        for (key, path) in v.and_then(Value::as_object).into_iter().flatten() {
+            let (name, _) = name_range(key);
+            match path.as_str() {
+                Some(path) if spec::check_name(&name, key).is_ok() => {
+                    if !self.patches.iter().any(|(k, _)| k == key) {
+                        self.patches.push((key.clone(), path.to_string()));
+                    }
+                }
+                _ => ui::warn(&format!("{file}: patch {key} is not one jpm reads; it is ignored")),
+            }
+        }
+    }
+
     fn push(&mut self, by: Manager, (parent, name, range): Selector, value: &str) {
         let value = (!(by == Manager::Pnpm && value == "-")).then(|| value.to_string());
         self.overrides.push(Override { by, parent, name, range, value });
@@ -333,6 +349,12 @@ impl Rules {
     /// its catalogs, the most specific first.
     pub fn apply(&self, root: &mut RootManifest) -> Result<()> {
         root.overrides = self.resolved(root)?;
+        let dir = self.file.parent().unwrap_or(Path::new(""));
+        root.patches.clear();
+        for (key, path) in &self.patches {
+            let (name, range) = name_range(key);
+            root.patches.push(Patch::read(dir, name, range.filter(|r| !r.is_empty()), path)?);
+        }
         Ok(())
     }
 
@@ -503,11 +525,41 @@ mod tests {
         assert_eq!(lines, ["pnpm b 2.0.0", "pnpm c ^2", "npm b 1.0.0"]);
         let builds: Vec<(&str, bool)> = r.builds.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         assert_eq!(builds, [("core-js", false), ("esbuild", false), ("nx", true), ("sharp", true)]);
-        std::fs::write(dir.join(PNPM_WORKSPACE), "patchedDependencies:\n  a@1.0.0: patches/a.patch\n").unwrap();
-        assert_eq!(read(&dir, &m).unwrap_err().code, "EPATCH");
-        let patched = manifest(r#"{ "pnpm": { "patchedDependencies": { "a@1.0.0": "patches/a.patch" } } }"#);
-        std::fs::remove_file(dir.join(PNPM_WORKSPACE)).unwrap();
-        assert_eq!(read(&dir, &patched).unwrap_err().code, "EPATCH");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_patches_from_every_place() {
+        let dir = crate::store::tests::scratch("rules-patches");
+        std::fs::write(
+            dir.join(PNPM_WORKSPACE),
+            "patchedDependencies:\n  a@1.0.0: patches/a.patch\n  '@s/b': p/b.patch\n",
+        )
+        .unwrap();
+        for f in ["patches/a.patch", "p/b.patch", "c.patch", "d.patch"] {
+            std::fs::create_dir_all(dir.join(f).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(f), f).unwrap();
+        }
+        let mut m = manifest(
+            r#"{ "pnpm": { "patchedDependencies": { "a@1.0.0": "other.patch", "c@^2": "c.patch" } },
+                 "patchedDependencies": { "d@3.0.0": "d.patch", "../x": "d.patch" } }"#,
+        );
+        let r = read(&dir, &m).unwrap();
+        r.apply(&mut m).unwrap();
+        let got: Vec<(String, &str)> = m.patches.iter().map(|p| (p.selector(), p.path.as_str())).collect();
+        // pnpm-workspace.yaml's first; a key already given keeps its file; a bad name is left out.
+        assert_eq!(
+            got,
+            [
+                ("a@1.0.0".into(), "patches/a.patch"),
+                ("@s/b".into(), "p/b.patch"),
+                ("c@^2".into(), "c.patch"),
+                ("d@3.0.0".into(), "d.patch")
+            ]
+        );
+        assert_eq!(m.patches[0].hash, crate::util::sha256_hex("patches/a.patch"));
+        std::fs::remove_file(dir.join("c.patch")).unwrap();
+        assert_eq!(r.apply(&mut m).unwrap_err().code, "EPATCH");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

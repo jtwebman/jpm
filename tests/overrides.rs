@@ -160,12 +160,10 @@ fn a_frozen_yarn_install_honors_resolutions() {
 }
 
 #[test]
-fn refuses_patches_and_says_what_it_does_not_read() {
+fn says_what_it_does_not_read() {
     let r = registry();
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
-    env.write("pnpm-workspace.yaml", "patchedDependencies:\n  b@1.0.0: patches/b.patch\n");
-    assert!(fails(&env, &["install"]).contains("jpm does not apply the patches pnpm-workspace.yaml names"));
     env.write("pnpm-workspace.yaml", "minimumReleaseAge: 1440\npeerDependencyRules:\n  ignoreMissing: [x]\n");
     let out = env.ok(&["install"]);
     assert!(out.contains("pnpm-workspace.yaml sets minimumReleaseAge, which jpm does not read"), "{out}");

@@ -84,10 +84,8 @@ Workspaces are read from package.json, or from `pnpm-workspace.yaml` when packag
 none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-workspace.yaml`,
 `.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
 
-jpm does not apply patches: `patchedDependencies` (in package.json, `pnpm` or
-`pnpm-workspace.yaml`) stops the install. `pnpm-workspace.yaml` settings that change what pnpm
-installs and jpm does not read, such as `packageExtensions` or `minimumReleaseAge`, are named in
-a warning; the rest are left alone.
+`pnpm-workspace.yaml` settings that change what pnpm installs and jpm does not read, such as
+`packageExtensions` or `minimumReleaseAge`, are named in a warning; the rest are left alone.
 
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
@@ -111,6 +109,33 @@ the same. jpm keeps one copy of each version of a package, so a nested rule appl
 parent's own dependencies wherever the parent is; a rule nested deeper applies to its nearest
 parent's, with a warning. When two rules match, the one with a parent wins, then one with a
 range, then a name alone; pnpm's rules go before npm's, and npm's before yarn's.
+
+## Patches
+
+A patch changes a package's files as it is installed. jpm reads `patchedDependencies` from
+`pnpm-workspace.yaml`, package.json `pnpm.patchedDependencies` and package.json
+`patchedDependencies` (bun's):
+
+```yaml
+patchedDependencies:
+  lodash@4.17.21: patches/lodash@4.17.21.patch
+```
+
+A key is `name@version`, `name@range`, or `name` for every version. A version's own patch goes
+before a range's, and a range's before the name's. The value is a path, from the project root,
+to a diff as `git diff` writes it, with paths relative to the package. A hunk whose lines do not
+match, a path that leaves the package, or a patch that no package in the tree takes stops the
+install, as in pnpm.
+
+A patched package is a copy of its own, built under a key that includes the patch's hash; so is
+every package that depends on it. The clean package in the store is not changed. jpm.lock
+records the patch's sha256 on the package (`patch <hash>`): editing, adding or removing a patch
+makes the file out of date, so `jpm install` writes it again and `--frozen-lockfile` fails. A
+package that is also approved for install scripts is patched before they run.
+`pnpm-lock.yaml` and `bun.lock` are carried over when they name the same patches.
+
+A script that edits `node_modules/<name>` in place, as patch-package does, fails: those files
+are read-only links into the store.
 
 ## The lockfile
 
