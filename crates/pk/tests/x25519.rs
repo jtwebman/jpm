@@ -1,7 +1,7 @@
 mod common;
 
 use common::{cases, hex, random, rounds, time, wycheproof};
-use jpm_crypto::x25519::{public_key, shared_secret};
+use jpm_pk::x25519::{public_key, shared_secret};
 use ring::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey, X25519};
 use ring::rand::SystemRandom;
 

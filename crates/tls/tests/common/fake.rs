@@ -14,7 +14,8 @@ use std::thread;
 
 use jpm_crypto::aead::{self, Alg as Aead};
 use jpm_crypto::hash::{self, Alg as Hash, hkdf_expand, hkdf_extract, hmac, tls12_prf};
-use jpm_crypto::{p256, rand, x25519};
+use jpm_crypto::rand;
+use jpm_pk::{p256, x25519};
 
 use super::{KeyType, pair, pki};
 

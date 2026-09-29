@@ -2,7 +2,7 @@
 //! (tests/data/rsa_odd_keys.py), and hand-made edge cases. Message digests come from ring.
 
 use jpm_crypto::hash::Alg;
-use jpm_crypto::rsa::{verify_pkcs1, verify_pss};
+use jpm_pk::rsa::{verify_pkcs1, verify_pss};
 use ring::rand::SecureRandom;
 use ring::signature::{self, RsaKeyPair};
 use serde_json::Value;

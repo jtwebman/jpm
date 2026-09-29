@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 jpm-crypto = { path = "../crypto" }
+jpm-pk = { path = "../pk" }
 
 [dev-dependencies]
 # The reference server, and certificates for it, in interop tests; neither ships in jpm.

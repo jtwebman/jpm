@@ -25,7 +25,8 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-24.04-arm, run: cargo test --workspace }
-          - { os: ubuntu-latest, run: cross test -p jpm-crypto -p jpm-tls --target armv7-unknown-linux-musleabihf, cross: true }
+          # Release: unoptimized crypto under qemu takes the better part of an hour.
+          - { os: ubuntu-latest, run: cross test --release -p jpm-crypto -p jpm-pk -p jpm-tls --target armv7-unknown-linux-musleabihf, cross: true }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

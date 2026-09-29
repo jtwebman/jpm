@@ -210,11 +210,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpm-pk"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "jpm-crypto",
+ "ring",
+ "serde_json",
+]
+
+[[package]]
 name = "jpm-tls"
 version = "0.1.0"
 dependencies = [
  "flate2",
  "jpm-crypto",
+ "jpm-pk",
  "rcgen",
  "rustls",
  "rustls-webpki",
