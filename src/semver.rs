@@ -372,8 +372,10 @@ fn parse_range(range: &str, inc_pr: bool) -> Option<Sets> {
     if let Some(hit) = cache.lock().ok()?.get(&key) {
         return hit.clone();
     }
-    let sets: Option<Vec<_>> = range.split("||").map(|b| parse_set(b, inc_pr)).collect();
-    let sets = sets.map(Arc::new);
+    // As npm reads a range (node-semver, loose): an alternative that does not parse drops out,
+    // so `>=3.0.0 || insiders` is `>=3.0.0`. Nothing left that parses is no range.
+    let sets: Vec<_> = range.split("||").filter_map(|b| parse_set(b, inc_pr)).collect();
+    let sets = (!sets.is_empty()).then(|| Arc::new(sets));
     if let Ok(mut c) = cache.lock() {
         c.insert(key, sets.clone());
     }
@@ -435,6 +437,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drops_alternatives_that_do_not_parse() {
+        // tailwindcss-animate's peer range for tailwindcss.
+        assert!(valid_range(">=3.0.0 || insiders"));
+        assert!(satisfies("3.4.17", ">=3.0.0 || insiders"));
+        assert!(!satisfies("2.0.0", ">=3.0.0 || insiders"));
+        assert!(!valid_range("insiders"));
+        assert!(!valid_range("foo || bar"));
+    }
 
     #[test]
     fn huge_numbers_do_not_overflow() {
