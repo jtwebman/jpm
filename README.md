@@ -76,7 +76,6 @@ Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and 
 - When that is not possible (the file is out of date with `package.json`, has workspaces, or
   is an older format such as npm 6's or pnpm 8's), jpm resolves the tree with the file's
   versions preferred wherever the ranges in `package.json` allow them.
-- `upm.lock` is read the same way.
 
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the

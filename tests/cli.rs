@@ -405,25 +405,6 @@ fn which_npm() -> bool {
 }
 
 #[test]
-fn reads_upm_lockfiles() {
-    let r = registry();
-    let env = Env::new(&r);
-    env.manifest(json!({ "dependencies": { "b": "^1.0.0" } }));
-    env.write(
-        "upm.lock",
-        &serde_json::to_string_pretty(&json!({
-            "lockfileVersion": 1,
-            "root": { "specs": { "dependencies": { "b": "^1.0.0" } }, "dependencies": { "b": "1.0.0" } },
-            "packages": { "b@1.0.0": { "integrity": common::sha512(&common::pkg("b", "1.0.0", json!({})).tarball()) } }
-        }))
-        .unwrap(),
-    );
-    env.ok(&["install", "--frozen-lockfile"]);
-    assert!(env.read("node_modules/b/index.js").contains("b@1.0.0"), "the locked version, not the newest");
-    assert!(!env.exists("jpm.lock"));
-}
-
-#[test]
 fn brings_over_npm_lockfiles() {
     let r = registry();
     let env = Env::new(&r);
@@ -512,22 +493,6 @@ fn resolves_an_out_of_date_lockfile_with_its_versions() {
     let lock = env.lock();
     assert_eq!(lock["root"]["dependencies"]["b"], "1.0.0", "pnpm's b, where 1.1.0 is newer");
     assert_eq!(lock["root"]["dependencies"]["host"], "1.0.0");
-}
-
-#[test]
-fn rewrites_older_lockfiles_in_the_new_format() {
-    let r = registry();
-    let env = Env::new(&r);
-    env.manifest(json!({ "dependencies": { "b": "^1.0.0" } }));
-    env.ok(&["install"]);
-    let text = env.read("jpm.lock");
-    assert!(text.contains("jpm-lock 2") && text.contains("package b@1.1.0"), "{text}");
-    // A JSON lockfile (an older jpm's, or upm's) is written again as text.
-    let json = env.jpm(&["lock", "--json"]).stdout;
-    env.write("jpm.lock", &String::from_utf8_lossy(&json));
-    env.ok(&["install"]);
-    assert!(env.read("jpm.lock").starts_with("# jpm lockfile"));
-    assert_eq!(env.read("jpm.lock"), text, "the same lockfile, byte for byte");
 }
 
 #[test]

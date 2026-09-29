@@ -815,7 +815,8 @@ fn build(
         dependencies: source.root,
         workspaces: None,
     };
-    let lock = Lockfile { lockfile_version: 1, root, workspaces: BTreeMap::new(), packages, hash: None };
+    let lock =
+        Lockfile { lockfile_version: lock::TEXT_VERSION, root, workspaces: BTreeMap::new(), packages, hash: None };
     lock::validate(&lock).map_err(|e| fail(format!("{file} does not map onto jpm: {}", e.message)))?;
     let warnings = twice
         .into_iter()
@@ -1147,24 +1148,23 @@ snapshots:
 }
 "#;
 
-    const EXPECTED: &str = r#"{
-  "lockfileVersion": 1,
-  "root": {
-    "name": "demo",
-    "specs": { "dependencies": { "tool": "^1.0.0" } },
-    "dependencies": { "tool": "1.0.0" }
-  },
-  "packages": {
-    "@s/native@1.0.0": { "integrity": "sha512-native", "os": ["darwin"] },
-    "dep@1.0.0": { "integrity": "sha512-dep" },
-    "tool@1.0.0": {
-      "integrity": "sha512-tool",
-      "dependencies": { "dep": "1.0.0" },
-      "optionalDependencies": { "@s/native": "1.0.0" },
-      "bin": { "tool": "cli.js" }
-    }
-  }
-}"#;
+    const EXPECTED: &str = r#"jpm-lock 2
+hash 0
+root
+  name demo
+  spec dependencies tool ^1.0.0
+  dep tool 1.0.0
+package @s/native@1.0.0
+  integrity sha512-native
+  os darwin
+package dep@1.0.0
+  integrity sha512-dep
+package tool@1.0.0
+  integrity sha512-tool
+  dep dep 1.0.0
+  optional @s/native 1.0.0
+  bin tool cli.js
+"#;
 
     fn demo() -> Value {
         json!({ "name": "demo", "dependencies": { "tool": "^1.0.0" } })

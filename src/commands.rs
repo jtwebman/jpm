@@ -78,7 +78,7 @@ struct Ctx {
     found: Option<Found>,
     inside: Option<Workspace>,
     config: Option<Config>,
-    /// `jpm.lock` or `upm.lock`, or another manager's file.
+    /// `jpm.lock`, or another manager's file.
     source: Option<(PathBuf, Option<&'static str>)>,
     /// Another manager's lockfile as read, stamped first.
     foreign_read: Option<(String, Option<Stamp>)>,
@@ -197,12 +197,10 @@ impl Ctx {
         if let Some(s) = &self.source {
             return Ok(s.clone());
         }
-        for ours in [lock::LOCKFILE, lock::UPM_LOCKFILE] {
-            if dir.join(ours).exists() {
-                let s = (dir.join(ours), None);
-                self.source = Some(s.clone());
-                return Ok(s);
-            }
+        if dir.join(LOCKFILE).exists() {
+            let s = (dir.join(LOCKFILE), None);
+            self.source = Some(s.clone());
+            return Ok(s);
         }
         let found: Vec<&'static str> = foreign::FOREIGN.iter().copied().filter(|f| dir.join(f).exists()).collect();
         if found.len() > 1 {
