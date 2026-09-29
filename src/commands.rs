@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -351,6 +352,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let (tx, rx) = mpsc::channel::<(Tarball, String)>();
     let rx = Mutex::new(rx);
     let prefetching = !ctx.opts.production && !ctx.dedupe;
+    // Set when the plan fails: what is still queued is not downloaded.
+    let stop = AtomicBool::new(false);
     let lock = std::thread::scope(|scope| -> Result<Lockfile> {
         if prefetching {
             for _ in 0..pool::network_threads() {
@@ -358,6 +361,9 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
                     loop {
                         let job = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
                         let Ok((tarball, integrity)) = job else { return };
+                        if stop.load(Ordering::Relaxed) {
+                            continue;
+                        }
                         // A failure here is nothing: the fill asks again, and that one is reported.
                         let _ = store.ensure(&tarball, &integrity);
                     }
@@ -379,7 +385,12 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             }
         };
         let walk_pick: Option<&resolve::OnPick> = if prefetching { Some(&on_pick) } else { None };
-        let planned = plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone()));
+        let planned = plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone()))
+            // A required package that cannot run here fails now, not once the prefetch is done.
+            .and_then(|lock| filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &platform).map(|_| lock));
+        if planned.is_err() {
+            stop.store(true, Ordering::Relaxed);
+        }
         ui::phase("planned");
         drop(tx);
         planned
@@ -747,7 +758,10 @@ fn import(
         }
         Err(why) => {
             info(&format!("{}; resolving with its versions preferred", why.message));
-            let prefer = foreign::prefer(file, &text).unwrap_or_default();
+            let prefer = resolve::Prefer {
+                legacy_peers: yarn_1(file, &text),
+                ..foreign::prefer(file, &text).unwrap_or_default()
+            };
             let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
             let registry = ctx.registry(store);
             let lock = resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], true, Some(&prefer))?;
@@ -840,6 +854,7 @@ fn resolve_lock(
         tarball: Some(reader),
         on_pick,
         prefer,
+        legacy_peers: ctx.config().legacy_peer_deps || prefer.is_some_and(|p| p.legacy_peers),
         threads: pool::network_threads(),
     };
     let mut resolution = resolve::resolve(&project.manifest, &options(locked.as_ref()))?;
@@ -969,7 +984,7 @@ fn foreign_lock(
     if file == "yarn.lock" {
         // It names too little to link from, so the registry fills in the rest: every range
         // gets the version yarn gave it, and a range it does not name means it is out of date.
-        let prefer = resolve::Prefer { only: true, ..foreign::prefer(file, &text)? };
+        let prefer = resolve::Prefer { only: true, legacy_peers: yarn_1(file, &text), ..foreign::prefer(file, &text)? };
         let ctx = &*ctx;
         let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, &project.dir, source, pinned);
         let registry = ctx.registry(store);
@@ -989,6 +1004,11 @@ fn foreign_lock(
     ctx.binless = loaded.binless;
     ctx.scriptless = loaded.scriptless;
     Ok(loaded.lock)
+}
+
+/// yarn.lock from yarn 1, which has no `__metadata` and never installs peers.
+fn yarn_1(file: &str, text: &str) -> bool {
+    file == "yarn.lock" && !text.lines().any(|l| l == "__metadata:")
 }
 
 pub fn counts(lock: &Lockfile) -> String {
@@ -1111,7 +1131,7 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
         let Some(spec) = spec else { continue };
         let version = match local.get(&spec.fetch_name).filter(|v| project::links_to(spec, v)) {
             Some(v) => v.clone(),
-            None => registry.pick(spec, None)?.version.clone(),
+            None => registry.pick(spec, None, false)?.version.clone(),
         };
         added.push(Added { name: spec.name.clone(), range: project::save_range(spec, &version, exact), group });
     }
@@ -1290,7 +1310,7 @@ fn pick_all(ctx: &Ctx, store: &Store, specs: &[String]) -> Result<Vec<Arc<Manife
         return Err(fail("EINVALIDSPEC", format!("{} is a tarball, not a registry spec", t.raw)));
     }
     let registry = ctx.registry(store);
-    pool::map(pool::network_threads(), parsed, |s| registry.pick(&s, None)).into_iter().collect()
+    pool::map(pool::network_threads(), parsed, |s| registry.pick(&s, None, false)).into_iter().collect()
 }
 
 /// Resolve each spec and add its tarball to the store.

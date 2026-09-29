@@ -189,11 +189,16 @@ fn answer(path: &str, pkgs: &[Pkg], base: &str) -> (&'static str, Vec<u8>) {
     let versions: Vec<&Pkg> = pkgs.iter().filter(|p| p.name == path).collect();
     if !versions.is_empty() {
         let mut doc = BTreeMap::new();
+        // A version's publish date is its manifest's `_published`, else long ago.
+        let mut time = BTreeMap::new();
         for p in &versions {
             doc.insert(p.version.clone(), manifest(p, base));
+            let at = p.manifest.get("_published").and_then(Value::as_str).unwrap_or("2000-01-01T00:00:00.000Z");
+            time.insert(p.version.clone(), at.to_string());
         }
         let latest = versions.iter().map(|p| p.version.clone()).max_by(|a, b| cmp(a, b)).unwrap();
-        let body = json!({ "name": path, "dist-tags": { "latest": latest }, "versions": doc, "modified": "2000-01-01T00:00:00.000Z" });
+        let modified = time.values().max().cloned().unwrap();
+        let body = json!({ "name": path, "dist-tags": { "latest": latest }, "versions": doc, "time": time, "modified": modified });
         return ("200 OK", serde_json::to_vec(&body).unwrap());
     }
     // A version's own route: `name/version`.
