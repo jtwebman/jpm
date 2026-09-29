@@ -16,6 +16,9 @@ curl -fsSL https://getjpm.sh | sh                  # macOS and Linux
 irm https://getjpm.sh/install.ps1 | iex              # Windows
 ```
 
+Where security software stops a script piped into `iex`, download it and run it as a file:
+`irm https://getjpm.sh/install.ps1 -OutFile install.ps1; powershell -ExecutionPolicy Bypass -File install.ps1`.
+
 The script downloads the binary for your platform from the
 [latest release](https://github.com/jtwebman/jpm/releases/latest), checks its SHA-256, and
 puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v0.1.0` picks a release and `JPM_INSTALL`
