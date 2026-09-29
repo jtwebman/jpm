@@ -17,6 +17,13 @@ fn registry() -> Registry {
             0o644,
             "#!/bin/sh\necho hello-from-cli\n",
         ),
+        pkg("argv", "1.0.0", json!({ "bin": { "argv": "bin/argv.js" } })).file(
+            "bin/argv.js",
+            0o755,
+            "#!/usr/bin/env node
+console.log(JSON.stringify(process.argv.slice(2)))
+",
+        ),
         pkg("host", "1.0.0", json!({})),
         pkg("host", "2.0.0", json!({})),
         pkg("plugin", "1.0.0", json!({ "peerDependencies": { "host": ">=1" } })),
@@ -942,4 +949,29 @@ fn installs_a_workspace_versioned_latest() {
     );
     env.ok(&["install"]);
     assert!(env.exists("node_modules/t") && env.exists("test/node_modules/b"));
+}
+
+#[test]
+fn passes_arguments_through_scripts_and_shims() {
+    // The bin is a node script; the rest of the suite needs no node.
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipped: no node on PATH");
+        return;
+    }
+    let r = registry();
+    let env = Env::new(&r);
+    // The script names a bin: on Windows a .cmd shim, whose %* reads the arguments again, so
+    // an unescaped `&` would start a second command.
+    env.manifest(json!({ "scripts": { "show": "argv" }, "dependencies": { "argv": "1" } }));
+    env.ok(&["install"]);
+    let args = ["a b", "x&y", "|pipe", "<in>", "50%", "^caret", "q\"uote", "(p)", "!b!", ""];
+    for how in [&["run", "-s", "show"][..], &["exec", "-s", "argv"][..]] {
+        let mut argv: Vec<&str> = how.to_vec();
+        argv.extend(args);
+        let out = env.jpm(&argv);
+        let text = String::from_utf8_lossy(&out.stdout);
+        let got: serde_json::Value = serde_json::from_str(text.trim().lines().last().unwrap_or(""))
+            .unwrap_or_else(|_| panic!("{how:?}: {text}{}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(got, json!(args), "{how:?}");
+    }
 }

@@ -1546,14 +1546,16 @@ pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> 
             results.push(ScriptResult { name: top.name, path: top.path, file: top.file, code: None, missing: true });
             continue;
         };
-        let batch =
-            cfg!(windows) && !args.is_empty() && crate::shim::is_batch(&crate::shim::first_word(command), &top.dir);
+        let bins = run::bin_dirs(&top.dir);
+        let batch = cfg!(windows)
+            && !args.is_empty()
+            && crate::shim::is_batch(&crate::shim::first_word(command), &top.dir, &bins);
         let line = run::shell_line(command, args, batch);
         if !ui::quiet() {
             let at = if logged { format!("{}: ", top.name) } else { String::new() };
             eprintln!("{}", ui::paint(ui::GRAY, &format!("> {at}{script}\n> {line}"), false));
         }
-        let mut cmd = run::shell(&line, &top.dir, &run::bin_dirs(&top.dir));
+        let mut cmd = run::shell(&line, &top.dir, &bins);
         let version = top.manifest.version.clone().unwrap_or_default();
         run::script_env(&mut cmd, &top.file, script, command, top.manifest.name.as_deref().unwrap_or(""), &version);
         let code = if replace && single && !logged {
@@ -1649,7 +1651,8 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     };
     let spawn = |words: &[String], dirs: Vec<PathBuf>| -> Result<i32> {
         let head: Vec<String> = words.iter().map(|w| run::quote(w, cfg!(windows), false)).collect();
-        let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd);
+        let first: Vec<PathBuf> = dirs.iter().cloned().chain(run::bin_dirs(&cwd)).collect();
+        let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd, &first);
         run_line(&run::shell_line(&head.join(" "), &e.args, batch), dirs)
     };
     if e.call && e.packages.is_none() {
