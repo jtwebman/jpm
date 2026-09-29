@@ -12,14 +12,16 @@ use crate::error::{Error, Result};
 use crate::graph::Resolution;
 use crate::json::Value;
 use crate::project::RootManifest;
+use crate::rules::Rules;
 use crate::{run, ui};
 
 const INSTALL: [&str; 3] = ["preinstall", "install", "postinstall"];
 const LIFECYCLE: [&str; 6] = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];
 
-/// The names package.json trusts with install scripts: bun's `trustedDependencies`, and pnpm's
-/// `pnpm.onlyBuiltDependencies`.
-pub fn trusted(m: &RootManifest) -> HashSet<String> {
+/// The names the project trusts with install scripts: bun's `trustedDependencies`, pnpm's
+/// `pnpm.onlyBuiltDependencies`, and pnpm-workspace.yaml's `onlyBuiltDependencies` and
+/// `allowBuilds`, where a `false` takes a name out.
+pub fn trusted(m: &RootManifest, rules: &Rules) -> HashSet<String> {
     let names = |v: Option<&Value>| {
         v.and_then(Value::as_array)
             .into_iter()
@@ -30,6 +32,13 @@ pub fn trusted(m: &RootManifest) -> HashSet<String> {
     };
     let mut out: HashSet<String> = names(m.doc.get("trustedDependencies")).into_iter().collect();
     out.extend(names(m.doc.get("pnpm").and_then(|p| p.get("onlyBuiltDependencies"))));
+    for (name, allowed) in &rules.builds {
+        if *allowed {
+            out.insert(name.clone());
+        } else {
+            out.remove(name);
+        }
+    }
     out
 }
 
