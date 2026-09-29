@@ -118,7 +118,9 @@ impl LockEntry {
         if let Some(r) = &self.resolved {
             o.insert("resolved", r.into());
         }
-        o.insert("integrity", (&self.integrity).into());
+        if !self.integrity.is_empty() {
+            o.insert("integrity", (&self.integrity).into());
+        }
         put_map(&mut o, "dependencies", &self.dependencies);
         put_map(&mut o, "optionalDependencies", &self.optional_dependencies);
         put_map(&mut o, "bin", &self.bin);
@@ -207,6 +209,12 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
     let mut packages = BTreeMap::new();
     let mut workspaces = BTreeMap::new();
     for (key, p) in &res.packages {
+        if p.linked {
+            // Only where it is and what it is: its dependencies are its own.
+            let e = LockEntry { version: Some(p.version.clone()), bin: p.bin.clone(), ..LockEntry::default() };
+            packages.insert(key.clone(), e);
+            continue;
+        }
         if let Some(path) = &p.local {
             workspaces.insert(
                 path.clone(),
@@ -284,7 +292,9 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
     }
     for (key, e) in lock.packages {
         let Some((name, tail)) = split_key(&key) else { continue };
-        let source = e.version.as_ref().map(|_| tail.to_string());
+        // A linked directory: where it is, never stored.
+        let link = tail.strip_prefix("link:").map(str::to_string);
+        let source = e.version.as_ref().filter(|_| link.is_none()).map(|_| tail.to_string());
         let version = e.version.unwrap_or_else(|| tail.to_string());
         let resolved = match (&source, e.resolved) {
             (Some(s), _) => s.clone(),
@@ -298,6 +308,8 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             resolved,
             integrity: e.integrity,
             source,
+            linked: link.is_some(),
+            local: link,
             dependencies: e.dependencies,
             optional_dependencies: e.optional_dependencies,
             optional: !required.contains(&key),
@@ -481,7 +493,9 @@ fn text_body(lock: &Lockfile) -> String {
         if let Some(r) = &e.resolved {
             line(&mut out, true, "resolved", &[r]);
         }
-        line(&mut out, true, "integrity", &[&e.integrity]);
+        if !e.integrity.is_empty() {
+            line(&mut out, true, "integrity", &[&e.integrity]);
+        }
         if let Some(g) = &e.subgraph {
             line(&mut out, true, "subgraph", &[g]);
         }
@@ -744,12 +758,18 @@ pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String
     lock.hash.as_ref()?;
     lock.packages
         .iter()
+        .filter(|(key, _)| !is_link(key))
         .map(|(key, e)| {
             let (name, tail) = split_key(key)?;
             let version = e.version.as_deref().unwrap_or(tail);
             Some((key.clone(), format!("{}@{version}-{}", name.replace('/', "+"), e.subgraph.as_ref()?)))
         })
         .collect()
+}
+
+/// A linked directory's key, `name@link:<path>`: no store entry, so no subgraph.
+fn is_link(key: &str) -> bool {
+    split_key(key).is_some_and(|(_, tail)| tail.starts_with("link:"))
 }
 
 /// `jpm.lock` in `dir`, or `None` when there is none.
@@ -766,7 +786,7 @@ pub fn read_lockfile(dir: &Path) -> Result<Option<(Lockfile, &'static str)>> {
 pub fn write_lockfile(dir: &Path, lock: &mut Lockfile) -> Result<()> {
     lock.lockfile_version = TEXT_VERSION;
     // Brought over from a format without them: the subgraphs are hashed once, here.
-    if lock.packages.values().any(|e| e.subgraph.is_none()) {
+    if lock.packages.iter().any(|(k, e)| e.subgraph.is_none() && !is_link(k)) {
         let keys = crate::keys::store_keys(&from_lockfile(lock, &|_| String::new()).packages);
         for (key, e) in &mut lock.packages {
             e.subgraph = keys.get(key).and_then(|k| k.get(k.len().saturating_sub(22)..)).map(str::to_string);
@@ -834,6 +854,19 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
     for (key, e) in &lock.packages {
         let at = format!("packages[{key:?}]");
         let source = check_key(key)?;
+        // A linked directory's dependencies are its own; the rest of an entry is not read.
+        if is_link(key) {
+            let bare = e.dependencies.is_empty() && e.optional_dependencies.is_empty();
+            if !bare || !e.version.as_deref().is_some_and(semver::is_exact) {
+                return Err(fail(format!("{at} is a linked directory: an exact version and bins only")));
+            }
+            check_edges(&at, &e.bin, &e.peers, &e.peer_dependencies, [&e.dependencies; 2], &|_| false)?;
+            continue;
+        }
+        // A directory is linked from a top only.
+        if e.dependencies.values().chain(e.optional_dependencies.values()).any(|v| v.starts_with("link:")) {
+            return Err(fail(format!("{at} depends on a directory; only the root and workspaces may")));
+        }
         // It becomes part of a directory name, so it is exactly what `short_hash` writes.
         if e.subgraph
             .as_ref()
@@ -884,7 +917,9 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             return Err(fail(format!("{at} depends on itself")));
         }
         check_top(ws.specs.as_ref(), &edges, &at, &ws.peer_dependencies)?;
+        check_links(ws.specs.as_ref(), &edges, path, &at, lock)?;
     }
+    check_links(lock.root.specs.as_ref(), &lock.root.dependencies, "", "root", lock)?;
     for (name, version) in &lock.root.dependencies {
         spec::check_name(name, name).map_err(|_| fail(format!("root.dependencies[{name:?}] is not a package name")))?;
         if !known.contains(&format!("{name}@{version}")) {
@@ -902,6 +937,25 @@ fn check_top(specs: Option<&Specs>, deps: &Deps, at: &str, peers: &Deps) -> Resu
     for name in deps.keys() {
         if !specs.is_some_and(|s| s.has(name)) && !peers.contains_key(name) {
             return Err(fail(format!("{at}.dependencies[{name:?}] is in no {at}.specs group, so it has no dev flag")));
+        }
+    }
+    Ok(())
+}
+
+/// A top links a directory only where its own spec for the name says so: an edit cannot point
+/// a name at some other directory.
+fn check_links(specs: Option<&Specs>, deps: &Deps, base: &str, at: &str, lock: &Lockfile) -> Result<()> {
+    for (name, version) in deps {
+        let Some(path) = version.strip_prefix("link:") else { continue };
+        if !lock.packages.contains_key(&format!("{name}@{version}")) {
+            continue; // a workspace, linked by its name
+        }
+        let declared = specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name)).any(|range| {
+            spec::parse_dep(name, range)
+                .is_ok_and(|s| s.kind == Kind::Directory && spec::join_path(base, &s.fetch_spec[5..]) == path)
+        });
+        if !declared {
+            return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
         }
     }
     Ok(())
@@ -958,9 +1012,12 @@ fn check_key(key: &str) -> Result<Option<String>> {
     }
     let spec =
         spec::parse_dep(name, version).map_err(|_| fail(format!("package key {key:?} is not a valid package name")))?;
-    if spec.kind == Kind::Tarball {
+    // A directory is only ever `link:`: one inside the project whose dependencies install is a
+    // workspace entry, not a package.
+    let dir = spec.kind == Kind::Directory && version.len() > 5 && version.starts_with("link:");
+    if spec.kind == Kind::Tarball || dir {
         if spec.fetch_spec != version {
-            return Err(fail(format!("package key {key:?} does not name its tarball as a lockfile does")));
+            return Err(fail(format!("package key {key:?} does not name its source as a lockfile does")));
         }
         return Ok(Some(version.to_string()));
     }
@@ -1058,6 +1115,34 @@ package d@1.0.0
         for bad in ["  override bun b 1\n", "  override npm ../x 1\n", "  override npm b\n"] {
             let text = text.replace("  override npm b $x\n", bad);
             assert!(parse_lockfile(&text, LOCKFILE).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn keeps_linked_directories_to_what_package_json_says() {
+        let text = "jpm-lock 2\nhash 0\nroot\n  spec dependencies l link:../l\n  dep l link:../l\n\
+                    package l@link:../l\n  version 1.0.0\n  bin l cli.js\n";
+        let base = |_: &str| String::new();
+        let res = from_lockfile(&parse_lockfile(text, LOCKFILE).unwrap(), &base);
+        let l = &res.packages["l@link:../l"];
+        assert!(l.linked && l.local.as_deref() == Some("../l") && l.version == "1.0.0", "{l:?}");
+        let again = format_lockfile(&to_lockfile(&res, &base)).unwrap();
+        assert!(again.ends_with(&text[text.find("root").unwrap()..]), "{again}");
+        assert!(recorded_keys(&parse_lockfile(&again, LOCKFILE).unwrap()).is_some(), "no subgraph to hash");
+        let dep = "package a@1.0.0\n  integrity sha512-a\n  dep l link:../l\n";
+        for bad in [
+            text.replace("  bin l cli.js\n", "  bin l cli.js\n  dep a 1.0.0\n"),
+            text.replace("  version 1.0.0\n", "  version ^1\n"),
+            text.replace("link:../l", "link:a/../../l"),
+            text.replace("link:../l", "link:"),
+            text.replace("dependencies l link:../l", "dependencies l ^1"),
+            text.replace("dependencies l link:../l", "dependencies l link:../m"),
+            text.replace("bin l cli.js", "bin l ../../x"),
+            text.replace("  dep l link:../l\n", "  dep l link:../l\n  dep a 1.0.0\n")
+                .replace("\n  spec", "\n  spec dependencies a 1\n  spec")
+                + dep,
+        ] {
+            assert!(parse_lockfile(&bad, LOCKFILE).is_err(), "{bad}");
         }
     }
 

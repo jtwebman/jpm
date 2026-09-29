@@ -116,6 +116,9 @@ pub struct Package {
     pub integrity: String,
     /// A workspace at this root-relative `/` path: linked from its directory, never stored.
     pub local: Option<String>,
+    /// A `local` directory that is only linked (`link:`, or `file:` outside the project): not a
+    /// top, its dependencies are its own. Its path may start with `../`.
+    pub linked: bool,
     /// A workspace's declared ranges.
     pub specs: Option<Specs>,
     /// A tarball dependency: its url, or `file:` and a root-relative path. Its key ends in it.

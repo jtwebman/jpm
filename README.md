@@ -142,6 +142,38 @@ selector, value with `$name` and `catalog:` resolved, in the order they apply). 
 catalog entry or override makes the file out of date: `jpm install` resolves again, and
 `--frozen-lockfile` fails.
 
+## Directory dependencies
+
+A dependency can be a directory, given relative to the package.json that names it:
+
+```json
+"dependencies": {
+  "ui": "file:packages/ui",
+  "tool": "link:../tool"
+}
+```
+
+- `link:<dir>` is a symlink (a junction on Windows) to the directory, as pnpm makes one. Its
+  dependencies are its own business: jpm installs nothing for it, and the directory need not
+  exist yet. Its bins are linked, read from its package.json when the lockfile is written.
+- `file:<dir>` (or a bare `./<dir>`) inside the project is linked the same way, and installed
+  as a workspace is: its dependencies go in its own `node_modules`, and a `file:` directory it
+  names in turn is installed too. This is npm's default (`install-links=false`). Its
+  package.json is read on every install, so an edit there makes the lockfile stale, as an edit
+  to a workspace's does. Its own lifecycle scripts do not run.
+- `file:<dir>` outside the project (`file:../sibling`) is linked as `link:` is, with a warning:
+  installing its dependencies would mean writing its `node_modules`, and jpm writes nothing
+  outside the project. Run `jpm install` in that directory for them.
+- A `file:` path ending in `.tgz`, `.tar.gz` or `.tar` is a tarball, copied into the store.
+- Only the root and workspaces (and `file:` directories) may depend on a path; a registry
+  package that does is an error.
+
+In `jpm.lock`, a `file:` directory inside the project is a `workspace` section under the name
+it is installed as, and an edge to either kind is `link:<path>`, the path from the project root.
+A linked directory is a `package <name>@link:<path>` entry holding only its version and bins.
+A lockfile edge to a linked directory must match the spec package.json gives it, so an edit to
+the lockfile alone cannot point a name at another directory.
+
 ## How it works
 
 - **Resolve.** The dependency graph is walked on a pool of threads. Each package is picked
