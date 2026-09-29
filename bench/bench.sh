@@ -291,11 +291,12 @@ fetch_aube() {
 	[ $DRY = 0 ] || return
 	url=https://github.com/aubepkg/aube/releases
 	# The newest release at least a day old, as jpm's minimum release age would pick.
+	# awk reads to the end: exiting early fails curl's write.
 	cut=$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)
 	tag=$(curl -fsS "https://api.github.com/repos/aubepkg/aube/releases?per_page=20" | awk -F '"' -v cut="$cut" '
 		/"tag_name":/ { tag = $4; skip = 0 }
 		/"(draft|prerelease)": true/ { skip = 1 }
-		/"published_at":/ && !skip && $4 <= cut { print tag; exit }')
+		/"published_at":/ && !skip && !found && $4 <= cut { print tag; found = 1 }')
 	case $tag in v[0-9]*) ;; *) echo "skip fetching aube: no release a day old found"; return ;; esac
 	d=$W/tools/aube/$tag
 	if [ ! -d "$d" ]; then
