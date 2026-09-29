@@ -150,8 +150,8 @@ struct Top {
 fn tops_of(dir: &Path, res: &Resolution) -> Vec<Top> {
     let mut tops = vec![Top { nm: dir.join("node_modules"), dependencies: res.root.dependencies.clone() }];
     for p in res.packages.values() {
-        // The root listed as a workspace is already the first top.
-        if let Some(path) = p.local.as_ref().filter(|p| *p != crate::project::ROOT_PATH) {
+        // The root listed as a workspace is already the first top; a linked directory is none.
+        if let Some(path) = p.local.as_ref().filter(|path| *path != crate::project::ROOT_PATH && !p.linked) {
             tops.push(Top { nm: dir.join(path).join("node_modules"), dependencies: p.all_deps() });
         }
     }
