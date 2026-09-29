@@ -342,8 +342,9 @@ A `variant` is a platform (`<os>-<cpu>`, `-musl` for a musl build), its integrit
 build is: a file of the release (or a url), or for Bun and Deno the platform package. An install
 takes this machine's and checks the download against it, so a lockfile made on Linux installs on
 macOS or Windows without asking the network what to trust. A new range makes the file out of
-date, as any other does. The build is unpacked into the store and linked like a package, and
-`jpm prune` removes it once no registered project's lockfile names it.
+date, as any other does. The build is unpacked into the store like a package; its entry links
+the binary alone (not Node's npm and headers, 4,000 files), and `jpm prune` removes the build
+once no registered project's lockfile names it.
 
 A `pnpm-lock.yaml` brought over keeps the version pnpm locked for each runtime (`runtime:` in
 its importers). jpm reads the builds from the release as for its own lockfile; each one pnpm

@@ -542,9 +542,18 @@ impl Linker<'_> {
 
     fn index(&self, entry: &Entry) -> Result<std::sync::Arc<Index>> {
         self.ready(entry.pkg)?;
-        self.opts.store.index(&entry.pkg.integrity).ok_or_else(|| {
+        let index = self.opts.store.index(&entry.pkg.integrity).ok_or_else(|| {
             fail(format!("{} is not in the store at {}", entry.pkg.key(), self.opts.store.dir.display()))
-        })
+        })?;
+        // A runtime's entry is its binary alone: the 4,000 files of Node's npm and headers are
+        // never run, and would be linked into every project.
+        if entry.pkg.runtime.is_some() {
+            let files: Vec<FileEntry> =
+                index.files.iter().filter(|f| entry.pkg.bin.values().any(|b| *b == f.path)).cloned().collect();
+            let unpacked_size = files.iter().map(|f| f.size).sum();
+            return Ok(std::sync::Arc::new(Index { files, unpacked_size, suffixed: index.suffixed }));
+        }
+        Ok(index)
     }
 
     fn materialize(&self, entry: &Entry, present: bool) -> Result<()> {

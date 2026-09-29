@@ -25,7 +25,12 @@ fn sha256(data: &[u8]) -> Vec<u8> {
 
 fn node_archive(version: &str, plat: &str) -> Vec<u8> {
     let script = format!("#!/bin/sh\necho v{version}\n").into_bytes();
-    gzip(&tar(&[(format!("node-v{version}-{plat}/bin/node"), 0o755, script)]))
+    let npm = b"#!/usr/bin/env node\n".to_vec();
+    let dir = format!("node-v{version}-{plat}");
+    gzip(&tar(&[
+        (format!("{dir}/bin/node"), 0o755, script),
+        (format!("{dir}/lib/node_modules/npm/bin/npm-cli.js"), 0o755, npm),
+    ]))
 }
 
 /// Node releases under `/dist`: `index.json`, and per version `SHASUMS256.txt` and this
@@ -89,7 +94,8 @@ fn installs_the_node_a_range_names() {
     assert!(lock.contains("package node@runtime:22.12.0\n  version 22.12.0\n"), "{lock}");
     let variant = format!("  variant {} sha256-", platform());
     assert!(lock.contains(&variant) && lock.contains("variant win32-x64 sha256-"), "{lock}");
-    assert!(env.exists("node_modules/.bin/node") && env.exists("node_modules/node"));
+    assert!(env.exists("node_modules/.bin/node") && env.exists("node_modules/node/bin/node"));
+    assert!(!env.exists("node_modules/node/lib") && !env.exists("node_modules/.bin/npm"), "the binary alone");
     assert_eq!(run_in(&env, &env.project(), "v"), "v22.12.0");
     // The same inputs: a no-op, which never asks the release site.
     let json: Value = serde_json::from_slice(&env.jpm(&["install", "--json"]).stdout).unwrap();
