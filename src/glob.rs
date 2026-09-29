@@ -12,14 +12,27 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     })
 }
 
+/// `**` is to segments what `*` is to bytes, so this is `wild` again, one backtrack point for
+/// the last `**`: recursion on every `**` would take exponential time on `**/**/**/…/x`.
 fn segments(pat: &[&str], parts: &[&str]) -> bool {
-    match pat.first() {
-        None => parts.is_empty(),
-        Some(&"**") => (0..=parts.len()).any(|i| segments(&pat[1..], &parts[i..])),
-        Some(p) => {
-            parts.first().is_some_and(|s| segment(p.as_bytes(), s.as_bytes()) && segments(&pat[1..], &parts[1..]))
+    let (mut pi, mut si) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while si < parts.len() {
+        if pat.get(pi) == Some(&"**") {
+            star = Some((pi, si));
+            pi += 1;
+        } else if pat.get(pi).is_some_and(|p| segment(p.as_bytes(), parts[si].as_bytes())) {
+            pi += 1;
+            si += 1;
+        } else if let Some((sp, ss)) = star {
+            pi = sp + 1;
+            si = ss + 1;
+            star = Some((sp, ss + 1));
+        } else {
+            return false;
         }
     }
+    pat[pi..].iter().all(|p| *p == "**")
 }
 
 /// One segment. A leading `.` is only matched by a pattern that spells it, as with shell globs.
@@ -98,12 +111,25 @@ fn class(p: &[u8], c: Option<u8>) -> Option<(bool, usize)> {
 }
 
 /// Brace alternatives kept at most: `{a,b}` thirty times over is a billion patterns otherwise.
-const MAX_BRACES: usize = 1024;
+pub const MAX_BRACES: usize = 1024;
 
-/// `{a,b}` expanded, nested too: `x{a,{b,c}}` is `xa`, `xb`, `xc`. At most `MAX_BRACES`.
+/// The longest pattern, and the most `{`, a glob is read with. Expanding holds a copy of the
+/// pattern for each brace group it is inside, so past these a pattern is refused, not expanded.
+pub const MAX_PATTERN: usize = 4096;
+const MAX_GROUPS: usize = 64;
+
+/// Whether a pattern is past `MAX_PATTERN` or `MAX_GROUPS`: one no package.json writes.
+pub fn too_big(pattern: &str) -> bool {
+    pattern.len() > MAX_PATTERN || pattern.bytes().filter(|b| *b == b'{').count() > MAX_GROUPS
+}
+
+/// `{a,b}` expanded, nested too: `x{a,{b,c}}` is `xa`, `xb`, `xc`. At most `MAX_BRACES`, and
+/// nothing for a pattern `too_big`.
 pub fn braces(pattern: &str) -> Vec<String> {
     let mut out = Vec::new();
-    expand_braces(pattern, &mut out);
+    if !too_big(pattern) {
+        expand_braces(pattern, &mut out);
+    }
     out
 }
 
@@ -152,8 +178,9 @@ fn expand_braces(pattern: &str, out: &mut Vec<String>) {
 pub fn expand(root: &Path, pattern: &str, exclude: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for p in braces(pattern) {
-        let pat: Vec<String> = p.split('/').filter(|s| !s.is_empty() && *s != ".").map(str::to_string).collect();
-        walk(root, String::new(), &pat, &mut out);
+        let mut pat: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+        pat.dedup_by(|a, b| *a == "**" && *b == "**");
+        walk(root, String::new(), &pat, after_stars(&pat, vec![0]), &mut out);
     }
     out.retain(|path| !exclude.iter().any(|e| matches(e, path)));
     out.sort();
@@ -161,36 +188,64 @@ pub fn expand(root: &Path, pattern: &str, exclude: &[String]) -> Vec<String> {
     out
 }
 
-fn walk(dir: &Path, rel: String, pat: &[String], out: &mut Vec<String>) {
-    let Some(first) = pat.first() else {
-        out.push(rel);
-        return;
-    };
+/// `at` with the position past each `**` in it added: a `**` may match no directory at all.
+fn after_stars(pat: &[&str], mut at: Vec<usize>) -> Vec<usize> {
+    let mut i = 0;
+    while let Some(&s) = at.get(i) {
+        if pat.get(s) == Some(&"**") {
+            at.push(s + 1);
+        }
+        i += 1;
+    }
+    at.sort_unstable();
+    at.dedup();
+    at
+}
+
+/// Each directory once, with every pattern position `at` it: following each `**` on its own
+/// would enter a directory once per way of sharing its path among them, and `**/a/**/a/**/a…`
+/// exponentially many times.
+fn walk(dir: &Path, rel: String, pat: &[&str], at: Vec<usize>, out: &mut Vec<String>) {
     let join = |name: &str| if rel.is_empty() { name.to_string() } else { format!("{rel}/{name}") };
-    let literal = !first.contains(['*', '?', '[', '\\']);
-    if literal {
-        let next = dir.join(first);
+    let literal = |s: usize| pat.get(s).is_some_and(|p| !p.contains(['*', '?', '[', '\\']));
+    if let [s] = at[..]
+        && literal(s)
+    {
+        let next = dir.join(pat[s]);
         if next.is_dir() {
-            walk(&next, join(first), &pat[1..], out);
+            walk(&next, join(pat[s]), pat, after_stars(pat, vec![s + 1]), out);
         }
         return;
     }
-    if first == "**" {
-        walk(dir, rel.clone(), &pat[1..], out);
+    if at.contains(&pat.len()) {
+        out.push(rel.clone());
+        if at.len() == 1 {
+            return;
+        }
     }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        // Real directories only: a symlink loop under `**` would never end.
-        if name == "node_modules" || !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        if first == "**" {
-            if !name.starts_with('.') {
-                walk(&entry.path(), join(&name), pat, out);
+        // Real directories only: a symlink loop under `**` would never end. A name the pattern
+        // spells out is followed to wherever it leads, as it is when it stands alone.
+        let real = name != "node_modules" && entry.file_type().is_ok_and(|t| t.is_dir());
+        let mut next = Vec::new();
+        for &s in &at {
+            let Some(p) = pat.get(s) else { continue };
+            if *p == "**" {
+                if real && !name.starts_with('.') {
+                    next.push(s);
+                }
+            } else if literal(s) && *p == name {
+                if entry.path().is_dir() {
+                    next.push(s + 1);
+                }
+            } else if real && segment(p.as_bytes(), name.as_bytes()) {
+                next.push(s + 1);
             }
-        } else if segment(first.as_bytes(), name.as_bytes()) {
-            walk(&entry.path(), join(&name), &pat[1..], out);
+        }
+        if !next.is_empty() {
+            walk(&entry.path(), join(&name), pat, after_stars(pat, next), out);
         }
     }
 }
@@ -220,6 +275,36 @@ mod tests {
         let start = std::time::Instant::now();
         assert_eq!(braces(&"{a,b}".repeat(30)).len(), MAX_BRACES);
         assert!(start.elapsed().as_secs() < 1);
+        // Too long, or too many groups: each level would hold a copy of the pattern.
+        assert!(too_big(&"{a,b}".repeat(1000)) && braces(&"{a,b}".repeat(1000)).is_empty());
+        let nested = format!("{}a,b{}", "{".repeat(65), "}".repeat(65));
+        assert!(braces(&nested).is_empty());
+    }
+
+    #[test]
+    fn matches_double_stars_in_linear_time() {
+        let path = vec!["a"; 22].join("/");
+        let start = std::time::Instant::now();
+        assert!(!matches(&format!("{}x", "**/".repeat(10)), &path));
+        assert!(start.elapsed().as_millis() < 100, "{:?}", start.elapsed());
+        assert!(matches(&format!("{}a", "**/".repeat(10)), &path));
+        assert!(matches("a/**/b/**", "a/x/y/b"));
+        assert!(!matches("a/**/b", "a/x/c"));
+        assert!(matches("**/a/**/b", "a/b"));
+    }
+
+    #[test]
+    fn expands_into_each_directory_once() {
+        let root = std::env::temp_dir().join(format!("jpm-glob-deep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(vec!["a"; 24].join("/"))).unwrap();
+        let start = std::time::Instant::now();
+        let found = expand(&root, &"**/a/".repeat(8), &[]);
+        assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+        let want: Vec<String> = (8..=24).map(|n| vec!["a"; n].join("/")).collect();
+        assert_eq!(found, want);
+        assert_eq!(expand(&root, "**/**/**", &[]).len(), 25);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

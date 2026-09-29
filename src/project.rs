@@ -171,10 +171,13 @@ pub fn local_shape(m: &RootManifest) -> LocalShape {
 }
 
 /// Whether a workspace path can be trusted where it is used: relative, `/`-separated, never up.
-/// `.` is the root, listed as a workspace of its own.
+/// `.` is the root, listed as a workspace of its own. No `:` either: on Windows `C:x` is on
+/// another drive and `a:b` a stream of `a`.
 pub fn local_path(path: &str) -> bool {
     path == ROOT_PATH
-        || !path.is_empty() && !path.contains('\\') && !path.split('/').any(|p| p.is_empty() || p == "." || p == "..")
+        || !path.is_empty()
+            && !path.contains(['\\', ':'])
+            && !path.split('/').any(|p| p.is_empty() || p == "." || p == "..")
 }
 
 /// The path of the root when its own `workspaces` lists it (`.`): a workspace others link to
@@ -183,8 +186,11 @@ pub const ROOT_PATH: &str = ".";
 
 /// Whether the root lists itself as a workspace, and has a name to be linked by.
 pub fn lists_root(m: &RootManifest) -> bool {
-    m.name.as_ref().is_some_and(|n| !n.is_empty())
-        && patterns(m).is_ok_and(|(p, _)| p.iter().any(|p| p.is_empty() || p == "."))
+    patterns(m).is_ok_and(|(p, _)| root_listed(m, &p))
+}
+
+fn root_listed(m: &RootManifest, patterns: &[String]) -> bool {
+    m.name.as_ref().is_some_and(|n| !n.is_empty()) && patterns.iter().any(|p| p.is_empty() || p == ".")
 }
 
 #[derive(Debug, Clone)]
@@ -217,15 +223,33 @@ impl KeepEnoent for Error {
     }
 }
 
-/// The declared patterns, the negations applied the way npm's map-workspaces does.
+/// All of `workspaces` together, in bytes.
+const MAX_WORKSPACES: usize = 32 * 1024;
+
+/// The declared patterns, the negations applied the way npm's map-workspaces does. Each
+/// negation is matched against each pattern, and against each directory found: the time that
+/// takes grows with the product of their sizes, so the whole list is capped, and a package.json
+/// past the caps is refused.
 fn patterns(m: &RootManifest) -> Result<(Vec<String>, Vec<String>)> {
     let mut patterns = Vec::new();
     let mut negated: Vec<String> = Vec::new();
+    let (mut bytes, mut expanded) = (0, 0);
     for raw in m.workspaces.iter().flatten() {
         let bangs = raw.len() - raw.trim_start_matches('!').len();
         let body = raw[bangs..].trim_start_matches("./").trim_start_matches('/');
+        let alternatives = glob::braces(body);
+        bytes += raw.len();
+        expanded += alternatives.len();
+        if glob::too_big(body) || bytes > MAX_WORKSPACES || expanded > glob::MAX_BRACES {
+            return Err(workspace_error(&format!(
+                "workspaces is more than jpm reads: over {} bytes in one pattern or {MAX_WORKSPACES} in all, \
+                 or over {} patterns once braces are expanded",
+                glob::MAX_PATTERN,
+                glob::MAX_BRACES
+            )));
+        }
         // After braces too: `{../x,y}` hides a `..` from a plain look.
-        if glob::braces(body).iter().any(|b| b.split('/').any(|p| p == "..")) {
+        if alternatives.iter().any(|b| b.split('/').any(|p| p == "..")) {
             return Err(workspace_error(&format!("workspace pattern {raw} reaches outside the project")));
         }
         if bangs % 2 == 1 {
@@ -249,7 +273,8 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
     let mut found: Vec<Workspace> = Vec::new();
     // (kept path, its version, left-out path, its version, name)
     let mut twins: Vec<(String, String, String, String, String)> = Vec::new();
-    let root = lists_root(m).then(|| (m.name.clone().unwrap_or_default(), m.version.clone().unwrap_or_default()));
+    let root =
+        root_listed(m, &patterns).then(|| (m.name.clone().unwrap_or_default(), m.version.clone().unwrap_or_default()));
     for pattern in &patterns {
         let mut paths = glob::expand(dir, pattern, &exclude);
         paths.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
@@ -453,6 +478,32 @@ mod tests {
         assert_eq!(patterns(&m).unwrap().0, ["packages/{a,b}"]);
     }
 
+    #[test]
+    fn caps_workspace_patterns() {
+        let refused = |list: Vec<String>| {
+            let m = RootManifest { workspaces: Some(list), ..RootManifest::default() };
+            patterns(&m).is_err_and(|e| e.message.contains("more than jpm reads"))
+        };
+        // One pattern too long, too many in all, or too many once braces are expanded: each
+        // negation is matched against each pattern, in time that grows with both.
+        assert!(refused(vec!["{a,b}".repeat(1000)]));
+        let long = format!("!**/{}b", "a/".repeat(1500));
+        assert!(!refused(vec![long.clone(); 2]) && refused(vec![long; 12]));
+        assert!(refused(vec![format!("!n/{}", "{a,b}".repeat(9)), format!("p/{}", "{a,b}".repeat(10))]));
+    }
+
+    #[test]
+    fn negates_patterns_quickly() {
+        // A negation is matched against each pattern, and `**/` ten times took seconds.
+        let deep = vec!["a"; 20].join("/");
+        let text = format!(r#"{{"name":"r","workspaces":["!{}x","{deep}"]}}"#, "**/".repeat(10));
+        let m = RootManifest::parse(&text, Path::new("package.json")).unwrap();
+        let start = std::time::Instant::now();
+        assert_eq!(patterns(&m).unwrap().0, [deep]);
+        assert!(!lists_root(&m));
+        assert!(start.elapsed().as_millis() < 100, "{:?}", start.elapsed());
+    }
+
     fn tree(files: &[(&str, &str)]) -> PathBuf {
         let dir = crate::store::tests::scratch("project");
         for (path, text) in files {
@@ -489,6 +540,9 @@ mod tests {
         assert!(lists_root(&m(r#"[".", "a"]"#)) && lists_root(&m(r#"["./"]"#)));
         assert!(!lists_root(&m(r#"["a", "*"]"#)));
         assert!(local_path(".") && !local_path("./a") && !local_path("a/."));
+        for windows in ["C:/x", "C:x", "a:b", "\\x", "a\\b", "/x"] {
+            assert!(!local_path(windows), "{windows}");
+        }
         // A workspace under the root's name is a second copy of it.
         let dir = tree(&[(".", r#"{"name":"r","workspaces":[".","a"]}"#), ("a", r#"{"name":"r"}"#)]);
         let ws = find_workspaces(&dir, &read_manifest(&dir.join("package.json")).unwrap()).unwrap();
