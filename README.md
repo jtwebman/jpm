@@ -155,13 +155,27 @@ alongside a prune can lose entries; installing again repairs it.
 ## Development
 
 ```sh
-cargo test                       # unit tests and end-to-end tests against a local registry
+cargo test --workspace           # unit tests and end-to-end tests against a local registry
 cargo build --release            # built for size, the CPU-heavy crates for speed
 cargo build --profile fast       # every crate at full speed, for comparing
 ```
 
 Platform-specific code lives in `src/sys/`, one file per OS; only the target's file is
 compiled.
+
+jpm has its own TLS and cryptography, in two crates:
+
+- `crates/crypto` (`jpm-crypto`): SHA-1/2, HMAC, HKDF, AES-GCM, ChaCha20-Poly1305, X25519,
+  P-256, P-384 and RSA signature checks. It uses the CPU's AES, carry-less multiply and SHA
+  instructions where it has them and constant-time portable code where it does not. Tested
+  against RFC and NIST vectors, the Wycheproof suites, and ring on random inputs.
+- `crates/tls` (`jpm-tls`): a TLS 1.3 and 1.2 client (ECDHE and AEAD suites only) and Web PKI
+  certificate checks, with Mozilla's roots from `webpki-roots`. Tested against rustls-webpki
+  and the x509-limbo suite, against rustls and OpenSSL servers, and with a scripted server
+  that sends every kind of bad message.
+
+The tests that need the network are ignored by default:
+`cargo test -p jpm-tls --release -- --ignored`.
 
 ## Benchmarks
 
@@ -203,7 +217,7 @@ deno 6–16 ms, upm 22–23 ms, npm 166–391 ms.
 
 jpm uses the least memory in all but one phase (bun's cold `next`): 7.5 MB for a warm `nuxt` against 58 MB for pnpm 12,
 80 MB for aube and 120 MB for upm, and 151 MB for a cold `nuxt` against 421 MB for aube and
-557 MB for upm. Its binary is 2.4 MB; bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
+557 MB for upm. Its binary is 1.6 MB; bun's is 80 MB, pnpm 12's 60 MB and aube's 152 MB.
 
 Charts: [cold](bench/charts/cold.svg), [warm](bench/charts/warm.svg),
 [repeat](bench/charts/repeat.svg), [memory](bench/charts/cold.memory.svg),

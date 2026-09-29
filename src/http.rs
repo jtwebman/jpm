@@ -1,4 +1,4 @@
-//! A small HTTP/1.1 client over rustls: pooled keep-alive connections, one DNS lookup per host,
+//! A small HTTP/1.1 client over jpm-tls: pooled keep-alive connections, one DNS lookup per host,
 //! chunked and gzip bodies, redirects that keep credentials on their own host, retries with
 //! backoff, and `HTTPS_PROXY` / `HTTP_PROXY` (with `NO_PROXY`). TLS 1.3, and 1.2 with modern suites.
 
@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use flate2::read::GzDecoder;
-use rustls::pki_types::ServerName;
 
 use crate::error::{Error, Result};
 use crate::registry::auth_for;
@@ -186,7 +185,7 @@ impl Url {
 
 enum Stream {
     Plain(TcpStream),
-    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
+    Tls(Box<jpm_tls::Stream<TcpStream>>),
 }
 
 impl Read for Stream {
@@ -218,7 +217,7 @@ type Conn = BufReader<Stream>;
 type PoolKey = (bool, String, u16);
 
 struct Client {
-    tls: Arc<rustls::ClientConfig>,
+    tls: jpm_tls::Config,
     pool: Mutex<HashMap<PoolKey, Vec<Conn>>>,
     dns: Mutex<HashMap<String, Vec<SocketAddr>>>,
 }
@@ -228,31 +227,17 @@ fn client() -> &'static Arc<Client> {
     CLIENT.get_or_init(|| Arc::new(Client { tls: tls_config(), pool: Mutex::default(), dns: Mutex::default() }))
 }
 
-/// TLS 1.3, and TLS 1.2 for the servers that stop there (registry.npmjs.org does), with only
-/// ECDHE key exchange and AEAD ciphers: AES-128-GCM, which every server offers, and ChaCha20,
-/// fast without AES hardware. The rest of rustls stays out of the binary.
-fn tls_config() -> Arc<rustls::ClientConfig> {
-    use rustls::crypto::ring::{cipher_suite as cs, default_provider, kx_group};
-    let provider = rustls::crypto::CryptoProvider {
-        cipher_suites: vec![
-            cs::TLS13_AES_128_GCM_SHA256,
-            cs::TLS13_CHACHA20_POLY1305_SHA256,
-            cs::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-            cs::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-            cs::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-            cs::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-        ],
-        kx_groups: vec![kx_group::X25519, kx_group::SECP256R1],
-        ..default_provider()
-    };
-    let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-    let builder = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        // The provider above has suites for both versions, so this cannot fail.
-        .unwrap_or_else(|_| std::process::abort());
-    let mut config = builder.with_root_certificates(roots).with_no_client_auth();
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Arc::new(config)
+/// Mozilla's roots, as webpki-roots carries them, and HTTP/1.1 by ALPN.
+fn tls_config() -> jpm_tls::Config {
+    let roots = webpki_roots::TLS_SERVER_ROOTS
+        .iter()
+        .map(|ta| jpm_tls::Anchor {
+            subject: ta.subject.as_ref(),
+            spki: ta.subject_public_key_info.as_ref(),
+            name_constraints: ta.name_constraints.as_ref().map(|n| n.as_ref()),
+        })
+        .collect();
+    jpm_tls::Config { roots, alpn: vec![b"http/1.1".to_vec()] }
 }
 
 /// A response whose body has not been read yet.
@@ -391,10 +376,7 @@ impl Client {
             None => self.tcp(&url.host, url.port)?,
         };
         let stream = if url.tls {
-            let name =
-                ServerName::try_from(url.host.clone()).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-            let conn = rustls::ClientConnection::new(self.tls.clone(), name).map_err(io::Error::other)?;
-            Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp)))
+            Stream::Tls(Box::new(jpm_tls::Stream::connect(tcp, &url.host, &self.tls)?))
         } else {
             Stream::Plain(tcp)
         };
