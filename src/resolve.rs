@@ -15,6 +15,7 @@ use crate::manifest::Manifest;
 use crate::pool::{self, Queue};
 use crate::project::{self, RootManifest, declared_peers, local_path, local_shape};
 use crate::registry::{Registry, tarball_url};
+use crate::rules::{self, Override};
 use crate::semver;
 use crate::spec::{self, Kind, Spec};
 
@@ -166,7 +167,7 @@ impl Walk<'_> {
                 }
                 if key != ROOT {
                     let peers = s.records[key].peers.clone().unwrap_or_default();
-                    settle(&mut s, key, &peers, top.manifest.peer_dependencies.as_ref());
+                    settle(&mut s, key, &peers, top.manifest.peer_dependencies.as_ref(), self.overrides());
                 }
             }
         }
@@ -217,7 +218,19 @@ impl Walk<'_> {
         fresh: bool,
         queue: &Queue<Job>,
     ) -> Result<()> {
+        let over = self.overridden(from, name, range);
+        let range = match &over {
+            Some(None) => return Ok(()),
+            Some(Some(r)) => r.as_str(),
+            None => range,
+        };
         let spec = spec::parse_dep(name, range)?;
+        if spec.kind == Kind::Workspace && !self.tops.contains_key(from) {
+            return Err(Error::new(
+                "EWORKSPACE",
+                format!("only the root and workspaces link to workspaces, so not {from}"),
+            ));
+        }
         let push = |version: String| {
             if let Some(list) = lock(&self.state).edges.get_mut(from) {
                 list.push(Edge { name: name.to_string(), version, optional });
@@ -268,6 +281,15 @@ impl Walk<'_> {
         }
         push(m.version.clone());
         Ok(())
+    }
+
+    fn overrides(&self) -> &[Override] {
+        &self.tops[ROOT].manifest.overrides
+    }
+
+    /// What the root's overrides make of an edge: `None` leaves it, `Some(None)` takes it out.
+    fn overridden(&self, from: &str, name: &str, range: &str) -> Option<Option<String>> {
+        rules::find(self.overrides(), crate::graph::split_key(from), name, range).map(|v| v.map(str::to_string))
     }
 
     /// Memoized on the fetched name and range, so two aliases of one package share a pick.
@@ -437,7 +459,7 @@ impl Walk<'_> {
         for (n, r) in &m.optional_dependencies {
             queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: true, fresh: false });
         }
-        settle(&mut s, &key, &peers, Some(&m.peer_dependencies));
+        settle(&mut s, &key, &peers, Some(&m.peer_dependencies), self.overrides());
         Ok(true)
     }
 
@@ -473,7 +495,7 @@ impl Walk<'_> {
                 }
             }
             s.edges.insert(key.clone(), list);
-            settle(&mut s, &key, &peers, pkg.peer_dependencies.as_ref());
+            settle(&mut s, &key, &peers, pkg.peer_dependencies.as_ref(), self.overrides());
         }
     }
 
@@ -674,6 +696,7 @@ impl Walk<'_> {
                 specs: root_manifest.specs(),
                 dependencies,
                 workspaces: root_manifest.workspaces.clone(),
+                overrides: root_manifest.overrides.clone(),
             },
             packages,
             warnings: s.warnings.iter().cloned().collect(),
@@ -682,11 +705,16 @@ impl Walk<'_> {
 }
 
 /// Register a package's peers to settle after the walk: required ones become edges, optional
-/// ones are wired only to what is there.
-fn settle(s: &mut State, key: &str, peers: &Peers, ranges: Option<&Deps>) {
+/// ones are wired only to what is there. Overrides apply to a peer's range too.
+fn settle(s: &mut State, key: &str, peers: &Peers, ranges: Option<&Deps>, overrides: &[Override]) {
     let mut soft = Vec::new();
     for (name, kind) in peers {
-        let written = ranges.and_then(|r| r.get(name)).cloned().unwrap_or_default();
+        let mut written = ranges.and_then(|r| r.get(name)).cloned().unwrap_or_default();
+        match rules::find(overrides, crate::graph::split_key(key), name, &written) {
+            Some(None) => continue,
+            Some(Some(r)) => written = r.to_string(),
+            None => {}
+        }
         let Some(range) = peer_range(name, &written) else {
             let who = if key.is_empty() { "root" } else { key };
             s.warnings.insert(format!("{who} declares peer {name}@{written}, which is not a range; left unmet"));

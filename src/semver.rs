@@ -415,6 +415,67 @@ pub fn satisfies(version: &str, range: &str) -> bool {
     parse(version).is_some_and(|v| satisfies_version(&v, range, false))
 }
 
+/// A comparator set as the versions between two bounds, each `(version, inclusive)`; `None` is
+/// open. Prereleases are compared as versions, not held to their tuple.
+type Bound = Option<(Version, bool)>;
+
+fn bounds(set: &[Comparator]) -> (Bound, Bound) {
+    let (mut low, mut high): (Bound, Bound) = (None, None);
+    for c in set {
+        let (lower, upper) = match c.op {
+            Op::Ge => (Some((c.v.clone(), true)), None),
+            Op::Gt => (Some((c.v.clone(), false)), None),
+            Op::Le => (None, Some((c.v.clone(), true))),
+            Op::Lt => (None, Some((c.v.clone(), false))),
+            Op::Eq => (Some((c.v.clone(), true)), Some((c.v.clone(), true))),
+        };
+        if let Some(l) = lower
+            && low.as_ref().is_none_or(|(v, inc)| l.0 > *v || l.0 == *v && *inc && !l.1)
+        {
+            low = Some(l);
+        }
+        if let Some(u) = upper
+            && high.as_ref().is_none_or(|(v, inc)| u.0 < *v || u.0 == *v && *inc && !u.1)
+        {
+            high = Some(u);
+        }
+    }
+    (low, high)
+}
+
+fn empty((low, high): &(Bound, Bound)) -> bool {
+    match (low, high) {
+        (Some((l, li)), Some((h, hi))) => l > h || l == h && !(*li && *hi),
+        _ => false,
+    }
+}
+
+/// Whether some version satisfies both ranges (npm's `intersects`).
+pub fn intersects(a: &str, b: &str) -> bool {
+    let (Some(a), Some(b)) = (parse_range(a, false), parse_range(b, false)) else { return false };
+    a.iter().any(|x| b.iter().any(|y| !empty(&bounds(&[x.as_slice(), y.as_slice()].concat()))))
+}
+
+/// Whether every version `sub` allows, `sup` allows too (npm's `subset`), each of `sub`'s
+/// alternatives inside one of `sup`'s.
+pub fn subset(sub: &str, sup: &str) -> bool {
+    let (Some(sub), Some(sup)) = (parse_range(sub, false), parse_range(sup, false)) else { return false };
+    let inside = |(l, h): &(Bound, Bound), (sl, sh): &(Bound, Bound)| {
+        let low = match (l, sl) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some((v, inc)), Some((sv, sinc))) => v > sv || v == sv && (*sinc || !inc),
+        };
+        let high = match (h, sh) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some((v, inc)), Some((sv, sinc))) => v < sv || v == sv && (*sinc || !inc),
+        };
+        low && high
+    };
+    sub.iter().map(|s| bounds(s)).filter(|b| !empty(b)).all(|b| sup.iter().any(|s| inside(&b, &bounds(s))))
+}
+
 /// The highest of `versions` the range allows, as written in the list.
 pub fn max_satisfying<'a, I>(versions: I, range: &str) -> Option<&'a str>
 where
@@ -446,6 +507,36 @@ mod tests {
         assert!(!satisfies("2.0.0", ">=3.0.0 || insiders"));
         assert!(!valid_range("insiders"));
         assert!(!valid_range("foo || bar"));
+    }
+
+    #[test]
+    fn compares_ranges() {
+        for (a, b, meet) in [
+            ("^1.2.0", "^1.5.0", true),
+            ("^1.0.0", "^2.0.0", false),
+            ("1.2.3", ">=1.2.3", true),
+            ("1.2.3", ">1.2.3", false),
+            ("<1.0.0", ">=1.0.0", false),
+            ("<=1.0.0", ">=1.0.0", true),
+            ("*", "^3", true),
+            ("^1 || ^3", "3.1.0", true),
+        ] {
+            assert_eq!(intersects(a, b), meet, "{a} {b}");
+            assert_eq!(intersects(b, a), meet, "{b} {a}");
+        }
+        for (sub, sup, inside) in [
+            ("^1.5.0", "^1.2.0", true),
+            ("^1.2.0", "^1.5.0", false),
+            ("1.2.3", "^1", true),
+            ("^1 || ^2", ">=1", true),
+            ("^1 || ^3", "^1 || ^2", false),
+            (">=1", "^1", false),
+            ("*", "^1", false),
+            ("~1.2.0", "*", true),
+            ("latest", "*", false),
+        ] {
+            assert_eq!(subset(sub, sup), inside, "{sub} in {sup}");
+        }
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub struct RootManifest {
     pub peer_dependencies: Option<Deps>,
     pub peer_optional: Vec<String>,
     pub workspaces: Option<Vec<String>>,
+    /// The root's overrides, resolved (`rules::Rules::apply`); empty for a workspace.
+    pub overrides: Vec<crate::rules::Override>,
     pub doc: Object,
 }
 
@@ -90,6 +92,7 @@ impl RootManifest {
             peer_dependencies: group("peerDependencies")?,
             peer_optional,
             workspaces,
+            overrides: Vec::new(),
             doc,
         })
     }
@@ -254,7 +257,7 @@ fn catalogs_in(dir: &Path) -> Option<Catalogs> {
 
 /// The range a `catalog:` or `catalog:<name>` stands for, from the nearest directory at or above
 /// the package.json that defines catalogs: the workspace root.
-fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
+pub fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
     static FOUND: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<Catalogs>>>> =
         std::sync::Mutex::new(None);
     let which = match spec["catalog:".len()..].trim() {
