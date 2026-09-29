@@ -82,7 +82,7 @@ Notes
   --frozen-lockfile reads such a file as it is and writes nothing.
 
   prune removes the project's unused entries, then global entries and store content that no
-  project installed from the store uses, keeping anything under an hour old.
+  project installed from the store uses. It waits for installs using the store to finish.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
 

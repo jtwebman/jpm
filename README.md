@@ -144,7 +144,10 @@ it off.
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects
 still use. A project that is gone, or on a drive that is not mounted, is dropped from the
-register; its next install rebuilds what it needs.
+register; its next install rebuilds what it needs. Installs and prunes take a lock on the store
+(`v1/lock`), so a prune waits for installs to finish and removes what is unused at once. On a
+filesystem without working file locks, such as some network mounts, an install running
+alongside a prune can lose entries; installing again repairs it.
 
 ## Development
 

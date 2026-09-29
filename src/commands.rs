@@ -1039,6 +1039,7 @@ pub fn fetch_lockfile(opts: Opts) -> Result<Vec<Fetched>> {
             .ok_or_else(|| fail("ELOCK", format!("no {LOCKFILE} in {}", dir.display())))?,
     };
     let store = ctx.store(false);
+    let _hold = store.hold(false);
     let res = filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &Platform::current())?;
     for w in &res.warnings {
         warn(w);
@@ -1108,6 +1109,7 @@ fn pick_all(ctx: &Ctx, store: &Store, specs: &[String]) -> Result<Vec<Arc<Manife
 pub fn fetch_specs(specs: &[String], opts: Opts) -> Result<Vec<Fetched>> {
     let ctx = Ctx::open(opts, false)?;
     let store = ctx.store(false);
+    let _hold = store.hold(false);
     let picked = pick_all(&ctx, &store, specs)?;
     let results = pool::map(pool::network_threads(), picked, |m| {
         let r = m.integrity().and_then(|i| {
@@ -1133,13 +1135,14 @@ pub fn prune(opts: Opts) -> Result<Pruned> {
     let mut ctx = Ctx::open(opts, false)?;
     let dir = ctx.project_dir();
     let store = ctx.store(false);
+    let hold = store.hold(true);
     let entries = state::read(&dir).map(|s| gc::sweep_entries(&dir, &s.entries.into_iter().collect()));
     if entries.is_some() {
         store.register(&dir);
     }
-    let Some(_hold) = store.hold(true) else {
+    if hold.is_none() {
         return Ok(Pruned { entries, shared: gc::Swept::default(), store: gc::Swept::default() });
-    };
+    }
     let (shared, used) = gc::mark(&store);
     let shared = gc::sweep_shared(&store.links_dir(), &shared);
     Ok(Pruned { entries, shared, store: gc::prune_store(&store.pkg_root(), &store.tmp_dir(), &used) })
