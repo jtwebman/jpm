@@ -136,6 +136,10 @@ pub struct Package {
     pub peer_dependencies: Option<Deps>,
     /// Which declared peers the walk settled against the tree, and how.
     pub peers: Option<Peers>,
+    /// Has install scripts (`preinstall`, `install`, `postinstall`, or a `binding.gyp`).
+    pub scripts: bool,
+    /// Its install scripts are approved at this version (`jpm approve`).
+    pub build: bool,
 }
 
 impl Package {

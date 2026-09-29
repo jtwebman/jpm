@@ -49,6 +49,10 @@ pub struct Options<'a> {
     /// The global virtual store: entries are built once there, for every project to link to.
     /// `None` builds every entry in the project's `.jpm`.
     pub global: Option<PathBuf>,
+    /// Packages whose install scripts will run: their entries are copies, not links into the
+    /// store the scripts could write through, and stay in the project, as do entries that
+    /// depend on them.
+    pub built: HashSet<String>,
     /// What the state records for the no-op check: only when the tree is a function of the
     /// lockfile and root manifest alone (no workspaces).
     pub inputs: Option<Inputs>,
@@ -133,6 +137,8 @@ struct Entry<'a> {
     home: String,
     /// Built in the global store, not the project.
     shared: bool,
+    /// Copied, for install scripts to run in.
+    build: bool,
 }
 
 /// The root, or a workspace: a `node_modules` of its own holding what it declared.
@@ -230,13 +236,17 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             continue;
         }
         let home = sep(&format!("{key}/node_modules/{}", pkg.name));
-        wanted.insert(id.clone(), Entry { pkg, key: key.clone(), home, shared: opts.global.is_some() });
+        wanted.insert(
+            id.clone(),
+            Entry { pkg, key: key.clone(), home, shared: opts.global.is_some(), build: opts.built.contains(id) },
+        );
     }
     fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
     // An entry that lacks an optional package, or reaches one that does, stays in the project:
     // a global copy would be incomplete for everyone else.
-    if opts.global.is_some() && !dropped.is_empty() {
-        let mut local: HashSet<String> = HashSet::new();
+    // So does one being built, and every entry that reaches it.
+    if opts.global.is_some() && !(dropped.is_empty() && opts.built.is_empty()) {
+        let mut local: HashSet<String> = opts.built.iter().filter(|id| wanted.contains_key(*id)).cloned().collect();
         let missing: HashSet<&str> = dropped.iter().map(String::as_str).collect();
         let mut changed = true;
         while changed {
@@ -459,7 +469,10 @@ impl Linker<'_> {
         let nm = self.root_of(entry).join(&entry.key).join("node_modules");
         let pkg_dir = nm.join(&entry.pkg.name);
         let index = self.index(entry)?;
-        if !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| m.len() == f.size)) {
+        // A built package's files are its scripts' to change.
+        if !entry.build
+            && !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| m.len() == f.size))
+        {
             return Ok(false);
         }
         let deps = self.deps_of(entry.pkg)?;
@@ -492,12 +505,13 @@ impl Linker<'_> {
         fs::create_dir_all(parent)
             .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
         let src = self.opts.store.pkg_dir(&pkg.integrity)?;
-        let cloned = sys::clone_dir(&src, &pkg_dir)
-            .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
+        let cloned = !entry.build
+            && sys::clone_dir(&src, &pkg_dir)
+                .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
         if cloned {
             Counts::add(&self.counts.cloned, 1);
         } else {
-            self.place_files(&*self.index(entry)?, &src, &pkg_dir)?;
+            self.place_files(&*self.index(entry)?, &src, &pkg_dir, entry.build)?;
         }
         let deps = self.deps_of(pkg)?;
         let own_scope = pkg.name.split_once('/').map(|(s, _)| s);
@@ -540,7 +554,8 @@ impl Linker<'_> {
 
     /// Directories first, then one hardlink per file; a filesystem that cannot share inodes with
     /// the store gets copies from the first refusal on.
-    fn place_files(&self, index: &Index, src: &Path, dest: &Path) -> Result<()> {
+    /// `copy`: writable copies, for install scripts to change freely.
+    fn place_files(&self, index: &Index, src: &Path, dest: &Path, copy: bool) -> Result<()> {
         fs::create_dir_all(dest)
             .map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())).with_code("ELINK"))?;
         let mut made: HashSet<&str> = HashSet::new();
@@ -555,7 +570,7 @@ impl Linker<'_> {
         }
         for f in &index.files {
             let (from, to) = (src.join(&f.path), dest.join(&f.path));
-            if !self.copy_only.load(Ordering::Relaxed) {
+            if !copy && !self.copy_only.load(Ordering::Relaxed) {
                 match fs::hard_link(&from, &to) {
                     Ok(()) => {
                         Counts::add(&self.counts.linked, 1);
@@ -572,6 +587,9 @@ impl Linker<'_> {
                 Ok(_) => Counts::add(&self.counts.copied, 1),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(Error::io(&e, format!("cannot copy {}", to.display())).with_code("ELINK")),
+            }
+            if copy {
+                writable(&to, f.exec).map_err(|e| Error::io(&e, format!("cannot write {}", to.display())))?;
             }
         }
         Ok(())
@@ -739,6 +757,23 @@ fn bins_of(deps: &[(String, &Entry)]) -> BTreeMap<String, (String, String)> {
 /// A bin link's text from an entry's `.bin`: `../<name>/<target>`.
 fn bin_link(name: &str, target: &str) -> String {
     sep(&format!("../{name}/{}", target.trim_end_matches('/')))
+}
+
+/// A copy the owner may write: the store's files are read-only.
+fn writable(file: &Path, exec: bool) -> io::Result<()> {
+    let mut perm = fs::metadata(file)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perm.set_mode(if exec { 0o755 } else { 0o644 });
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = exec;
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+    }
+    fs::set_permissions(file, perm)
 }
 
 fn cannot_link(e: &io::Error) -> bool {

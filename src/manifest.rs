@@ -35,6 +35,9 @@ pub struct Manifest {
     pub cpu: Option<Vec<String>>,
     pub libc: Option<Vec<String>>,
     pub deprecated: bool,
+    /// Has a `preinstall`, `install` or `postinstall` script, or a `binding.gyp` npm builds with
+    /// node-gyp (the registry's `hasInstallScript`).
+    pub scripts: bool,
     pub dist: Dist,
     /// Not the registry's: this came from a full document, so a missing `libc` means none.
     pub full: bool,
@@ -93,6 +96,11 @@ impl Manifest {
                 "libc" => m.libc = string_list(s)?,
                 // A message; `false` or an empty string is not deprecated.
                 "deprecated" => m.deprecated = opt_string(s)?.is_some_and(|d| !d.is_empty()),
+                "hasInstallScript" => m.scripts |= s.value()?.as_bool() == Some(true),
+                "scripts" if s.at_object() => s.members(|s, key| {
+                    m.scripts |= matches!(key.as_ref(), "preinstall" | "install" | "postinstall");
+                    s.skip()
+                })?,
                 "dist" if s.at_object() => s.members(|s, key| {
                     match key.as_ref() {
                         "tarball" => m.dist.tarball = opt_string(s)?,

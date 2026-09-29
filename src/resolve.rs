@@ -723,6 +723,7 @@ fn record(name: &str, m: &Manifest, source: Option<&str>) -> Package {
         cpu: m.cpu.clone(),
         libc: m.libc.clone(),
         peer_dependencies: (!m.peer_dependencies.is_empty()).then(|| m.peer_dependencies.clone()),
+        scripts: m.scripts,
         ..Package::default()
     }
 }

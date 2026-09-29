@@ -536,3 +536,115 @@ fn rejects_bad_usage() {
     assert_eq!(env.jpm(&["install", "--dev"]).status.code(), Some(2));
     assert!(env.ok(&["--help"]).contains("Usage"));
 }
+
+/// Packages with install scripts: `bld` counts its runs and records what token it could see.
+#[cfg(unix)]
+fn scripted() -> Registry {
+    let bld = |v: &str| {
+        pkg(
+            "bld",
+            v,
+            json!({
+                "dependencies": { "dep": "1.0.0" },
+                "scripts": { "postinstall": "echo run >> count.txt; echo \"[$NPM_TOKEN$npm_config__authToken]\" > token.txt" }
+            }),
+        )
+    };
+    let fails = |name: &str| pkg(name, "1.0.0", json!({ "scripts": { "install": "echo broken >&2; exit 3" } }));
+    Registry::start(vec![
+        bld("1.0.0"),
+        bld("1.1.0"),
+        pkg("dep", "1.0.0", json!({})),
+        fails("fails"),
+        fails("optfails"),
+        pkg("host", "1.0.0", json!({ "optionalDependencies": { "optfails": "1.0.0" } })),
+    ])
+}
+
+#[cfg(unix)]
+#[test]
+fn runs_install_scripts_only_when_approved() {
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" } }));
+    // Not approved: nothing runs, and the install says what did not.
+    let out = env.ok(&["install"]);
+    assert!(out.contains("install scripts not run for bld@1.0.0"), "{out}");
+    assert!(!env.exists("node_modules/bld/count.txt"));
+    assert!(env.read("jpm.lock").contains("  scripts\n"));
+    // Trusted by name alone is not enough: the version must be approved.
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" }, "trustedDependencies": ["bld"] }));
+    env.ok(&["install"]);
+    assert!(!env.exists("node_modules/bld/count.txt"));
+    assert!(env.ok(&["approve"]).contains("waiting for approval: bld@1.0.0"));
+
+    // Approved: it runs once, in a writable copy of its own, with no npm credentials.
+    let out = env.command(&["approve", "bld"]).env("NPM_TOKEN", "SECRET").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && text.contains("approved bld@1.0.0"), "{text}");
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+    assert_eq!(env.read("node_modules/bld/token.txt"), "[]\n");
+    assert!(env.read("jpm.lock").contains("  build\n"));
+    assert!(env.read("package.json").contains("\"trustedDependencies\""));
+    let real = std::fs::canonicalize(env.project().join("node_modules/bld")).unwrap();
+    assert!(real.starts_with(std::fs::canonicalize(env.project()).unwrap()), "built in the project: {real:?}");
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n", "not again");
+    // Another edit resolves again: the approval stays with the version.
+    let out = env.ok(&["add", "dep@1.0.0"]);
+    assert!(!out.contains("not run"), "{out}");
+    assert!(env.read("jpm.lock").contains("  build\n"));
+    env.ok(&["dedupe"]);
+    assert!(env.read("jpm.lock").contains("  build\n"), "dedupe keeps the approval");
+    // CI installs the approved scripts from the lockfile as it is.
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+
+    // A new version waits for its own approval.
+    let out = env.ok(&["add", "bld@1.1.0"]);
+    assert!(out.contains("install scripts not run for bld@1.1.0"), "{out}");
+    assert!(!env.exists("node_modules/bld/count.txt"));
+    env.ok(&["approve", "bld"]);
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+
+    // --ignore-scripts runs nothing, approved or not.
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["install", "--ignore-scripts"]);
+    assert!(!env.exists("node_modules/bld/count.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn stops_on_a_failing_install_script() {
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "fails": "1.0.0", "host": "1.0.0" } }));
+    env.ok(&["install"]);
+    // An optional package's failure is a warning; a required one's stops the install.
+    let out = env.jpm(&["approve", "optfails"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("skipped optional optfails@1.0.0 install failed"));
+    let out = env.jpm(&["approve", "fails"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("fails@1.0.0 install failed") && text.contains("broken"), "{text}");
+    assert!(env.jpm(&["approve", "dep"]).status.code() != Some(0), "a package with no scripts cannot be approved");
+}
+
+#[cfg(unix)]
+#[test]
+fn runs_the_projects_own_lifecycle_scripts() {
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({
+        "dependencies": { "dep": "1.0.0" },
+        "scripts": { "preinstall": "echo pre >> order.txt", "postinstall": "echo post >> order.txt", "prepare": "echo prepare >> order.txt" }
+    }));
+    env.ok(&["install"]);
+    assert_eq!(env.read("order.txt"), "pre\npost\nprepare\n");
+    env.ok(&["install"]);
+    assert_eq!(env.read("order.txt"), "pre\npost\nprepare\n", "a no-op install runs nothing");
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["install", "--ignore-scripts"]);
+    assert_eq!(env.read("order.txt"), "pre\npost\nprepare\n");
+}

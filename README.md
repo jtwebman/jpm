@@ -125,7 +125,27 @@ merge is fine; the hash no longer matches, so jpm checks everything and writes t
   lockfile, `package.json` and settings are unchanged, a repeat install checks a few links and
   exits.
 
-Dependency lifecycle scripts (`postinstall` and the like) are not run.
+## Install scripts
+
+A dependency's install scripts (`preinstall`, `install`, `postinstall`, or `node-gyp rebuild`
+for a `binding.gyp`) are how most npm malware runs, so jpm runs them only when you ask:
+
+```sh
+jpm install                 # "install scripts not run for esbuild@0.21.5: `jpm approve <name>` runs them"
+jpm approve                 # list what waits
+jpm approve esbuild         # trust it, approve this version, install
+```
+
+`jpm approve` adds the name to `trustedDependencies` in package.json (bun's field; pnpm's
+`onlyBuiltDependencies` is read too) and marks the locked version `build` in jpm.lock. Both
+must agree: a new version of a trusted package does not run its scripts until it is approved
+again. Approved packages are copies, not links into the store, kept in the project; their
+scripts run once, dependencies first, without npm tokens in the environment, with output in
+`.build.log` beside the package and shown when a script fails.
+
+The project's own lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare` and
+their pre/post) run on installs that change the tree, after it is linked. `--ignore-scripts`
+or `ignore-scripts=true` in .npmrc turns every script off.
 
 ## Configuration
 
