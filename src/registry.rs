@@ -71,9 +71,10 @@ pub fn auth_for(auth: &BTreeMap<String, String>, url: &str) -> Option<String> {
     if !scheme.eq_ignore_ascii_case("https") && !auth.contains_key(&format!("{INSECURE}//{host}/")) {
         return None;
     }
-    let path = &rest[host.len()..path_end];
+    // Some servers read `\` as `/`: a dot segment spelled either way is refused.
+    let path = rest[host.len()..path_end].replace('\\', "/");
     let lower = path.to_ascii_lowercase();
-    if path.split('/').any(|s| s == "." || s == "..") || lower.contains("%2e") {
+    if path.split('/').any(|s| s == "." || s == "..") || lower.contains("%2e") || lower.contains("%5c") {
         return None;
     }
     let mut dart = format!("//{}", &rest[..path_end]);
@@ -563,7 +564,13 @@ mod tests {
         local.insert(format!("{INSECURE}//r.test/"), String::new());
         assert_eq!(auth_for(&local, "http://r.test/npm/a/-/a.tgz").as_deref(), Some("x"));
         // Not for a path the server would resolve outside the prefix.
-        for url in ["https://r.test/npm/../other", "https://r.test/npm/%2e%2e/other", "https://r.test/npm/./a"] {
+        for url in [
+            "https://r.test/npm/../other",
+            "https://r.test/npm/%2e%2e/other",
+            "https://r.test/npm/./a",
+            "https://r.test/npm/\\..\\other",
+            "https://r.test/npm/%5c..%5cother",
+        ] {
             assert_eq!(auth_for(&auth, url), None, "{url}");
         }
     }
