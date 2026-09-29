@@ -953,6 +953,35 @@ fn reads_what_it_can_of_a_peer_range() {
 }
 
 #[test]
+fn pins_come_from_kept_packuments_without_asking() {
+    let fresh = json!({ "_published": "2999-01-01T00:00:00.000Z" });
+    let r = Registry::start(vec![
+        pkg("a", "1.0.0", json!({ "dependencies": { "b": "1.0.0" } })),
+        pkg("b", "1.0.0", json!({})),
+        pkg("fresh", "1.0.0", fresh),
+    ]);
+    let env = Env::new(&r);
+    // Ranges keep the packuments; a's pin on b may be asked for by its route.
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0", "fresh": "^1.0.0" } }));
+    env.ok(&["lock"]);
+    // Pinned now: a@1.0.0's own route was never asked for, and its packument answers.
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    let asked = r.hits.lock().unwrap().len();
+    env.ok(&["lock", "--prefer-offline"]);
+    let hits = r.hits.lock().unwrap()[asked..].to_vec();
+    assert!(hits.is_empty(), "{hits:?}");
+    assert!(env.lock()["packages"].get("a@1.0.0").is_some());
+    // A pin the release age cuts from the kept packument is still asked for by its route,
+    // which the cutoff does not apply to.
+    env.manifest(json!({ "dependencies": { "fresh": "1.0.0" } }));
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    let out = env.command(&["lock", "--prefer-offline"]).env("npm_config_min_release_age", "1").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.lock()["packages"].get("fresh@1.0.0").is_some());
+}
+
+#[test]
 fn keeps_new_versions_an_imported_lockfile_names() {
     let fresh = json!({ "_published": "2999-01-01T00:00:00.000Z" });
     let r = Registry::start(vec![pkg("b", "1.0.0", json!({})), pkg("@s/fresh", "1.0.0", fresh.clone())]);
