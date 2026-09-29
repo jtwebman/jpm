@@ -18,12 +18,13 @@ const K: [u32; 64] = [
 /// Hashes whole 64-byte blocks into `state`, with the fastest code the CPU runs.
 pub(super) fn compress(state: &mut [u32; 8], blocks: &[u8]) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("sha") && std::arch::is_x86_feature_detected!("sse4.1") {
+    if !super::portable() && std::arch::is_x86_feature_detected!("sha") && std::arch::is_x86_feature_detected!("sse4.1")
+    {
         // SAFETY: the CPU has the SHA extensions and SSE4.1.
         return unsafe { x86::compress(state, blocks) };
     }
     #[cfg(target_arch = "aarch64")]
-    if std::arch::is_aarch64_feature_detected!("sha2") {
+    if !super::portable() && std::arch::is_aarch64_feature_detected!("sha2") {
         // SAFETY: the CPU has the SHA-256 instructions.
         return unsafe { arm::compress(state, blocks) };
     }
