@@ -186,8 +186,9 @@ fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
         return Ok(None);
     };
     let clean = path.replace('\\', "/");
-    let drive = clean.len() > 1 && clean.as_bytes()[1] == b':' && clean.as_bytes()[0].is_ascii_alphabetic();
-    if clean.starts_with('/') || clean.starts_with('~') || drive {
+    let joined = join_path("", &clean);
+    // Checked once normalized: `./C:/x` joins to `C:/x`. A `:` is a drive or a stream on Windows.
+    if clean.starts_with('/') || clean.starts_with('~') || joined.contains(':') {
         return Err(invalid(format!("Invalid path \"{path}\" of package \"{raw}\": give it relative to package.json")));
     }
     if !ends_as_tarball(&clean) {
@@ -195,7 +196,7 @@ fn tarball(s: &str, raw: &str) -> Result<Option<String>> {
             "directory dependencies are not supported yet: {s} (in package \"{raw}\"); only a tarball (.tgz, .tar.gz or .tar) installs from a path"
         )));
     }
-    Ok(Some(format!("file:{}", join_path("", &clean))))
+    Ok(Some(format!("file:{joined}")))
 }
 
 fn valid_url(s: &str) -> bool {
@@ -319,6 +320,9 @@ mod tests {
         let s = parse_dep("lib", "https://example.com/lib.tgz").unwrap();
         assert_eq!(s.kind, Kind::Tarball);
         assert!(parse_dep("lib", "file:/abs/lib.tgz").is_err());
+        for drive in ["file:C:/x.tgz", "file:./C:/x.tgz", "./x/../C:\\x.tgz", "file:c:x.tgz", "file:a:s.tgz"] {
+            assert!(parse_dep("lib", drive).is_err(), "{drive}");
+        }
         assert!(parse_dep("lib", "./dir").is_err());
         assert_eq!(bare_tarball("lib-1.0.0.tgz").unwrap().as_deref(), Some("file:lib-1.0.0.tgz"));
         assert_eq!(bare_tarball("vue@^3").unwrap(), None);

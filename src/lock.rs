@@ -924,9 +924,10 @@ fn check_edges(
 }
 
 /// A bin name or target that climbs out of its directory would let a lockfile write anywhere.
+/// A `:` is a drive (`C:/x`, `C:x`) or a stream on Windows.
 fn escapes(value: &str) -> bool {
     let clean = value.replace('\\', "/");
-    clean.starts_with('/') || clean.split('/').any(|p| p == "..")
+    clean.starts_with('/') || clean.contains(':') || clean.split('/').any(|p| p == "..")
 }
 
 /// A key is `name@version` or `name@<source>`, and both halves become path segments.
@@ -1054,6 +1055,11 @@ package d@1.0.0
         let mut lock = sample();
         lock.packages.get_mut("b@1.0.0").unwrap().bin.insert("x".into(), "../../etc".into());
         assert!(validate(&lock).is_err());
+        for target in ["C:/Windows/x.exe", "c:i.js", "a:stream"] {
+            let mut lock = sample();
+            lock.packages.get_mut("b@1.0.0").unwrap().bin.insert("x".into(), target.into());
+            assert!(validate(&lock).unwrap_err().message.contains("escapes"), "{target}");
+        }
         let mut lock = sample();
         lock.packages.get_mut("a@1.0.0").unwrap().dependencies.insert("z".into(), "1.0.0".into());
         assert!(validate(&lock).unwrap_err().message.contains("not in packages"));

@@ -42,8 +42,10 @@ fn program_of(path: &str, head: Option<&str>) -> Option<(String, String)> {
 /// The three shims for a bin whose file is `target`, spelled from `.bin`: suffix and text.
 pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, String)>> {
     let path = target.replace('\\', "/");
-    // A lockfile can name the target, and a shim is a script: what its quotes cannot hold would run.
-    if path.chars().any(|c| "\"%$`!".contains(c) || c.is_control()) {
+    // A lockfile can name the target, and a shim is a script: what its quotes cannot hold would
+    // run. Only what every shell's double quotes keep literal is let in: not `"%$`!`, and not the
+    // smart quotes U+2018-U+201F, which PowerShell also reads as quotes.
+    if !path.chars().all(|c| c.is_alphanumeric() || " -_./@+~,=#():'".contains(c)) {
         return Err(Error::new("EBIN", format!("refusing to shim a bin at {target:?}: it cannot be quoted")));
     }
     let program = program_of(&path, head);
@@ -172,7 +174,12 @@ mod tests {
 
     #[test]
     fn refuses_unquotable_targets() {
-        assert!(shims_of("a%b", None).is_err());
+        for bad in ["a%b", "a\"b", "a$b", "a`b", "a!b", "a\nb", "a\u{2018}b", "a\u{201c}b", "a\u{201f}b"] {
+            assert!(shims_of(bad, None).is_err(), "{bad:?}");
+        }
+        let injected = "../pkg/x\u{201d}; Write-Output INJECTED; & \u{201c}y.js";
+        assert!(shims_of(injected, Some("#!/usr/bin/env node")).is_err());
+        assert!(shims_of("C:/Users/Jo O'Neil (x86)/.jpm/@s+a@1.0.0/node_modules/a/bin/cli-x_1.js", None).is_ok());
     }
 
     #[test]
