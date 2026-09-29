@@ -1,7 +1,7 @@
 mod common;
 
 use common::{cases, hex, random, random_vec, rounds, time, wycheproof};
-use jpm_crypto::{p256, p384};
+use jpm_pk::{p256, p384};
 use ring::digest::{self, SHA256, SHA384, SHA512};
 use ring::rand::SystemRandom;
 use ring::signature::{self, EcdsaKeyPair, EcdsaSigningAlgorithm, KeyPair, UnparsedPublicKey, VerificationAlgorithm};

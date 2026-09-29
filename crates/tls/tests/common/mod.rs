@@ -102,7 +102,7 @@ pub fn make_pki(key_type: KeyType, leaf: impl FnOnce(&mut CertificateParams)) ->
 
 /// An RSA key from jpm-crypto's test data (PKCS#1 RSAPrivateKey), wrapped as PKCS#8.
 fn rsa_key(name: &str) -> KeyPair {
-    let path = format!("{}/../crypto/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../pk/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
     let pkcs1 = std::fs::read(path).unwrap();
     // PrivateKeyInfo { version 0, AlgorithmIdentifier { rsaEncryption, NULL }, OCTET STRING }
     let alg = [0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00];

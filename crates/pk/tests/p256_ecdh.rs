@@ -1,7 +1,7 @@
 mod common;
 
 use common::{cases, hex, random, rounds, time, wycheproof};
-use jpm_crypto::p256::{public_key, shared_secret};
+use jpm_pk::p256::{public_key, shared_secret};
 use ring::agreement::{self, ECDH_P256, EphemeralPrivateKey, UnparsedPublicKey};
 use ring::rand::SystemRandom;
 

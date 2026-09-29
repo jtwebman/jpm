@@ -373,10 +373,10 @@ pub(super) fn verify(key: &PublicKey, scheme: Scheme, message: &[u8], signature:
     let ecdsa = matches!(scheme, EcdsaSha256 | EcdsaSha384 | EcdsaSha512);
     let pss = matches!(scheme, RsaPssSha256 | RsaPssSha384 | RsaPssSha512);
     match *key {
-        PublicKey::Rsa { n, e } if pss => jpm_crypto::rsa::verify_pss(n, e, alg, &digest, signature),
-        PublicKey::Rsa { n, e } if !ecdsa => jpm_crypto::rsa::verify_pkcs1(n, e, alg, &digest, signature),
-        PublicKey::P256(q) if ecdsa => jpm_crypto::p256::verify(q, &digest, signature),
-        PublicKey::P384(q) if ecdsa => jpm_crypto::p384::verify(q, &digest, signature),
+        PublicKey::Rsa { n, e } if pss => jpm_pk::rsa::verify_pss(n, e, alg, &digest, signature),
+        PublicKey::Rsa { n, e } if !ecdsa => jpm_pk::rsa::verify_pkcs1(n, e, alg, &digest, signature),
+        PublicKey::P256(q) if ecdsa => jpm_pk::p256::verify(q, &digest, signature),
+        PublicKey::P384(q) if ecdsa => jpm_pk::p384::verify(q, &digest, signature),
         _ => false,
     }
 }

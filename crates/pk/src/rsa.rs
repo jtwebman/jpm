@@ -1,7 +1,7 @@
 //! RSA signature verification: RSASSA-PKCS1-v1_5 and RSASSA-PSS (RFC 8017). Public keys only,
 //! so nothing here needs constant time. Moduli of 2048 to 8192 bits; odd exponents of 3 to 2^32-1.
 
-use crate::hash::{self, Alg};
+use jpm_crypto::hash::{self, Alg};
 
 /// `n` and `e` big-endian as a key holds them (a leading zero byte allowed), `digest` the hash
 /// of the message under `alg`, `signature` exactly as long as the modulus.

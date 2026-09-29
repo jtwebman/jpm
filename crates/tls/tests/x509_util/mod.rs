@@ -269,7 +269,7 @@ pub const KINDS: [Kind; 5] = [Kind::P256, Kind::P384, Kind::Rsa2048, Kind::Rsa30
 
 /// The RSA test keys of jpm-crypto, as PKCS#8.
 pub fn rsa_pkcs8(bits: u32) -> Vec<u8> {
-    let path = format!("{}/../crypto/tests/data/rsa{bits}.der", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../pk/tests/data/rsa{bits}.der", env!("CARGO_MANIFEST_DIR"));
     let rsa = std::fs::read(path).unwrap();
     let alg = hex_bytes("300d06092a864886f70d0101010500");
     seq(&[&[2, 1, 0], &alg, &tlv(4, &rsa)])

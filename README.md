@@ -163,12 +163,15 @@ cargo build --profile fast       # every crate at full speed, for comparing
 Platform-specific code lives in `src/sys/`, one file per OS; only the target's file is
 compiled.
 
-jpm has its own TLS and cryptography, in two crates:
+jpm has its own TLS and cryptography, in three crates:
 
-- `crates/crypto` (`jpm-crypto`): SHA-1/2, HMAC, HKDF, AES-GCM, ChaCha20-Poly1305, X25519,
-  P-256, P-384 and RSA signature checks. It uses the CPU's AES, carry-less multiply and SHA
-  instructions where it has them and constant-time portable code where it does not. Tested
-  against RFC and NIST vectors, the Wycheproof suites, and ring on random inputs.
+- `crates/crypto` (`jpm-crypto`): SHA-1/2, HMAC, HKDF, AES-GCM and ChaCha20-Poly1305, built for
+  speed. It uses the CPU's AES, carry-less multiply and SHA instructions where it has them and
+  constant-time portable code where it does not.
+- `crates/pk` (`jpm-pk`): X25519, P-256, P-384 and RSA signature checks, built for size: they
+  run a few times per connection, not per byte.
+- Both are tested against RFC and NIST vectors, the Wycheproof suites, and ring on random
+  inputs.
 - `crates/tls` (`jpm-tls`): a TLS 1.3 and 1.2 client (ECDHE and AEAD suites only) and Web PKI
   certificate checks, with Mozilla's roots from `webpki-roots`. Tested against rustls-webpki
   and the x509-limbo suite, against rustls and OpenSSL servers, and with a scripted server
