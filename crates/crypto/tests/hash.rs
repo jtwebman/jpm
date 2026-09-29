@@ -478,7 +478,8 @@ fn tls12_prf_matches_reference() {
     }
 }
 
-/// Throughput against ring on 64 MiB. Run with
+/// Throughput against ring: 64 MiB hashed whole, then as 16 KiB and 1 KiB messages. Best of 5,
+/// taking turns so both see the same machine. Run with
 /// `cargo test -p jpm-crypto --release -- --ignored --nocapture bench_hash`.
 #[test]
 #[ignore]
@@ -486,19 +487,26 @@ fn bench_hash() {
     let data = Rng(7).bytes(64 << 20);
     let mb = data.len() as f64 / 1e6;
     for alg in ALGS {
-        let best = |f: &dyn Fn() -> Vec<u8>| {
-            let mut best = f64::MAX;
-            let mut out = Vec::new();
+        for size in [data.len(), 16 << 10, 1 << 10] {
+            let ours = || data.chunks(size).fold(0u8, |acc, m| acc ^ digest(alg, m)[0]);
+            let ring = || {
+                data.chunks(size).fold(0u8, |acc, m| acc ^ ring::digest::digest(ring_digest_alg(alg), m).as_ref()[0])
+            };
+            assert_eq!(ours(), ring());
+            let mut best = [f64::MAX; 2];
             for _ in 0..5 {
-                let t = Instant::now();
-                out = f();
-                best = best.min(t.elapsed().as_secs_f64());
+                for (i, f) in [&ours as &dyn Fn() -> u8, &ring].into_iter().enumerate() {
+                    let t = Instant::now();
+                    std::hint::black_box(f());
+                    best[i] = best[i].min(t.elapsed().as_secs_f64());
+                }
             }
-            (mb / best, out)
-        };
-        let (ours, a) = best(&|| digest(alg, &data).to_vec());
-        let (ring, b) = best(&|| ring::digest::digest(ring_digest_alg(alg), &data).as_ref().to_vec());
-        assert_eq!(a, b);
-        println!("{alg:?}: jpm-crypto {ours:.0} MB/s, ring {ring:.0} MB/s, ratio {:.2}", ring / ours);
+            let (ours, ring) = (mb / best[0], mb / best[1]);
+            println!(
+                "{alg:?} {:>6} B: jpm-crypto {ours:.0} MB/s, ring {ring:.0} MB/s, ours/ring {:.2}",
+                size.min(data.len()),
+                ours / ring
+            );
+        }
     }
 }
