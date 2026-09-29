@@ -113,6 +113,8 @@ pub struct Registry {
     /// Requests served, by path.
     pub hits: Arc<Mutex<Vec<String>>>,
     pub requests: Arc<AtomicUsize>,
+    /// Milliseconds each tarball takes to start.
+    delay: Arc<AtomicUsize>,
 }
 
 impl Registry {
@@ -123,14 +125,21 @@ impl Registry {
         let files = Arc::new(Mutex::new(BTreeMap::new()));
         let hits = Arc::new(Mutex::new(Vec::new()));
         let requests = Arc::new(AtomicUsize::new(0));
-        let (p, f, h, r, u) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone());
+        let delay = Arc::new(AtomicUsize::new(0));
+        let (p, f, h, r, u, d) =
+            (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (p, f, h, r, u) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone());
-                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u));
+                let (p, f, h, r, u, d) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone());
+                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d));
             }
         });
-        Self { url, pkgs, files, hits, requests }
+        Self { url, pkgs, files, hits, requests, delay }
+    }
+
+    /// Every tarball from now on starts `ms` late: downloads outlast the plan.
+    pub fn slow_tarballs(&self, ms: usize) {
+        self.delay.store(ms, Ordering::Relaxed);
     }
 
     /// Answers `path` with `body` from now on.
@@ -166,17 +175,19 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
     let files = Arc::new(Mutex::new(BTreeMap::new()));
     let hits = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::new(AtomicUsize::new(0));
-    let (p, f, h, r, u) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone());
+    let delay = Arc::new(AtomicUsize::new(0));
+    let (p, f, h, r, u, d) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone());
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let (p, f, h, r, u, c) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), config.clone());
+            let (p, f, h, r, u, d, c) =
+                (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), config.clone());
             std::thread::spawn(move || {
                 let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
-                serve(tls, &p, &f, &h, &r, &u)
+                serve(tls, &p, &f, &h, &r, &u, &d)
             });
         }
     });
-    Registry { url, pkgs, files, hits, requests }
+    Registry { url, pkgs, files, hits, requests, delay }
 }
 
 fn serve(
@@ -186,6 +197,7 @@ fn serve(
     hits: &Mutex<Vec<String>>,
     requests: &AtomicUsize,
     base: &str,
+    delay: &AtomicUsize,
 ) {
     let mut reader = BufReader::new(stream);
     loop {
@@ -213,6 +225,10 @@ fn serve(
         requests.fetch_add(1, Ordering::Relaxed);
         // The path, then any credential it came with, for tests that check where tokens go.
         hits.lock().unwrap().push(format!("{path}{auth}"));
+        let ms = delay.load(Ordering::Relaxed);
+        if ms > 0 && path.contains("/-/") {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        }
         let file = files.lock().unwrap().get(&path).cloned();
         let (status, bytes) = match file {
             Some(body) => ("200 OK", body),

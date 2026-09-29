@@ -23,8 +23,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
 use crate::graph::{Package, Resolution};
@@ -67,6 +67,56 @@ pub struct Options<'a> {
     pub tarballs: Option<BTreeMap<String, Option<Stamp>>>,
     /// The project's patches, found by their hash.
     pub patches: &'a [crate::patch::Patch],
+    /// Puts a package in the store, waiting for its download if one is under way. With it,
+    /// entries are built as their packages arrive rather than after the last one. With the
+    /// global store, optional packages must be settled before, as whether they arrived decides
+    /// which entries may be shared; in the project layout each is settled as it is first needed,
+    /// and one that fails is dropped as before. Without it, every package must be in the store.
+    pub fetch: Option<&'a Fetch<'a>>,
+}
+
+/// See `Options::fetch`.
+pub type Fetch<'a> = dyn Fn(&Package) -> Result<()> + Sync + 'a;
+
+/// Downloads under way: which have finished (or failed), and how many workers still run.
+#[derive(Default)]
+pub struct Arrivals {
+    state: Mutex<(HashSet<String>, usize)>,
+    changed: Condvar,
+}
+
+impl Arrivals {
+    pub fn start_workers(&self, n: usize) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).1 += n;
+    }
+
+    /// A download is done with, stored or not.
+    pub fn arrive(&self, integrity: &str) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).0.insert(integrity.to_string());
+        self.changed.notify_all();
+    }
+
+    pub fn worker_done(&self) {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        s.1 = s.1.saturating_sub(1);
+        self.changed.notify_all();
+    }
+
+    /// Until `integrity` is done with, or no worker is left to bring it.
+    pub fn wait(&self, integrity: &str) {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        while s.1 > 0 && !s.0.contains(integrity) {
+            s = self.changed.wait(s).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Until every worker has stopped.
+    pub fn wait_all(&self) {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        while s.1 > 0 {
+            s = self.changed.wait(s).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -184,6 +234,8 @@ struct Linker<'a> {
     counts: Counts,
     copy_only: AtomicBool,
     root_links: Mutex<RootLinks>,
+    /// Optional packages settled while linking (project layout): whether each arrived.
+    settled: Mutex<HashMap<String, bool>>,
 }
 
 pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
@@ -239,7 +291,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         if key.is_empty() || key.starts_with('.') || key.contains(['/', '\\', '\0', ':']) {
             return Err(fail(format!("{id} has an unsafe store key {key:?}")));
         }
-        if !opts.store.has(&pkg.integrity) {
+        // Settled later: a required package when its entry is built, and in the project layout
+        // an optional one when something first needs it.
+        let later = opts.fetch.is_some() && (!pkg.optional || opts.global.is_none());
+        if !later && !opts.store.has(&pkg.integrity) {
             if !pkg.optional {
                 return Err(fail(format!("{id} is not in the store at {}", opts.store.dir.display())));
             }
@@ -297,11 +352,15 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         counts: Counts::default(),
         copy_only: AtomicBool::new(false),
         root_links: Mutex::default(),
+        settled: Mutex::default(),
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
     let ids: Vec<&String> = linker.wanted.keys().collect();
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
+        if !linker.present(entry) {
+            return;
+        }
         let placed = match linker.global_of(entry) {
             Some(global) => linker.materialize_global(entry, global),
             None => linker.materialize(entry, present.contains(&entry.key)),
@@ -327,10 +386,13 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         linker.link_top(top, i == 0)?;
     }
     linker.sweep_temp();
+    let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
+    dropped.extend(settled.iter().filter(|(_, arrived)| !**arrived).map(|(id, _)| id.clone()));
     dropped.sort();
     let names = |shared: bool| {
+        let built = |e: &&Entry| settled.get(&e.pkg.key()) != Some(&false);
         let mut out: Vec<String> =
-            linker.wanted.values().filter(|e| e.shared == shared).map(|e| e.key.clone()).collect();
+            linker.wanted.values().filter(|e| e.shared == shared).filter(built).map(|e| e.key.clone()).collect();
         out.sort();
         out.dedup();
         out
@@ -430,14 +492,41 @@ impl Linker<'_> {
             if self.res.packages.get(&id).is_some_and(|p| p.local.is_some()) {
                 return Err(fail(format!("{}@{} depends on the workspace {name}", pkg.name, pkg.version)));
             }
-            if let Some(dep) = self.wanted.get(&id).filter(|_| name != pkg.name) {
+            if let Some(dep) = self.wanted.get(&id).filter(|d| name != pkg.name && self.present(d)) {
                 out.push((name, dep));
             }
         }
         Ok(out)
     }
 
+    /// Whether an entry's package is there to link to: always, but for an optional package the
+    /// project layout settles as it arrives. One that fails is dropped with a warning, once.
+    fn present(&self, entry: &Entry) -> bool {
+        if !entry.pkg.optional || self.opts.fetch.is_none() || self.opts.global.is_some() {
+            return true;
+        }
+        let id = entry.pkg.key();
+        if let Some(&arrived) = self.settled.lock().unwrap_or_else(PoisonError::into_inner).get(&id) {
+            return arrived;
+        }
+        let arrived = self.ready(entry.pkg);
+        let mut settled = self.settled.lock().unwrap_or_else(PoisonError::into_inner);
+        if let (Err(e), None) = (&arrived, settled.get(&id)) {
+            crate::ui::warn(&format!("skipped optional {id}: {e}"));
+        }
+        *settled.entry(id).or_insert(arrived.is_ok())
+    }
+
+    /// `pkg` in the store, when it may still be arriving.
+    fn ready(&self, pkg: &Package) -> Result<()> {
+        match self.opts.fetch {
+            Some(fetch) if pkg.local.is_none() => fetch(pkg),
+            _ => Ok(()),
+        }
+    }
+
     fn index(&self, entry: &Entry) -> Result<std::sync::Arc<Index>> {
+        self.ready(entry.pkg)?;
         self.opts.store.index(&entry.pkg.integrity).ok_or_else(|| {
             fail(format!("{} is not in the store at {}", entry.pkg.key(), self.opts.store.dir.display()))
         })
@@ -519,6 +608,8 @@ impl Linker<'_> {
 
     fn build(&self, entry: &Entry, temp: &Path) -> Result<()> {
         let pkg = entry.pkg;
+        // Before the directory clone (macOS) as well as the file links.
+        self.ready(pkg)?;
         let nm = temp.join("node_modules");
         let pkg_dir = nm.join(&pkg.name);
         let parent = pkg_dir.parent().unwrap_or(&nm);
@@ -638,6 +729,7 @@ impl Linker<'_> {
     ) -> Result<Vec<(&'static str, String)>> {
         let head = match pkg {
             Some(p) if p.local.is_none() => {
+                self.ready(p)?;
                 self.opts.store.file(&p.integrity, target).ok().and_then(|f| crate::shim::read_head(&f))
             }
             Some(p) => crate::shim::read_head(&self.opts.dir.join(p.local.as_deref().unwrap_or("")).join(target)),
@@ -660,7 +752,7 @@ impl Linker<'_> {
             let Some(pkg) = self.res.packages.get(&id) else { continue };
             let (real, shared) = match (&pkg.local, self.wanted.get(&id)) {
                 (Some(path), _) => (self.opts.dir.join(path), false),
-                (None, Some(entry)) => (self.root_of(entry).join(&entry.home), entry.shared),
+                (None, Some(entry)) if self.present(entry) => (self.root_of(entry).join(&entry.home), entry.shared),
                 _ => continue, // dropped, or dev under production
             };
             let at = nm.join(name);
@@ -755,6 +847,9 @@ impl Linker<'_> {
         let rank = |e: &Entry| (direct.get(&e.pkg.name) == Some(&e.pkg.version), crate::semver::parse(&e.pkg.version));
         let mut pick: BTreeMap<&str, &Entry> = BTreeMap::new();
         for e in self.wanted.values() {
+            if !self.present(e) {
+                continue;
+            }
             let better = pick.get(e.pkg.name.as_str()).is_none_or(|have| {
                 let (a, b) = (rank(e), rank(have));
                 a > b || (a == b && e.key < have.key)

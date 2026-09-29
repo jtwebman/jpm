@@ -1087,3 +1087,45 @@ fn builds_in_the_project_for_frameworks_that_need_it() {
     assert!(out.status.success());
     assert!(link_of(&env.project(), "next").contains("v1"), "{}", link_of(&env.project(), "next"));
 }
+
+#[test]
+fn links_while_downloads_are_under_way() {
+    let r = registry();
+    r.slow_tarballs(300);
+    let env = Env::new(&r);
+    // Entries, dependency links and bins, each built as its packages arrive.
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1", "cli": "1" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+    assert!(env.read("node_modules/@scope/lib/../../b/index.js").contains("b@2.0.0"));
+    assert!(env.exists(if cfg!(windows) { "node_modules/.bin/hello.cmd" } else { "node_modules/.bin/hello" }));
+    if cfg!(windows) {
+        // A shim written before its target arrived would not know to run sh.
+        assert!(env.read("node_modules/.bin/hello.cmd").contains("\"sh\""));
+    }
+    // And again into the global store, from a store that already has every package.
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+}
+
+#[test]
+fn drops_an_optional_package_that_fails_while_linking() {
+    let r = registry();
+    // native-any's tarball is not what the registry's integrity says: its download fails.
+    r.serve("/native-any/-/native-any-1.0.0.tgz", b"not a tarball".to_vec());
+    r.slow_tarballs(200);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "native": "1.0.0", "a": "1.1.0" } }));
+    // The project layout settles optional packages as they arrive.
+    let out = env.ok(&["install", "--no-global-store"]);
+    assert!(out.contains("skipped optional native-any@1.0.0"), "{out}");
+    assert!(env.exists("node_modules/native") && env.read("node_modules/a/index.js").contains("a@1.1.0"));
+    // Nothing links to what did not arrive: not the entry, not the hidden hoist.
+    assert!(!env.exists("node_modules/native/../native-any"));
+    assert!(!env.exists("node_modules/.jpm/node_modules/native-any"));
+    assert!(!entries(&env.project()).iter().any(|e| e.starts_with("native-any@")));
+    // Incomplete, so the next install tries again rather than calling it up to date.
+    let again = env.ok(&["install", "--no-global-store"]);
+    assert!(!again.contains("up to date"), "{again}");
+}

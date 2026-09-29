@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::json::{self, Object, Value};
@@ -404,56 +403,36 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
     }
     ui::phase("start");
-    let store = ctx.store(ctx.opts.verify);
+    let store = Arc::new(ctx.store(ctx.opts.verify));
     let _hold = store.hold(false);
     let platform = Platform::current();
-    let (tx, rx) = mpsc::channel::<(Tarball, String)>();
-    let rx = Mutex::new(rx);
     let prefetching = !ctx.opts.production && !ctx.dedupe;
-    // Set when the plan fails: what is still queued is not downloaded.
-    let stop = AtomicBool::new(false);
-    let lock = std::thread::scope(|scope| -> Result<Lockfile> {
-        if prefetching {
-            for _ in 0..pool::network_threads() {
-                scope.spawn(|| {
-                    loop {
-                        let job = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
-                        let Ok((tarball, integrity)) = job else { return };
-                        if stop.load(Ordering::Relaxed) {
-                            continue;
-                        }
-                        // A failure here is nothing: the fill asks again, and that one is reported.
-                        let _ = store.ensure(&tarball, &integrity);
-                    }
-                });
-            }
+    // Downloads start as the walk picks each package and go on past the plan: linking starts
+    // once the plan is made, each entry waiting only for the packages it reads.
+    let fetcher = Fetcher::start(&store, if prefetching { pool::network_threads() } else { 0 });
+    let skipped: Mutex<BTreeMap<String, bool>> = Mutex::default();
+    let on_pick = |pkg: &Package, from: &str| {
+        let mut skipped = skipped.lock().unwrap_or_else(PoisonError::into_inner);
+        let skip = skipped.get(from).copied().unwrap_or(false)
+            || !runs_on(pkg.os.as_ref(), pkg.cpu.as_ref(), pkg.libc.as_ref(), &platform);
+        skipped.insert(pkg.key(), skip);
+        if !skip && !pkg.integrity.is_empty() {
+            let platform_built = pkg.os.is_some() || pkg.cpu.is_some() || pkg.libc.is_some();
+            fetcher.queue(
+                tarball_of(&dir, &pkg.resolved, pkg.source.as_deref()),
+                pkg.integrity.clone(),
+                platform_built,
+            );
         }
-        let skipped: Mutex<BTreeMap<String, bool>> = Mutex::default();
-        let tx = Mutex::new(tx);
-        let on_pick = |pkg: &Package, from: &str| {
-            let mut skipped = skipped.lock().unwrap_or_else(PoisonError::into_inner);
-            let skip = skipped.get(from).copied().unwrap_or(false)
-                || !runs_on(pkg.os.as_ref(), pkg.cpu.as_ref(), pkg.libc.as_ref(), &platform);
-            skipped.insert(pkg.key(), skip);
-            if !skip && !pkg.integrity.is_empty() {
-                let _ = tx
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .send((tarball_of(&dir, &pkg.resolved, pkg.source.as_deref()), pkg.integrity.clone()));
-            }
-        };
-        let walk_pick: Option<&resolve::OnPick> = if prefetching { Some(&on_pick) } else { None };
-        let planned = plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone()))
-            // A required package that cannot run here fails now, not once the prefetch is done.
-            .and_then(|lock| filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &platform).map(|_| lock));
-        if planned.is_err() {
-            stop.store(true, Ordering::Relaxed);
-        }
-        ui::phase("planned");
-        drop(tx);
-        planned
-    })?;
-    ui::phase("prefetched");
+    };
+    let walk_pick: Option<&resolve::OnPick> = if prefetching { Some(&on_pick) } else { None };
+    let lock = plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone()))
+        // A required package that cannot run here fails now, not once the prefetch is done.
+        .and_then(|lock| filter_platform(lock::from_lockfile(&lock, &ctx.base_for()), &platform).map(|_| lock));
+    ui::phase("planned");
+    // Nothing more is queued; a failed plan also drops what is still waiting.
+    fetcher.close(lock.is_err());
+    let lock = lock?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
@@ -489,10 +468,27 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
     let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, global.is_some(), &platform);
     let settled = previous.as_ref().is_some_and(|s| s.hash == hash);
-    if !settled {
+    // With downloads under way, nothing is waited for here but, with the global store, the
+    // optional packages: whether they arrived decides which entries may be shared. The rest,
+    // and in the project layout the optional ones too, are waited for as they are needed.
+    let overlap = prefetching && !settled;
+    if overlap && global.is_some() {
+        let optional: Vec<&Package> = wanted.iter().copied().filter(|p| p.optional).collect();
+        for p in &optional {
+            fetcher.arrivals.wait(&p.integrity);
+        }
+        fill(&store, &optional, &dir)?;
+    } else if !overlap && !settled {
         fill(&store, &wanted, &dir)?;
     }
     ui::phase("filled");
+    let fetch = |p: &Package| -> Result<()> {
+        fetcher.arrivals.wait(&p.integrity);
+        match store.ensure(&tarball_of(&dir, &p.resolved, p.source.as_deref()), &p.integrity) {
+            Err(e) if p.source.is_some() => Err(stale(e, p.source.as_deref().unwrap_or(""))),
+            other => other.map(|_| ()),
+        }
+    };
     let inputs = if project.workspaces.is_empty() {
         ctx.lock_text(&dir).map(|text| link::Inputs {
             hash: ctx.inputs_hash(&project, &text),
@@ -539,6 +535,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         inputs,
         tarballs: Some(tarballs.clone()),
         patches: &project.manifest.patches,
+        fetch: if overlap { Some(&fetch) } else { None },
     };
     let outcome = match link::link(&resolution, &options) {
         Err(e) if e.code == "ELINK" && e.message.contains("is not in the store") => {
@@ -673,6 +670,93 @@ fn global_store(ctx: &Ctx, store: &Store) -> Option<PathBuf> {
     let dir = store.links_dir();
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
+}
+
+/// The downloads an install starts while it plans: worker threads fed by `queue`, each package
+/// marked in `arrivals` once it is stored or has failed (a failure is asked again, and reported,
+/// by whoever needs the package). Dropped before the store's lock, it stops the queue and waits
+/// for the workers, so no download writes to the store after the install lets go of it.
+struct Fetcher {
+    jobs: Arc<(Mutex<Jobs>, std::sync::Condvar)>,
+    stop: Arc<AtomicBool>,
+    arrivals: Arc<link::Arrivals>,
+}
+
+/// Two lanes: a package built for a platform (`os`, `cpu` or `libc`) is almost always an
+/// optional one, whose arrival the linker waits for before it starts, and is often the
+/// biggest download (a native binary). It goes first.
+#[derive(Default)]
+struct Jobs {
+    first: std::collections::VecDeque<(Tarball, String)>,
+    rest: std::collections::VecDeque<(Tarball, String)>,
+    closed: bool,
+}
+
+impl Fetcher {
+    fn start(store: &Arc<Store>, workers: usize) -> Self {
+        let jobs = Arc::new((Mutex::new(Jobs::default()), std::sync::Condvar::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let arrivals = Arc::new(link::Arrivals::default());
+        arrivals.start_workers(workers);
+        for _ in 0..workers {
+            let (jobs, store, stop, arrivals) = (jobs.clone(), store.clone(), stop.clone(), arrivals.clone());
+            std::thread::spawn(move || {
+                loop {
+                    let job = {
+                        let mut q = jobs.0.lock().unwrap_or_else(PoisonError::into_inner);
+                        loop {
+                            if let Some(job) = q.first.pop_front().or_else(|| q.rest.pop_front()) {
+                                break Some(job);
+                            }
+                            if q.closed {
+                                break None;
+                            }
+                            q = jobs.1.wait(q).unwrap_or_else(PoisonError::into_inner);
+                        }
+                    };
+                    let Some((tarball, integrity)) = job else { break };
+                    if !stop.load(Ordering::Relaxed) {
+                        let _ = store.ensure(&tarball, &integrity);
+                    }
+                    arrivals.arrive(&integrity);
+                }
+                arrivals.worker_done();
+            });
+        }
+        if workers == 0 {
+            jobs.0.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+        }
+        Self { jobs, stop, arrivals }
+    }
+
+    fn queue(&self, tarball: Tarball, integrity: String, first: bool) {
+        let mut q = self.jobs.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if q.closed {
+            return;
+        }
+        if first {
+            q.first.push_back((tarball, integrity))
+        } else {
+            q.rest.push_back((tarball, integrity))
+        }
+        self.jobs.1.notify_one();
+    }
+
+    /// No more to queue: the workers finish what is queued, or skip it when `stop`.
+    fn close(&self, stop: bool) {
+        if stop {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+        self.jobs.0.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+        self.jobs.1.notify_all();
+    }
+}
+
+impl Drop for Fetcher {
+    fn drop(&mut self) {
+        self.close(true);
+        self.arrivals.wait_all();
+    }
 }
 
 /// Every wanted package in the store. An optional one that fails is skipped with a warning.
