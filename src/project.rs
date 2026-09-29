@@ -44,6 +44,7 @@ impl RootManifest {
                 Some(Value::Object(m)) => m
                     .iter()
                     .map(|(k, v)| match v {
+                        Value::String(s) if s.starts_with("catalog:") => Ok((k.clone(), catalog_range(file, k, s)?)),
                         Value::String(s) => Ok((k.clone(), s.clone())),
                         _ => Err(manifest_error(format!("{}: {name} is not a map of ranges", file.display()))),
                     })
@@ -68,7 +69,8 @@ impl RootManifest {
                 })
                 .collect::<Result<Vec<_>>>()
         })
-        .transpose()?;
+        .transpose()?
+        .or_else(|| pnpm_workspace(file.parent()?)?.get("packages")?.as_array().map(|l| strings(l)));
         let peer_optional = doc
             .get("peerDependenciesMeta")
             .and_then(Value::as_object)
@@ -201,6 +203,80 @@ pub struct Workspace {
     pub name: String,
     pub version: String,
     pub manifest: RootManifest,
+}
+
+// --- pnpm-workspace.yaml and catalogs --------------------------------------------------------
+
+/// `pnpm-workspace.yaml` in `dir`, when there is one: pnpm's list of workspaces (taken when
+/// package.json lists none) and its catalogs.
+fn pnpm_workspace(dir: &Path) -> Option<Object> {
+    let text = std::fs::read_to_string(dir.join("pnpm-workspace.yaml")).ok()?;
+    match crate::foreign::read_yaml(&text) {
+        Ok(Value::Object(o)) => Some(o),
+        _ => None,
+    }
+}
+
+fn strings(list: &[Value]) -> Vec<String> {
+    list.iter().filter_map(Value::as_str).map(str::to_string).collect()
+}
+
+/// Catalog name -> package -> range: `catalog` is `default`, `catalogs` holds the named ones.
+type Catalogs = std::collections::BTreeMap<String, Deps>;
+
+/// A root's catalogs, wherever its package manager keeps them: `pnpm-workspace.yaml`,
+/// `.yarnrc.yml`, or package.json at the top or under `workspaces` (bun). `None` when the
+/// directory defines none.
+fn catalogs_in(dir: &Path) -> Option<Catalogs> {
+    let yarnrc = std::fs::read_to_string(dir.join(".yarnrc.yml")).ok().and_then(|t| crate::foreign::read_yaml(&t).ok());
+    let manifest = std::fs::read_to_string(dir.join("package.json")).ok().and_then(|t| json::parse(&t).ok());
+    let workspaces = manifest.as_ref().and_then(|m| m.get("workspaces")).filter(|w| w.as_object().is_some());
+    let docs = [pnpm_workspace(dir).map(Value::Object), yarnrc, manifest.clone(), workspaces.cloned()];
+    let mut out = Catalogs::new();
+    let mut found = false;
+    for doc in docs.iter().flatten() {
+        let map = |v: &Value| -> Deps {
+            v.as_object()
+                .map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect())
+                .unwrap_or_default()
+        };
+        if let Some(c) = doc.get("catalog") {
+            found = true;
+            out.entry("default".into()).or_default().extend(map(c));
+        }
+        for (name, c) in doc.get("catalogs").and_then(Value::as_object).into_iter().flatten() {
+            found = true;
+            out.entry(name.clone()).or_default().extend(map(c));
+        }
+    }
+    found.then_some(out)
+}
+
+/// The range a `catalog:` or `catalog:<name>` stands for, from the nearest directory at or above
+/// the package.json that defines catalogs: the workspace root.
+fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
+    static FOUND: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<Catalogs>>>> =
+        std::sync::Mutex::new(None);
+    let which = match spec["catalog:".len()..].trim() {
+        "" => "default",
+        other => other,
+    };
+    let start = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
+    let mut cache = FOUND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = cache.get_or_insert_with(Default::default);
+    for dir in start.ancestors().skip(1) {
+        let catalogs = cache.entry(dir.to_path_buf()).or_insert_with(|| catalogs_in(dir));
+        if let Some(catalogs) = catalogs {
+            return catalogs.get(which).and_then(|c| c.get(name)).cloned().ok_or_else(|| {
+                manifest_error(format!(
+                    "{}: {name}@{spec} names no entry: catalog {which} under {} has no {name}",
+                    file.display(),
+                    dir.display()
+                ))
+            });
+        }
+    }
+    Err(manifest_error(format!("{}: {name}@{spec}, but no catalogs are defined here or above", file.display())))
 }
 
 pub fn read_manifest(file: &Path) -> Result<RootManifest> {

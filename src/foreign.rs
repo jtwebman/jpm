@@ -977,20 +977,50 @@ fn truthy(v: Option<&Value>) -> bool {
 }
 
 // --- the YAML pnpm writes ---------------------------------------------------------------
-// Block maps, block lists, flow `{}` and `[]`, quoted and plain scalars. Nothing else appears.
+// Block maps, block lists, flow `{}` and `[]`, quoted and plain scalars. Nothing else appears in
+// a lockfile; a hand-written `pnpm-workspace.yaml` or `.yarnrc.yml` adds comments and lists
+// indented no deeper than their key.
 
 /// Deeper than any lockfile nests; past it the file is hostile, not pnpm's.
 const MAX_DEPTH: usize = 64;
 
+/// The YAML subset above, as JSON values.
+pub fn read_yaml(text: &str) -> Result<Value> {
+    yaml(text)
+}
+
 fn yaml(text: &str) -> Result<Value> {
-    let lines: Vec<&str> =
-        text.split('\n').filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).collect();
+    let lines: Vec<&str> = text.split('\n').map(strip_comment).filter(|l| !l.trim().is_empty()).collect();
     let indent = lines.first().map_or(0, |l| indent_of(l));
     // Written out as JSON for its parser, which indexes a big map's keys: inserting them one by
     // one would scan the map for each, and pnpm's `packages` can hold a hundred thousand.
     let mut out = String::new();
     Yaml { lines, i: 0 }.block(indent, 0, &mut out)?;
     json::parse(&out).map_err(|e| fail(format!("pnpm-lock.yaml cannot be read: {}", e.message)))
+}
+
+/// A line without its comment: a `#` that starts the line or follows a space, outside quotes. A
+/// quote opens only where a scalar can start, so a plain `don't` is no quote.
+fn strip_comment(line: &str) -> &str {
+    let b = line.as_bytes();
+    let mut quote = None;
+    let mut j = 0;
+    while j < b.len() {
+        let c = b[j];
+        let after = |set: &[u8]| j == 0 || set.contains(&b[j - 1]);
+        match quote {
+            // `''` inside single quotes and `\"` inside double quotes are the quote itself.
+            Some(b'\'') if c == b'\'' && b.get(j + 1) == Some(&b'\'') => j += 1,
+            Some(b'"') if c == b'\\' => j += 1,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if (c == b'"' || c == b'\'') && after(b" \t:[{,-") => quote = Some(c),
+            None if c == b'#' && after(b" \t") => return line[..j].trim_end(),
+            None => {}
+        }
+        j += 1;
+    }
+    line.trim_end_matches('\r')
 }
 
 struct Yaml<'a> {
@@ -1027,8 +1057,12 @@ impl Yaml<'_> {
             if !rest.is_empty() {
                 scalar(rest, depth + 1, out)?;
             } else {
-                match self.lines.get(self.i).map(|l| indent_of(l)) {
-                    Some(next) if next > indent => self.block(next, depth + 1, out)?,
+                match self.lines.get(self.i) {
+                    Some(next) if indent_of(next) > indent => self.block(indent_of(next), depth + 1, out)?,
+                    // `key:` then `- item` at the key's own indent: still the key's list.
+                    Some(next) if indent_of(next) == indent && next.trim_start().starts_with("- ") => {
+                        self.block(indent, depth + 1, out)?
+                    }
                     _ => out.push_str("{}"),
                 }
             }
@@ -1278,6 +1312,28 @@ package tool@1.0.0
 
     fn demo() -> Value {
         json!({ "name": "demo", "dependencies": { "tool": "^1.0.0" } })
+    }
+
+    #[test]
+    fn reads_hand_written_yaml() {
+        let doc = read_yaml(
+            "# top\r\npackages:\r\n- 'apps/*' # apps\r\n- \"!**/test/**\"\r\ncatalog:\r\n  a: ^1 # pinned\r\n  b: 'it''s # not a comment'\r\n  c: don't\r\n",
+        )
+        .unwrap();
+        let list: Vec<&str> = doc
+            .get("packages")
+            .and_then(crate::json::Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(crate::json::Value::as_str)
+            .collect();
+        assert_eq!(list, ["apps/*", "!**/test/**"]);
+        let catalog = |k: &str| {
+            doc.get("catalog").and_then(|c| c.get(k)).and_then(crate::json::Value::as_str).map(str::to_string)
+        };
+        assert_eq!(catalog("a").as_deref(), Some("^1"));
+        assert_eq!(catalog("b").as_deref(), Some("it's # not a comment"));
+        assert_eq!(catalog("c").as_deref(), Some("don't"));
     }
 
     #[test]

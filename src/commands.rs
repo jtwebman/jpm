@@ -243,6 +243,13 @@ impl Ctx {
         let scopes = json::str_map(&c.scopes);
         let hosts = Value::Array(vec![c.registry.as_str().into(), scopes]);
         let platform = Platform::current().to_value();
+        // Catalogs can live beside package.json: a change there is a change to its ranges.
+        let root = self.root.clone().unwrap_or_default();
+        let beside: String = ["pnpm-workspace.yaml", ".yarnrc.yml"]
+            .iter()
+            .map(|f| std::fs::read_to_string(root.join(f)).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
         json::to_string(&Value::Array(vec![
             self.opts.production.into(),
             store.display().to_string().into(),
@@ -250,6 +257,7 @@ impl Ctx {
             self.ignore_scripts().into(),
             hosts,
             platform,
+            crate::util::short_hash(&beside).into(),
         ]))
     }
 
