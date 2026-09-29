@@ -1,6 +1,7 @@
 //! jpm: a fast, small package manager for the npm registry.
 
 mod bin;
+mod build;
 mod cli;
 mod commands;
 mod config;

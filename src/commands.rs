@@ -1,6 +1,6 @@
 //! What each command does, without argv parsing or result formatting (that is `cli.rs`).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -21,7 +21,7 @@ use crate::state::{self, Stamp, Stamps, stamp_of};
 use crate::store::{Index, Store, Tarball, store_dir};
 use crate::sys::Platform;
 use crate::ui::{self, info, warn};
-use crate::{foreign, gc, link, pool, run};
+use crate::{build, foreign, gc, link, pool, run};
 
 /// Which workspaces a command acts on.
 #[derive(Debug, Clone)]
@@ -43,6 +43,8 @@ pub struct Opts {
     pub workspaces: Option<Select>,
     pub if_present: bool,
     pub include_root: bool,
+    /// Run no install or lifecycle scripts.
+    pub ignore_scripts: bool,
 }
 
 #[derive(Debug, Default)]
@@ -53,6 +55,10 @@ pub struct InstallResult {
     pub up_to_date: bool,
     pub missing_optional: Vec<String>,
     pub stats: link::Stats,
+    /// Packages whose install scripts ran.
+    pub built: usize,
+    /// Packages with install scripts that did not run, as `name@version`.
+    pub unbuilt: Vec<String>,
 }
 
 impl InstallResult {
@@ -65,6 +71,8 @@ impl InstallResult {
             out.insert(k.clone(), v.clone());
         }
         out.insert("dropped", Value::from(self.missing_optional.clone()));
+        out.insert("built", self.built.into());
+        out.insert("unbuilt", Value::from(self.unbuilt.clone()));
         out.insert("upToDate", self.up_to_date.into());
         out
     }
@@ -235,9 +243,14 @@ impl Ctx {
             self.opts.production.into(),
             store.display().to_string().into(),
             self.wants_global().into(),
+            self.ignore_scripts().into(),
             hosts,
             platform,
         ]))
+    }
+
+    fn ignore_scripts(&self) -> bool {
+        self.opts.ignore_scripts || self.config().ignore_scripts
     }
 
     /// The global virtual store is on unless the config says `global-store=false` or this runs
@@ -422,6 +435,10 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         None
     };
     let packages = wanted.len();
+    let scripts = !ctx.ignore_scripts();
+    let chosen = if scripts { build::chosen(&resolution, &build::trusted(&project.manifest)) } else { HashSet::new() };
+    let build_keys: HashMap<String, String> =
+        chosen.iter().filter_map(|id| Some((id.clone(), keys.get(id)?.clone()))).collect();
     let options = link::Options {
         dir: &dir,
         store: &store,
@@ -430,6 +447,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         hash: hash.clone(),
         keys,
         global,
+        built: chosen.clone(),
         inputs,
         tarballs: Some(tarballs.clone()),
     };
@@ -444,6 +462,18 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     store.register(&dir);
     ui::phase("linked");
+    let built = if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys)? };
+    // The project's own scripts, on an install that changed the tree, as npm runs them.
+    if scripts && edit.is_none() && !outcome.up_to_date {
+        let mut tops = vec![(dir.as_path(), &project.manifest)];
+        tops.extend(project.workspaces.iter().map(|w| (w.dir.as_path(), &w.manifest)));
+        build::run_lifecycle(&tops)?;
+    }
+    let installed = |id: &str| {
+        resolution.packages.get(id).is_some_and(|p| !(ctx.opts.production && p.dev))
+            && !outcome.dropped.iter().any(|d| d == id)
+    };
+    let unbuilt = build::skipped(&resolution, &chosen, &installed);
     Ok(InstallResult {
         packages,
         workspaces,
@@ -451,7 +481,81 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         up_to_date: outcome.up_to_date,
         missing_optional: outcome.dropped,
         stats: outcome.stats,
+        built,
+        unbuilt,
     })
+}
+
+pub struct Approved {
+    /// Lockfile keys newly approved.
+    pub approved: Vec<String>,
+    /// Packages whose install scripts still do not run.
+    pub pending: Vec<String>,
+    /// The install that ran the scripts, when anything was approved.
+    pub install: Option<InstallResult>,
+}
+
+/// `jpm approve <name>...`: trust the names in package.json (`trustedDependencies`), approve
+/// their locked versions' install scripts in jpm.lock, and install, which runs them. A later
+/// version waits for another approval. Without names, what waits for one.
+pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
+    install_tree(&mut Ctx::open(opts.clone(), false)?, None, None)?;
+    let dir = Ctx::open(opts.clone(), false)?.project_dir();
+    let missing = || fail("ELOCK", format!("no {LOCKFILE} in {}", dir.display()));
+    let (mut lock, _) = lock::read_lockfile(&dir)?.ok_or_else(missing)?;
+    let file = dir.join("package.json");
+    let raw = std::fs::read_to_string(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
+    let mut doc = RootManifest::parse(&raw, &file)?.doc;
+    if names.is_empty() {
+        let trusted = build::trusted(&RootManifest::parse(&raw, &file)?);
+        let pending = lock
+            .packages
+            .iter()
+            .filter(|(key, e)| {
+                e.scripts && !(e.build && crate::graph::split_key(key).is_some_and(|(n, _)| trusted.contains(n)))
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        return Ok(Approved { approved: Vec::new(), pending, install: None });
+    }
+    let mut approved = Vec::new();
+    for name in names {
+        let mut found = false;
+        for (key, e) in &mut lock.packages {
+            if e.scripts && crate::graph::split_key(key).is_some_and(|(n, _)| n == name) {
+                found = true;
+                if !e.build {
+                    e.build = true;
+                    approved.push(key.clone());
+                }
+            }
+        }
+        if !found {
+            return Err(fail("ENOSCRIPTS", format!("{name} has no install scripts in {LOCKFILE}")));
+        }
+    }
+    // An approved package is an entry of its own, and so is all that reaches it.
+    for e in lock.packages.values_mut() {
+        e.subgraph = None;
+    }
+    lock::write_lockfile(&dir, &mut lock)?;
+    let mut trusted: Vec<String> = doc
+        .get("trustedDependencies")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    for name in names {
+        if !trusted.contains(name) {
+            trusted.push(name.clone());
+        }
+    }
+    doc.insert("trustedDependencies", Value::from(trusted));
+    let text = project::format_manifest(&doc, &raw);
+    std::fs::write(&file, text).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+    let install = install_tree(&mut Ctx::open(opts, false)?, None, None)?;
+    Ok(Approved { approved, pending: install.unbuilt.clone(), install: Some(install) })
 }
 
 /// The global virtual store's entry directory, when it is wanted and the store can be written.
@@ -693,6 +797,14 @@ fn resolve_lock(
     }
     for w in &resolution.warnings {
         warn(w);
+    }
+    // An approval stays with its version and bytes, however the walk reached them.
+    if let Some(existing) = &existing {
+        for (key, p) in &mut resolution.packages {
+            if let Some(e) = existing.packages.get(key) {
+                p.build |= p.scripts && e.build && e.integrity == p.integrity;
+            }
+        }
     }
     let mut lock = lock::to_lockfile(&resolution, &base);
     if let Some(existing) = &existing {

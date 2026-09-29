@@ -44,6 +44,8 @@ struct Node {
     os: Vec<String>,
     cpu: Vec<String>,
     libc: Vec<String>,
+    /// npm's `hasInstallScript`, pnpm's `requiresBuild`.
+    scripts: bool,
 }
 
 struct Source {
@@ -303,6 +305,7 @@ fn read_npm(text: &str) -> Result<Source> {
             os: list(entry.get("os")),
             cpu: list(entry.get("cpu")),
             libc: list(entry.get("libc")),
+            scripts: truthy(entry.get("hasInstallScript")),
             ..Node::default()
         };
         nodes.push(with_edges(node, &Declared::of(entry), &|dep| match npm_find(&paths, &from, dep) {
@@ -488,6 +491,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
             resolved: field("tarball").map(str::to_string),
             integrity: integrity.to_string(),
             has_bin: pkg.get("hasBin") == Some(&Value::Bool(true)),
+            scripts: truthy(pkg.get("requiresBuild")),
             os: list(pkg.get("os")),
             cpu: list(pkg.get("cpu")),
             libc: list(pkg.get("libc")),
@@ -805,6 +809,9 @@ fn build(
             cpu: node.cpu,
             libc: node.libc,
             subgraph: None,
+            // Scripts come over as known, never as approved: that is `jpm approve`'s to say.
+            scripts: node.scripts,
+            build: false,
         };
         packages.insert(key.clone(), entry);
     }
