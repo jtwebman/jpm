@@ -378,12 +378,21 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     } else if hoist.exists() {
         remove_tree(&hoist);
     }
-    for (i, top) in tops.iter().enumerate() {
+    for top in &tops {
         if let Some(parent) = top.nm.parent() {
             inside(parent, &real_root)?;
         }
         inside(&top.nm, &real_root)?;
-        linker.link_top(top, i == 0)?;
+    }
+    // Each top is a `node_modules` of its own: a workspace's are linked side by side.
+    let failures: Mutex<Vec<Error>> = Mutex::default();
+    pool::run(pool::disk_threads(), tops.iter().enumerate(), |(i, top), _| {
+        if let Err(e) = linker.link_top(top, i == 0) {
+            failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
+        }
+    });
+    if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
+        return Err(e);
     }
     linker.sweep_temp();
     let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
