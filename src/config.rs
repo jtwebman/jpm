@@ -28,6 +28,8 @@ pub struct Config {
     pub global_store: Option<bool>,
     /// `ignore-scripts`: run no install or lifecycle scripts.
     pub ignore_scripts: bool,
+    /// `legacy-peer-deps`: install no peers; link one only to what the tree already has.
+    pub legacy_peer_deps: bool,
 }
 
 /// What the command line says, over every file.
@@ -40,6 +42,7 @@ pub struct Flags {
     pub offline: Option<bool>,
     pub prefer_offline: Option<bool>,
     pub global_store: Option<bool>,
+    pub legacy_peer_deps: Option<bool>,
 }
 
 type Layer = BTreeMap<String, String>;
@@ -228,6 +231,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         // Any layer can turn scripts off and none can turn them back on: a cloned repo's .npmrc
         // must not undo the user's own `ignore-scripts=true`.
         ignore_scripts: layers.iter().any(|l| l.get("ignore-scripts").is_some_and(|v| v == "true")),
+        legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
     })
 }
 
@@ -309,6 +313,9 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     }
     if let Some(g) = flags.global_store {
         cli.insert("global-store".into(), g.to_string());
+    }
+    if let Some(l) = flags.legacy_peer_deps {
+        cli.insert("legacy-peer-deps".into(), l.to_string());
     }
     to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())
 }
