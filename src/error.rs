@@ -43,8 +43,6 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
-
 pub fn io_code(error: &std::io::Error) -> &'static str {
     use std::io::ErrorKind::*;
     match error.kind() {

@@ -531,12 +531,7 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
             Ok(picked
                 .iter()
                 .map(|m| {
-                    let digest = m
-                        .dist
-                        .integrity
-                        .clone()
-                        .or_else(|| m.dist.shasum.as_ref().map(|s| format!("sha1-{s}")))
-                        .unwrap_or_default();
+                    let digest = m.integrity().unwrap_or_default();
                     let digest = if digest.len() > 24 { format!("{}…", &digest[..24]) } else { digest };
                     let line =
                         [format!("{}@{}", m.name, m.version), m.dist.tarball.clone().unwrap_or_default(), digest]

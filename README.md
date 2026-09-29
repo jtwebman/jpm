@@ -177,7 +177,8 @@ jpm has its own TLS and cryptography, in three crates:
   that sends every kind of bad message.
 
 The tests that need the network are ignored by default:
-`cargo test -p jpm-tls --release -- --ignored`.
+`cargo test -p jpm-tls --release --test live -- --ignored` (registries and badssl.com), and
+`--test openssl` for OpenSSL interop, which needs the `openssl` command.
 
 ## Benchmarks
 

@@ -136,10 +136,6 @@ impl Registry {
         pkgs.retain(|old| (&old.name, &old.version) != (&p.name, &p.version));
         pkgs.push(p);
     }
-
-    pub fn hit_count(&self, needle: &str) -> usize {
-        self.hits.lock().unwrap().iter().filter(|h| h.contains(needle)).count()
-    }
 }
 
 fn serve(stream: TcpStream, pkgs: &Mutex<Vec<Pkg>>, hits: &Mutex<Vec<String>>, requests: &AtomicUsize, base: &str) {
