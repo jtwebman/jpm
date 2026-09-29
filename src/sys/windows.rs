@@ -198,6 +198,42 @@ pub fn leave_interrupts_to_children() {
     unsafe { SetConsoleCtrlHandler(Some(handled), 1) };
 }
 
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetConsoleMode(console: *mut std::ffi::c_void, mode: *mut u32) -> i32;
+    fn SetConsoleMode(console: *mut std::ffi::c_void, mode: u32) -> i32;
+}
+
+/// A console takes escape sequences once asked to (Windows 10 and later); Windows Terminal
+/// already does. Not a console (a pipe, mintty): false.
+pub fn vt() -> bool {
+    use std::os::windows::io::AsRawHandle;
+    const VIRTUAL_TERMINAL_PROCESSING: u32 = 0x4;
+    let console = std::io::stderr().as_raw_handle();
+    let mut mode = 0;
+    // SAFETY: stderr's handle, live for the process; each call reads or sets only its mode.
+    unsafe {
+        GetConsoleMode(console, &mut mode) != 0
+            && (mode & VIRTUAL_TERMINAL_PROCESSING != 0
+                || SetConsoleMode(console, mode | VIRTUAL_TERMINAL_PROCESSING) != 0)
+    }
+}
+
+static UNDO: std::sync::Mutex<&str> = std::sync::Mutex::new("");
+
+/// Runs on a thread of its own; not handled, so the default handler ends the process next.
+unsafe extern "system" fn undo_then_exit(_event: u32) -> i32 {
+    let text = *UNDO.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _ = io::Write::write_all(&mut io::stderr(), text.as_bytes());
+    0
+}
+
+pub fn on_interrupt(undo: Option<&'static str>) {
+    *UNDO.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = undo.unwrap_or("");
+    // SAFETY: registers or removes a handler that only writes to stderr.
+    unsafe { SetConsoleCtrlHandler(Some(undo_then_exit), i32::from(undo.is_some())) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

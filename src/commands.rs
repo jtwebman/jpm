@@ -403,6 +403,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
     }
     ui::phase("start");
+    let progress = ui::progress();
     let store = Arc::new(ctx.store(ctx.opts.verify));
     let _hold = store.hold(false);
     let platform = Platform::current();
@@ -548,6 +549,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     store.register(&dir);
     ui::phase("linked");
+    // Install scripts write to the terminal themselves.
+    drop(progress);
     let built = if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys)? };
     // The project's own scripts, on an install that changed the tree, as npm runs them.
     if scripts && edit.is_none() && !outcome.up_to_date {
@@ -719,6 +722,7 @@ impl Fetcher {
                         let _ = store.ensure(&tarball, &integrity);
                     }
                     arrivals.arrive(&integrity);
+                    ui::count(&ui::FETCHED, 1);
                 }
                 arrivals.worker_done();
             });
@@ -739,6 +743,7 @@ impl Fetcher {
         } else {
             q.rest.push_back((tarball, integrity))
         }
+        ui::count(&ui::TO_FETCH, 1);
         self.jobs.1.notify_one();
     }
 
@@ -761,8 +766,11 @@ impl Drop for Fetcher {
 
 /// Every wanted package in the store. An optional one that fails is skipped with a warning.
 fn fill(store: &Store, wanted: &[&Package], dir: &Path) -> Result<()> {
+    ui::count(&ui::TO_FETCH, wanted.len());
     let results = pool::map(pool::network_threads(), wanted.to_vec(), |p| {
-        (p, store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity))
+        let got = store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity);
+        ui::count(&ui::FETCHED, 1);
+        (p, got)
     });
     for (p, r) in results {
         let Err(e) = r else { continue };

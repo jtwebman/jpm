@@ -1269,3 +1269,56 @@ fn drops_an_optional_package_that_fails_while_linking() {
     let again = env.ok(&["install", "--no-global-store"]);
     assert!(!again.contains("up to date"), "{again}");
 }
+
+#[test]
+fn shows_progress_only_on_a_terminal() {
+    let r = registry();
+    r.slow_tarballs(300);
+    let manifest = json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1" } });
+    // Piped, as here: no progress, however long the install takes.
+    let env = Env::new(&r);
+    env.manifest(manifest.clone());
+    let out = env.command(&["install"]).env_remove("CI").env("TERM", "xterm").output().unwrap();
+    assert!(out.status.success());
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!text.contains('\x1b') && text.contains("Installed"), "{text:?}");
+    // On a terminal: a pseudo-terminal from util-linux's `script`, where there is one.
+    if !cfg!(target_os = "linux") || std::process::Command::new("script").arg("-V").output().is_err() {
+        return;
+    }
+    // `line` runs in a shell on the terminal; what the terminal showed, and whether it succeeded.
+    let on_a_terminal = |line: &str, ci: bool| {
+        let env = Env::new(&r);
+        env.manifest(manifest.clone());
+        let mut c = std::process::Command::new("script");
+        c.args(["-qec", &line.replace("jpm", env!("CARGO_BIN_EXE_jpm")), "/dev/null"]);
+        for (k, v) in env.command(&[]).get_envs() {
+            if let Some(v) = v {
+                c.env(k, v);
+            }
+        }
+        c.current_dir(env.project()).env_remove("CI").env("TERM", "xterm").env("WT_SESSION", "1");
+        if ci {
+            c.env("CI", "true");
+        }
+        let out = c.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let (ok, text) = on_a_terminal("jpm install", false);
+    assert!(ok && text.contains("\rjpm: ") && text.contains("fetched"), "a progress line: {text:?}");
+    assert!(text.contains("\x1b]9;4;"), "the terminal's progress report: {text:?}");
+    // Both taken off before the summary.
+    let summary = text.find("Installed").unwrap();
+    assert!(text[..summary].ends_with("\r\x1b[K\x1b]9;4;0\x1b\\"), "{text:?}");
+    for (line, ci) in
+        [("jpm install", true), ("jpm install --silent", false), ("jpm --json", false), ("jpm --no-progress", false)]
+    {
+        let (ok, text) = on_a_terminal(line, ci);
+        assert!(ok && !text.contains("\x1b]9;4") && !text.contains("\rjpm: "), "{line} ci={ci}: {text:?}");
+    }
+    // Ctrl+C, once the line is up, takes it and the report off, and still ends jpm.
+    r.slow_tarballs(3000);
+    let (ok, text) = on_a_terminal("timeout -s INT 0.5 jpm install", false);
+    assert!(!ok && text.contains("\rjpm: "), "{text:?}");
+    assert!(text.ends_with("\r\x1b[K\x1b]9;4;0\x1b\\"), "{text:?}");
+}
