@@ -241,24 +241,24 @@ fn expand(op: &str, q: &Partial, inc_pr: bool) -> Vec<Comparator> {
     };
     if op == "^" || op == "~" {
         let low = ge(ma, q.minor.unwrap_or(0), q.patch.unwrap_or(0), pre);
-        let Some(mi) = q.minor else { return vec![low, lt(ma + 1, 0, 0)] };
+        let Some(mi) = q.minor else { return vec![low, lt(ma.saturating_add(1), 0, 0)] };
         if op == "~" {
-            return vec![low, lt(ma, mi + 1, 0)];
+            return vec![low, lt(ma, mi.saturating_add(1), 0)];
         }
         if ma != 0 {
-            return vec![low, lt(ma + 1, 0, 0)];
+            return vec![low, lt(ma.saturating_add(1), 0, 0)];
         }
         // A caret on 0.x pins the minor, on 0.0.x the patch.
         return match q.patch {
             Some(p) if mi == 0 => vec![low, lt(0, 0, p + 1)],
-            _ => vec![low, lt(0, mi + 1, 0)],
+            _ => vec![low, lt(0, mi.saturating_add(1), 0)],
         };
     }
     if partial {
         if op.is_empty() || op == "=" {
             return match q.minor {
-                None => vec![ge(ma, 0, 0, pre), lt(ma + 1, 0, 0)],
-                Some(mi) => vec![ge(ma, mi, 0, pre), lt(ma, mi + 1, 0)],
+                None => vec![ge(ma, 0, 0, pre), lt(ma.saturating_add(1), 0, 0)],
+                Some(mi) => vec![ge(ma, mi, 0, pre), lt(ma, mi.saturating_add(1), 0)],
             };
         }
         // A comparator against a partial version shifts to the next whole range.
@@ -304,8 +304,8 @@ fn hyphen(a: &Partial, b: &Partial, inc_pr: bool) -> Vec<Comparator> {
     }
     if let Some(ma) = b.major {
         match (b.minor, b.patch) {
-            (None, _) => out.push(lt(ma + 1, 0, 0)),
-            (Some(mi), None) => out.push(lt(ma, mi + 1, 0)),
+            (None, _) => out.push(lt(ma.saturating_add(1), 0, 0)),
+            (Some(mi), None) => out.push(lt(ma, mi.saturating_add(1), 0)),
             (Some(mi), Some(p)) if b.pre.is_empty() && inc_pr => out.push(lt(ma, mi, p + 1)),
             (Some(mi), Some(p)) => {
                 out.push(Comparator { op: Op::Le, v: Version::new(ma, mi, p, b.pre.clone()) });
@@ -429,6 +429,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_numbers_do_not_overflow() {
+        let max = u64::MAX;
+        for range in
+            [format!("^{max}"), format!("~{max}.0"), format!("{max}.x"), format!("0.{max}.x"), format!("~0.{max}")]
+        {
+            let _ = valid_range(&range);
+            let _ = satisfies("1.0.0", &range);
+        }
+    }
 
     #[test]
     fn parses_versions() {

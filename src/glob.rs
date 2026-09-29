@@ -30,18 +30,46 @@ fn segment(p: &[u8], s: &[u8]) -> bool {
     wild(p, s)
 }
 
+/// Iterative, with one backtrack point per `*`: linear in practice, where recursion on every
+/// `*` would take exponential time on a pattern like `*a*a*a*a*b` from a package.json.
 fn wild(p: &[u8], s: &[u8]) -> bool {
-    match p.first() {
-        None => s.is_empty(),
-        Some(b'*') => (0..=s.len()).any(|i| wild(&p[1..], &s[i..])),
-        Some(b'?') => !s.is_empty() && wild(&p[1..], &s[1..]),
-        Some(b'[') => match class(&p[1..], s.first().copied()) {
-            Some((true, used)) => wild(&p[1 + used..], &s[1..]),
-            Some((false, _)) => false,
-            None => s.first() == Some(&b'[') && wild(&p[1..], &s[1..]),
+    let (mut pi, mut si) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while si < s.len() {
+        if p.get(pi) == Some(&b'*') {
+            star = Some((pi, si));
+            pi += 1;
+            continue;
+        }
+        if let Some(used) = one(&p[pi..], s[si]) {
+            pi += used;
+            si += 1;
+            continue;
+        }
+        match star {
+            Some((sp, ss)) => {
+                pi = sp + 1;
+                si = ss + 1;
+                star = Some((sp, ss + 1));
+            }
+            None => return false,
+        }
+    }
+    p[pi..].iter().all(|c| *c == b'*')
+}
+
+/// Whether the pattern's next token matches `c`, and how many pattern bytes it spans.
+fn one(p: &[u8], c: u8) -> Option<usize> {
+    match p.first()? {
+        b'*' => None,
+        b'?' => Some(1),
+        b'[' => match class(&p[1..], Some(c)) {
+            Some((true, used)) => Some(1 + used),
+            Some((false, _)) => None,
+            None => (c == b'[').then_some(1),
         },
-        Some(b'\\') if p.len() > 1 => s.first() == Some(&p[1]) && wild(&p[2..], &s[1..]),
-        Some(c) => s.first() == Some(c) && wild(&p[1..], &s[1..]),
+        b'\\' if p.len() > 1 => (p[1] == c).then_some(2),
+        x => (*x == c).then_some(1),
     }
 }
 
@@ -69,10 +97,25 @@ fn class(p: &[u8], c: Option<u8>) -> Option<(bool, usize)> {
     None
 }
 
-/// `{a,b}` expanded, nested too: `x{a,{b,c}}` is `xa`, `xb`, `xc`.
-fn braces(pattern: &str) -> Vec<String> {
+/// Brace alternatives kept at most: `{a,b}` thirty times over is a billion patterns otherwise.
+const MAX_BRACES: usize = 1024;
+
+/// `{a,b}` expanded, nested too: `x{a,{b,c}}` is `xa`, `xb`, `xc`. At most `MAX_BRACES`.
+pub fn braces(pattern: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    expand_braces(pattern, &mut out);
+    out
+}
+
+fn expand_braces(pattern: &str, out: &mut Vec<String>) {
+    if out.len() >= MAX_BRACES {
+        return;
+    }
     let bytes = pattern.as_bytes();
-    let Some(open) = bytes.iter().position(|b| *b == b'{') else { return vec![pattern.to_string()] };
+    let Some(open) = bytes.iter().position(|b| *b == b'{') else {
+        out.push(pattern.to_string());
+        return;
+    };
     let mut depth = 0;
     let mut commas = Vec::new();
     let mut close = None;
@@ -90,13 +133,18 @@ fn braces(pattern: &str) -> Vec<String> {
             _ => {}
         }
     }
-    let Some(close) = close.filter(|_| !commas.is_empty()) else { return vec![pattern.to_string()] };
+    let Some(close) = close.filter(|_| !commas.is_empty()) else {
+        out.push(pattern.to_string());
+        return;
+    };
     let (head, tail) = (&pattern[..open], &pattern[close + 1..]);
     let mut starts = vec![open + 1];
     starts.extend(commas.iter().map(|c| c + 1));
     let mut ends = commas.clone();
     ends.push(close);
-    starts.iter().zip(&ends).flat_map(|(s, e)| braces(&format!("{head}{}{tail}", &pattern[*s..*e]))).collect()
+    for (s, e) in starts.iter().zip(&ends) {
+        expand_braces(&format!("{head}{}{tail}", &pattern[*s..*e]), out);
+    }
 }
 
 /// The directories under `root` that `pattern` matches and no `exclude` pattern does, as
@@ -133,7 +181,8 @@ fn walk(dir: &Path, rel: String, pat: &[String], out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "node_modules" || !entry.path().is_dir() {
+        // Real directories only: a symlink loop under `**` would never end.
+        if name == "node_modules" || !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
         if first == "**" {
@@ -167,5 +216,32 @@ mod tests {
     fn expands_braces() {
         assert_eq!(braces("a{b,{c,d}}e"), ["abe", "ace", "ade"]);
         assert_eq!(braces("no"), ["no"]);
+        // Thirty pairs would be 2^30 patterns: capped, and quick.
+        let start = std::time::Instant::now();
+        assert_eq!(braces(&"{a,b}".repeat(30)).len(), MAX_BRACES);
+        assert!(start.elapsed().as_secs() < 1);
+    }
+
+    #[test]
+    fn matches_stars_in_linear_time() {
+        let start = std::time::Instant::now();
+        assert!(!matches(&format!("{}b", "*a".repeat(30)), &"a".repeat(80)));
+        assert!(start.elapsed().as_millis() < 100);
+        assert!(matches("p/*x*y", "p/axbby"));
+        assert!(matches("p/a*", "p/a"));
+        assert!(!matches("p/a*b", "p/ab/c"));
+        assert!(matches("p/\\*", "p/*"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn never_follows_symlinks_under_stars() {
+        let root = std::env::temp_dir().join(format!("jpm-glob-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("packages/a")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("packages/loop")).unwrap();
+        std::os::unix::fs::symlink("/", root.join("packages/out")).unwrap();
+        assert_eq!(expand(&root, "packages/**", &[]), ["packages", "packages/a"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

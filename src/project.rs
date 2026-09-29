@@ -212,7 +212,8 @@ fn patterns(m: &RootManifest) -> Result<(Vec<String>, Vec<String>)> {
     for raw in m.workspaces.iter().flatten() {
         let bangs = raw.len() - raw.trim_start_matches('!').len();
         let body = raw[bangs..].trim_start_matches("./").trim_start_matches('/');
-        if body.split('/').any(|p| p == "..") {
+        // After braces too: `{../x,y}` hides a `..` from a plain look.
+        if glob::braces(body).iter().any(|b| b.split('/').any(|p| p == "..")) {
             return Err(workspace_error(&format!("workspace pattern {raw} reaches outside the project")));
         }
         if bangs % 2 == 1 {
@@ -400,6 +401,17 @@ fn workspace_error(message: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_workspace_patterns_inside() {
+        for bad in ["../sib", "a/../../x", "{../sib,x}", "p/{a,{b,../../c}}"] {
+            let text = format!("{{\"workspaces\":[\"{bad}\"]}}");
+            let m = RootManifest::parse(&text, Path::new("package.json")).unwrap();
+            assert!(patterns(&m).unwrap_err().message.contains("reaches outside"), "{bad}");
+        }
+        let m = RootManifest::parse(r#"{"workspaces":["packages/{a,b}"]}"#, Path::new("package.json")).unwrap();
+        assert_eq!(patterns(&m).unwrap().0, ["packages/{a,b}"]);
+    }
 
     #[test]
     fn edits_keep_the_file_shape() {
