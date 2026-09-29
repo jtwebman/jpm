@@ -886,7 +886,9 @@ pub fn tree_standing(dir: &Path, st: &State) -> bool {
             return false;
         }
     }
-    // Links into the global store stand only while their entries do: a store can be wiped.
+    // Links into the global store stand only while their entries do: a store can be wiped or
+    // pruned. The direct ones are enough: an entry's name covers everything below it, so a
+    // prune that keeps it keeps its dependencies too.
     if !st.shared.is_empty() && !root.links.keys().all(|name| nm.join(name).is_dir()) {
         return false;
     }

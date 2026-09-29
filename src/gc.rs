@@ -1,15 +1,16 @@
 //! Reclaiming space: a project's stale `.jpm` entries, and store content nothing can use.
 //! Mark and sweep, never refcounts: a refcount survives neither a second jpm running nor
-//! `rm -rf node_modules`. Nothing written in the last hour is touched, to stay clear of a
-//! running install.
+//! `rm -rf node_modules`. The marks come from every project registered with the store: the
+//! global entries its install state names and the packages its lockfile names. Nothing written
+//! in the last hour is touched, and the store's lock keeps a prune and an install apart.
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::store::remove_tree;
-use crate::sys;
+use crate::store::{Store, remove_tree};
+use crate::{lock, state, sys};
 
 const GRACE: Duration = Duration::from_secs(3600);
 
@@ -63,9 +64,47 @@ pub fn sweep_entries(dir: &Path, keep: &HashSet<String>) -> Swept {
     out
 }
 
-/// Store entries with no index (a torn unpack), indexes whose directory is gone, and temp
-/// directories of dead processes.
-pub fn prune_store(pkg_root: &Path, tmp: &Path) -> Swept {
+/// What the registered projects use: global entry names, and the store directories of the
+/// packages their lockfiles name. A project gone, or no longer installed from this store, is
+/// dropped from the register.
+pub fn mark(store: &Store) -> (HashSet<String>, HashSet<PathBuf>) {
+    let (mut shared, mut used) = (HashSet::new(), HashSet::new());
+    for e in fs::read_dir(store.projects_dir()).into_iter().flatten().flatten() {
+        let dir = PathBuf::from(fs::read_to_string(e.path()).unwrap_or_default());
+        let Some(st) = state::read(&dir).filter(|st| Path::new(&st.store) == store.dir) else {
+            let _ = fs::remove_file(e.path());
+            continue;
+        };
+        shared.extend(st.shared);
+        // A lockfile that cannot be read marks nothing: store content costs only a download.
+        if let Ok(Some((lock, _))) = lock::read_lockfile(&dir) {
+            used.extend(lock.packages.values().filter_map(|p| store.pkg_dir(&p.integrity).ok()));
+        }
+    }
+    (shared, used)
+}
+
+/// Global entries no registered project uses, and temp entries of dead processes.
+pub fn sweep_shared(links: &Path, keep: &HashSet<String>) -> Swept {
+    let mut out = Swept::default();
+    for e in fs::read_dir(links).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let gone = match name.strip_prefix(".tmp-") {
+            Some(rest) => rest.split('-').next().and_then(|p| p.parse::<u32>().ok()).is_some_and(|p| !sys::alive(p)),
+            None => !name.starts_with('.') && !keep.contains(&name),
+        };
+        if gone && !young(&e.path()) {
+            out.bytes += freed(&e.path());
+            remove_tree(&e.path());
+            out.removed += 1;
+        }
+    }
+    out
+}
+
+/// Store entries no registered project's lockfile names or with no index (a torn unpack),
+/// indexes whose directory is gone, and temp directories of dead processes.
+pub fn prune_store(pkg_root: &Path, tmp: &Path, used: &HashSet<PathBuf>) -> Swept {
     let mut out = Swept::default();
     for shard in fs::read_dir(pkg_root).into_iter().flatten().flatten() {
         let names: HashSet<String> = fs::read_dir(shard.path())
@@ -78,12 +117,14 @@ pub fn prune_store(pkg_root: &Path, tmp: &Path) -> Swept {
             let path = shard.path().join(name);
             let orphan = match name.strip_suffix(".idx") {
                 Some(dir) => !names.contains(dir),
-                None => !name.ends_with(".tmp") && !names.contains(&format!("{name}.idx")),
+                None => !name.ends_with(".tmp") && (!used.contains(&path) || !names.contains(&format!("{name}.idx"))),
             };
             if orphan && !young(&path) {
                 out.bytes += freed(&path);
                 if path.is_dir() {
                     remove_tree(&path);
+                    // The index goes too: without its files it would claim content that is gone.
+                    let _ = fs::remove_file(shard.path().join(format!("{name}.idx")));
                 } else {
                     let _ = fs::remove_file(&path);
                 }
@@ -122,9 +163,14 @@ mod tests {
         fs::create_dir_all(shard.join("torn")).unwrap();
         fs::create_dir_all(shard.join("fresh")).unwrap();
         age(&shard.join("torn"));
-        let out = prune_store(&root.join("pkg"), &root.join("tmp"));
-        assert_eq!(out.removed, 1);
+        fs::create_dir_all(shard.join("unused")).unwrap();
+        fs::write(shard.join("unused.idx"), "x").unwrap();
+        age(&shard.join("unused"));
+        let used: HashSet<PathBuf> = [shard.join("kept")].into();
+        let out = prune_store(&root.join("pkg"), &root.join("tmp"), &used);
+        assert_eq!(out.removed, 2);
         assert!(shard.join("kept").exists() && shard.join("fresh").exists() && !shard.join("torn").exists());
+        assert!(!shard.join("unused").exists() && !shard.join("unused.idx").exists());
         remove_tree(&root);
     }
 

@@ -99,11 +99,41 @@ free_mb() { df -Pm "$WORK" | awk 'NR==2 {print $4}'; }
 # fast. Both follow symlinks and dedupe by inode: an isolated layout holds the
 # real directory *and* symlinks pointing at it, and aube symlinks its whole tree
 # out to a global store, so a plain count is not comparable across managers.
+# A package linked into a global store has its own dependencies beside it there,
+# not under it, so every node_modules a link leads into is walked too.
+link_roots() {
+  node -e '
+    const fs = require("fs");
+    const seen = new Set(), queue = [process.argv[1]];
+    while (queue.length) {
+      const dir = queue.pop();
+      if (seen.has(dir)) continue;
+      seen.add(dir);
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch {}
+      for (const name of names) {
+        const at = dir + "/" + name;
+        let links = [at];
+        if (name.startsWith("@")) try { links = fs.readdirSync(at).map((n) => at + "/" + n); } catch {}
+        for (const link of links) {
+          try {
+            if (!fs.lstatSync(link).isSymbolicLink()) continue;
+            const real = fs.realpathSync(link), i = real.lastIndexOf("/node_modules/");
+            if (i >= 0) queue.push(real.slice(0, i) + "/node_modules");
+          } catch {}
+        }
+      }
+    }
+    console.log([...seen].join("\n"));
+  ' "$1"
+}
+
 tree_stats() {
-  local proj="$1" bytes=0 pkgs=0
+  local proj="$1" bytes=0 pkgs=0 roots
   if [ -d "$proj/node_modules" ]; then
-    bytes="$(timeout 120 du -sbL "$proj/node_modules" 2>/dev/null | awk '{print $1}')"
-    pkgs="$(timeout 120 find -L "$proj/node_modules" -name package.json -not -path '*/.bin/*' \
+    mapfile -t roots < <(link_roots "$proj/node_modules")
+    bytes="$(timeout 120 du -sbLc "${roots[@]}" 2>/dev/null | awk 'END {print $1}')"
+    pkgs="$(timeout 120 find -L "${roots[@]}" -name package.json -not -path '*/.bin/*' \
               -printf '%i\n' 2>/dev/null | sort -u | wc -l)"
   fi
   echo "${bytes:-0} ${pkgs:-0}"

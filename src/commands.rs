@@ -315,6 +315,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
                 st.stamps = stamps;
                 let _ = state::write(&dir, &st);
             }
+            // A copied project registers on its first install, even one with nothing to do.
+            ctx.store(false).register(&dir);
             let summary = st.summary.clone().unwrap_or_default();
             for w in &summary.warnings {
                 warn(w);
@@ -323,13 +325,14 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
                 packages: summary.packages,
                 other_platforms: summary.other_platforms,
                 up_to_date: true,
-                stats: link::Stats { reused: st.entries.len(), ..link::Stats::default() },
+                stats: link::Stats { reused: st.entries.len() + st.shared.len(), ..link::Stats::default() },
                 ..InstallResult::default()
             });
         }
     }
     ui::phase("start");
     let store = ctx.store(ctx.opts.verify);
+    let _hold = store.hold(false);
     let platform = Platform::current();
     let (tx, rx) = mpsc::channel::<(Tarball, String)>();
     let rx = Mutex::new(rx);
@@ -441,6 +444,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
         other => other?,
     };
+    store.register(&dir);
     ui::phase("linked");
     Ok(InstallResult {
         packages,
@@ -1071,6 +1075,7 @@ impl Pruned {
     pub fn to_value(&self) -> Value {
         json::obj([
             ("entries", self.entries.as_ref().map_or(Value::Null, gc::Swept::to_value)),
+            ("shared", self.shared.to_value()),
             ("store", self.store.to_value()),
         ])
     }
@@ -1120,6 +1125,7 @@ pub fn fetch_specs(specs: &[String], opts: Opts) -> Result<Vec<Fetched>> {
 #[derive(Debug)]
 pub struct Pruned {
     pub entries: Option<gc::Swept>,
+    pub shared: gc::Swept,
     pub store: gc::Swept,
 }
 
@@ -1128,7 +1134,15 @@ pub fn prune(opts: Opts) -> Result<Pruned> {
     let dir = ctx.project_dir();
     let store = ctx.store(false);
     let entries = state::read(&dir).map(|s| gc::sweep_entries(&dir, &s.entries.into_iter().collect()));
-    Ok(Pruned { entries, store: gc::prune_store(&store.pkg_root(), &store.tmp_dir()) })
+    if entries.is_some() {
+        store.register(&dir);
+    }
+    let Some(_hold) = store.hold(true) else {
+        return Ok(Pruned { entries, shared: gc::Swept::default(), store: gc::Swept::default() });
+    };
+    let (shared, used) = gc::mark(&store);
+    let shared = gc::sweep_shared(&store.links_dir(), &shared);
+    Ok(Pruned { entries, shared, store: gc::prune_store(&store.pkg_root(), &store.tmp_dir(), &used) })
 }
 
 // --- run and exec ---------------------------------------------------------------------------
