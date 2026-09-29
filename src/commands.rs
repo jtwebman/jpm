@@ -296,17 +296,26 @@ impl Ctx {
         self.opts.flags.global_store.or(env).or(self.config().global_store)
     }
 
-    fn stamps(&mut self, dir: &Path) -> Option<Stamps> {
+    fn stamps(&mut self, project: &Project) -> Option<Stamps> {
+        let dir = &project.dir;
         let lock = match &self.foreign_read {
             Some((_, stamp)) => stamp.clone(),
             None => stamp_of(&self.lock_source(dir).ok()?.0),
         }?;
         let manifest = stamp_of(&dir.join("package.json"))?;
-        Some(Stamps { lock, manifest, settings: self.settings() })
+        let mut workspaces = String::new();
+        for w in &project.workspaces {
+            workspaces.push_str(&format!("{}\n{}\n", w.path, stamp_of(&w.dir.join("package.json"))?.join(" ")));
+        }
+        if !workspaces.is_empty() {
+            workspaces = crate::util::short_hash(&workspaces);
+        }
+        Some(Stamps { lock, manifest, workspaces, settings: self.settings() })
     }
 
     fn inputs_hash(&self, project: &Project, lock_text: &str) -> String {
-        state::inputs_hash(lock_text, &project.manifest.doc, &self.settings())
+        let workspaces = project.workspaces.iter().map(|w| (w.path.as_str(), &w.manifest.doc));
+        state::inputs_hash(lock_text, &project.manifest.doc, workspaces, &self.settings())
     }
 }
 
@@ -367,11 +376,18 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     // Only from jpm.lock itself (or frozen): any other lockfile is to be brought over first.
     let source = ctx.lock_source(&dir)?.0;
     let own = ctx.opts.frozen || (source.file_name().is_some_and(|n| n == LOCKFILE) && lock::is_current(&source));
-    if let Some(st) = previous
-        .as_ref()
-        .filter(|s| own && s.inputs.is_some() && edit.is_none() && !ctx.dedupe && project.workspaces.is_empty())
+    // Every top but the root a workspace: a `file:` directory walked as one is not stamped, so
+    // its package.json is read, and the lockfile checked against it, on every install.
+    let paths: HashSet<&str> = project.workspaces.iter().map(|w| w.path.as_str()).collect();
+    let only_workspaces = |s: &state::State| {
+        s.workspaces.len() == paths.len() && s.workspaces.iter().all(|(p, _)| paths.contains(p.as_str()))
+    };
+    if let Some(st) =
+        previous.as_ref().filter(|s| own && s.inputs.is_some() && edit.is_none() && !ctx.dedupe && only_workspaces(s))
     {
-        let stamps = ctx.stamps(&dir);
+        // A workspace added, removed or edited changes the stamps (a glob matching a new
+        // directory too: the project was loaded, globs and all) and the inputs' hash.
+        let stamps = ctx.stamps(&project);
         let stamped = stamps.as_ref().zip(st.stamps.as_ref()).is_some_and(|(a, b)| a == b);
         let matched = stamped || ctx.lock_text(&dir).is_some_and(|t| Some(ctx.inputs_hash(&project, &t)) == st.inputs);
         let files_same = st.tarballs.as_ref().is_some_and(|files| same_files(&dir, files));
@@ -389,6 +405,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             }
             return Ok(InstallResult {
                 packages: summary.packages,
+                workspaces: summary.workspaces,
                 other_platforms: summary.other_platforms,
                 up_to_date: true,
                 stats: link::Stats { reused: st.entries.len() + st.shared.len(), ..link::Stats::default() },
@@ -506,19 +523,16 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             other => other.map(|_| ()),
         }
     };
-    let inputs = if project.workspaces.is_empty() {
-        ctx.lock_text(&dir).map(|text| link::Inputs {
-            hash: ctx.inputs_hash(&project, &text),
-            summary: state::Summary {
-                packages: wanted.len(),
-                other_platforms: elsewhere,
-                warnings: resolution.warnings.clone(),
-            },
-            stamps: ctx.stamps(&dir),
-        })
-    } else {
-        None
-    };
+    let inputs = ctx.lock_text(&dir).map(|text| link::Inputs {
+        hash: ctx.inputs_hash(&project, &text),
+        summary: state::Summary {
+            packages: wanted.len(),
+            workspaces,
+            other_platforms: elsewhere,
+            warnings: resolution.warnings.clone(),
+        },
+        stamps: ctx.stamps(&project),
+    });
     let packages = wanted.len();
     let scripts = !ctx.ignore_scripts();
     let mut chosen = if scripts {
