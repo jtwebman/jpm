@@ -13,7 +13,8 @@ pub fn bin_dirs(dir: &Path) -> Vec<PathBuf> {
     dir.ancestors().map(|at| at.join("node_modules").join(".bin")).collect()
 }
 
-/// A program on PATH, as the shell would find it.
+/// A program on PATH, as the shell would find it, from absolute directories only: a `.` or a
+/// relative entry would find whatever the current directory holds.
 pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
@@ -26,6 +27,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
         vec![String::new()]
     };
     std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
         .find_map(|dir| exts.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|file| file.is_file()))
 }
 

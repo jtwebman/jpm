@@ -20,6 +20,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const STALL: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 5;
 const MAX_HEAD: usize = 64 * 1024;
+/// A registry document read whole into memory, after gunzip. Far above the largest packument.
+const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
 
 pub struct Response {
     pub status: u16,
@@ -35,8 +37,7 @@ pub struct Response {
 pub fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>) -> Result<Response> {
     retry(url, |u| {
         let mut r = client().send(u, headers, auth)?;
-        let mut body = Vec::new();
-        r.body.read_to_end(&mut body).map_err(|e| read_error(u, &e))?;
+        let body = read_capped(&mut r.body, MAX_DOCUMENT).map_err(|e| read_error(u, &e))?;
         Ok(Response {
             status: r.status,
             etag: r.header("etag"),
@@ -102,9 +103,61 @@ fn retry<T: Status>(url: &str, mut once: impl FnMut(&str) -> Result<T>) -> Resul
     Err(last.unwrap_or_else(|| Error::new("ENETWORK", format!("{url} failed"))))
 }
 
+/// A whole body, refused past `cap` bytes: a gzip bomb stops here, not at the memory's end.
+fn read_capped(body: &mut impl Read, cap: u64) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    body.take(cap + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > cap {
+        return Err(io::Error::other(format!("more than {cap} bytes")));
+    }
+    Ok(out)
+}
+
+/// Whether a redirect may be followed with the first url's credentials: same scheme, host and
+/// port. A redirect from https to http is not followed at all.
+fn same_origin(first: &Url, target: &Url) -> Result<bool> {
+    if first.tls && !target.tls {
+        return Err(Error::new("ETLS", format!("refusing a redirect from https to {}", target.origin())));
+    }
+    Ok(target.tls == first.tls && target.host == first.host && target.port == first.port)
+}
+
+/// The request head. A header value with a line break (from .npmrc or the environment) is
+/// refused: it would add a line of its own.
+fn request_head(url: &Url, path: &str, headers: &[(&str, &str)], authorization: Option<&str>) -> io::Result<String> {
+    let mut head = format!(
+        "GET {path} HTTP/1.1\r\nhost: {}\r\nuser-agent: jpm/{}\r\naccept-encoding: gzip\r\n",
+        url.authority(),
+        env!("CARGO_PKG_VERSION")
+    );
+    for (k, v) in headers.iter().copied().chain(authorization.map(|a| ("authorization", a))) {
+        if v.contains(['\r', '\n']) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("the {k} header has a line break")));
+        }
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    Ok(head)
+}
+
+/// A chunk-size or trailer line, which no honest server makes long.
+fn bounded_line(conn: &mut impl BufRead, line: &mut String) -> io::Result<usize> {
+    let n = conn.take(4096).read_line(line)?;
+    if n == 4096 && !line.ends_with('\n') {
+        return Err(io::Error::other("chunk line too long"));
+    }
+    Ok(n)
+}
+
 fn read_error(url: &str, e: &io::Error) -> Error {
-    let code =
-        if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) { "ETIMEDOUT" } else { "ENETWORK" };
+    // A certificate or protocol refusal is the same on every try: not retried.
+    let code = if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) {
+        "ETIMEDOUT"
+    } else if e.kind() == io::ErrorKind::InvalidData && e.to_string().starts_with("tls: ") {
+        "ETLS"
+    } else {
+        "ENETWORK"
+    };
     Error::new(code, format!("Request to {url} failed: {e}"))
 }
 
@@ -121,7 +174,12 @@ struct Url {
 
 impl Url {
     fn parse(url: &str) -> Result<Self> {
-        let bad = || Error::new("ENETWORK", format!("Invalid url {url}"));
+        let bad = || Error::new("ENETWORK", format!("Invalid url {url:?}"));
+        // Urls come from packuments and lockfiles: a space or control byte would split the
+        // request line, and userinfo would hide the real host.
+        if url.bytes().any(|b| b <= b' ' || b == 0x7f) {
+            return Err(bad());
+        }
         let (scheme, rest) = url.split_once("://").ok_or_else(bad)?;
         let tls = match scheme.to_ascii_lowercase().as_str() {
             "https" => true,
@@ -134,7 +192,9 @@ impl Url {
         if !target.starts_with('/') {
             target.insert(0, '/');
         }
-        let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        if authority.contains('@') {
+            return Err(bad());
+        }
         let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
             let (h, tail) = v6.split_once(']').ok_or_else(bad)?;
             (h.to_string(), tail.strip_prefix(':'))
@@ -265,7 +325,7 @@ impl Client {
         let first = Url::parse(&url)?;
         for _ in 0..=MAX_REDIRECTS {
             let target = Url::parse(&url)?;
-            let same = target.host == first.host && target.port == first.port;
+            let same = same_origin(&first, &target)?;
             let authorization = if same { auth_for(auth, &url) } else { None };
             let r = self.once(&target, headers, authorization.as_deref()).map_err(|e| read_error(&url, &e))?;
             if matches!(r.status, 301 | 302 | 303 | 307 | 308)
@@ -291,18 +351,7 @@ impl Client {
         let proxy = proxy_for(url);
         let absolute = proxy.is_some() && !url.tls;
         let path = if absolute { format!("{}{}", url.origin(), url.target) } else { url.target.clone() };
-        let mut head = format!(
-            "GET {path} HTTP/1.1\r\nhost: {}\r\nuser-agent: jpm/{}\r\naccept-encoding: gzip\r\n",
-            url.authority(),
-            env!("CARGO_PKG_VERSION")
-        );
-        for (k, v) in headers {
-            head.push_str(&format!("{k}: {v}\r\n"));
-        }
-        if let Some(a) = authorization {
-            head.push_str(&format!("authorization: {a}\r\n"));
-        }
-        head.push_str("\r\n");
+        let head = request_head(url, &path, headers, authorization)?;
         let key: PoolKey = (url.tls, url.host.clone(), url.port);
         // A pooled connection the server has since closed fails at once: then a fresh one.
         if let Some(mut conn) = self.take(&key) {
@@ -427,7 +476,7 @@ fn read_head(conn: &mut impl BufRead) -> io::Result<(u16, Vec<(String, String)>)
         let mut line = String::new();
         let mut next = |line: &mut String| -> io::Result<()> {
             line.clear();
-            let n = conn.read_line(line)?;
+            let n = conn.take((MAX_HEAD - total) as u64 + 1).read_line(line)?;
             total += n;
             if n == 0 {
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed before a response"));
@@ -543,7 +592,7 @@ impl Read for Body {
             }
             Frame::Chunked(_) => {
                 let mut line = String::new();
-                if conn.read_line(&mut line)? == 0 {
+                if bounded_line(conn, &mut line)? == 0 {
                     return Err(cut_short());
                 }
                 let hex = line.split(';').next().unwrap_or("").trim();
@@ -552,7 +601,7 @@ impl Read for Body {
                     // Trailers, then the blank line that ends the body.
                     loop {
                         line.clear();
-                        if conn.read_line(&mut line)? <= 2 {
+                        if bounded_line(conn, &mut line)? <= 2 {
                             break;
                         }
                     }
@@ -610,10 +659,64 @@ mod tests {
         assert_eq!((u.host.as_str(), u.port, u.target.as_str()), ("::1", 8080, "/"));
         assert_eq!(u.authority(), "[::1]:8080");
         assert!(Url::parse("ftp://x").is_err());
+        // Nothing that could split the request or hide the host.
+        for bad in [
+            "https://r.test/a b",
+            "https://r.test/a\r\nx-evil: 1",
+            "https://r.test/a\tb",
+            "https://r.test/\u{7f}",
+            "https://user:pass@r.test/a",
+            "https://evil.test@r.test/a",
+        ] {
+            assert!(Url::parse(bad).is_err(), "{bad:?}");
+        }
         let u = Url::parse("https://r.test/a/b/c").unwrap();
         assert_eq!(u.join("/x"), "https://r.test/x");
         assert_eq!(u.join("d"), "https://r.test/a/b/d");
         assert_eq!(u.join("https://cdn.test/y"), "https://cdn.test/y");
+    }
+
+    #[test]
+    fn keeps_credentials_on_their_origin() {
+        let u = |s: &str| Url::parse(s).unwrap();
+        assert!(same_origin(&u("https://r.test/a"), &u("https://r.test/b")).unwrap());
+        assert!(!same_origin(&u("https://r.test/a"), &u("https://cdn.test/b")).unwrap());
+        assert!(!same_origin(&u("https://r.test/a"), &u("https://r.test:8443/b")).unwrap());
+        assert!(!same_origin(&u("http://r.test/a"), &u("https://r.test/b")).unwrap());
+        assert!(same_origin(&u("https://r.test:8443/a"), &u("http://r.test:8443/b")).is_err());
+    }
+
+    #[test]
+    fn refuses_header_values_with_line_breaks() {
+        let u = Url::parse("https://r.test/a").unwrap();
+        assert!(
+            request_head(&u, "/a", &[("accept", "x")], Some("Bearer t"))
+                .unwrap()
+                .contains("authorization: Bearer t\r\n")
+        );
+        assert!(request_head(&u, "/a", &[], Some("Bearer t\r\nx-evil: 1")).is_err());
+        assert!(request_head(&u, "/a", &[("npm-command", "x\ny")], None).is_err());
+    }
+
+    #[test]
+    fn caps_documents() {
+        assert_eq!(read_capped(&mut &b"12345"[..], 5).unwrap(), b"12345");
+        assert!(read_capped(&mut &b"123456"[..], 5).is_err());
+        // Through gunzip: a small bomb is refused at the cap.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        io::Write::write_all(&mut gz, &vec![0u8; 1 << 20]).unwrap();
+        let bomb = gz.finish().unwrap();
+        assert!(read_capped(&mut flate2::read::GzDecoder::new(&bomb[..]), 1 << 16).is_err());
+    }
+
+    #[test]
+    fn bounds_what_a_server_can_make_it_hold() {
+        // A head line with no end, and a chunk-size line with no end.
+        let endless = vec![b'a'; MAX_HEAD * 2];
+        assert!(read_head(&mut &endless[..]).unwrap_err().to_string().contains("too large"));
+        let mut chunk = &endless[..];
+        assert!(bounded_line(&mut chunk, &mut String::new()).is_err());
+        assert_eq!(bounded_line(&mut &b"1a;x=y\r\n"[..], &mut String::new()).unwrap(), 8);
     }
 
     #[test]

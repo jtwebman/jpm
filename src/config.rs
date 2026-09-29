@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::manifest::parse_date;
-use crate::registry::{auth_for, registry_base};
+use crate::registry::{INSECURE, registry_base};
 use crate::util::{from_base64, now_ms, to_base64};
 
 #[derive(Debug, Clone, Default)]
@@ -194,12 +194,13 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
             auth.insert(dart.clone(), header);
         }
     }
-    // A registry's credential also covers the rest of its host, as with npm.
+    // A credential goes over plain http only to a host whose registry is configured as http:
+    // a lockfile or packument naming an http url must not expose an https registry's token.
     for url in std::iter::once(&base).chain(scopes.values()) {
-        if let Some(host) = host_of(url)
-            && let Some(found) = auth_for(&auth, &format!("{url}/"))
+        if url.starts_with("http://")
+            && let Some(host) = host_of(url)
         {
-            auth.entry(host).or_insert(found);
+            auth.insert(format!("{INSECURE}{host}"), String::new());
         }
     }
     let exclude: Vec<String> = merged
@@ -365,7 +366,8 @@ mod tests {
         assert_eq!(config.registry, "https://r.test/npm");
         assert_eq!(config.scopes["@s"], "https://s.test");
         assert_eq!(config.auth["//r.test/npm/"], "Bearer t");
-        assert_eq!(config.auth["//r.test/"], "Bearer t");
+        // A path-scoped token stays on its path, as npm keeps it.
+        assert!(!config.auth.contains_key("//r.test/"));
         assert_eq!(config.auth["//s.test/"], format!("Basic {}", to_base64(b"u:p")));
     }
 

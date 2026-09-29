@@ -325,7 +325,7 @@ fn help(stdout: bool) -> String {
 pub fn main(argv0: &str, args: Vec<String>) -> i32 {
     let exec_bin = std::path::Path::new(argv0).file_stem().is_some_and(|s| s == "jpx" || s == "upx");
     let args = if exec_bin { std::iter::once("exec".to_string()).chain(args).collect() } else { args };
-    let mut cli = match parse(&args) {
+    let cli = match parse(&args) {
         Ok(cli) => cli,
         Err(e) => return usage(&e),
     };
@@ -349,11 +349,11 @@ pub fn main(argv0: &str, args: Vec<String>) -> i32 {
         if own {
             return usage(&format!("only --dir goes before {command}"));
         }
-        // Or npm's version and init, run in a workspace, would install the tree their own way.
-        // SAFETY: single-threaded at this point; nothing else reads the environment yet.
-        unsafe { std::env::set_var("npm_config_workspaces_update", "false") };
-        cli.specs = ["npm".to_string(), command.clone()].into_iter().chain(cli.specs.clone()).collect();
-        command = "exec".into();
+        let dir = cli.dir.as_ref().map(PathBuf::from);
+        return commands::npm(&command, &cli.specs, dir.as_deref()).unwrap_or_else(|e| {
+            ui::error(&e.to_string());
+            1
+        });
     }
     if command == "install" && !cli.specs.is_empty() {
         command = "add".into();
