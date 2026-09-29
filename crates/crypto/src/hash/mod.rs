@@ -29,7 +29,7 @@ impl Alg {
     }
 
     /// Block length in bytes, as HMAC pads keys to it.
-    pub const fn block_len(self) -> usize {
+    pub(crate) const fn block_len(self) -> usize {
         match self {
             Self::Sha1 | Self::Sha256 => 64,
             Self::Sha384 | Self::Sha512 => 128,
@@ -86,11 +86,6 @@ impl Hasher {
             Alg::Sha512 => State::Sha512(sha512::IV_512),
         };
         Self { alg, state, total: 0, buf: [0; 128] }
-    }
-
-    /// The algorithm this hasher runs.
-    pub fn alg(&self) -> Alg {
-        self.alg
     }
 
     /// Hashes `data` after everything before it.
