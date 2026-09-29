@@ -172,6 +172,10 @@ fn git() -> Command {
     }
     if !std::io::stdin().is_terminal() {
         c.env("GIT_TERMINAL_PROMPT", "0");
+        // Git Credential Manager, Git for Windows' default helper, asks in a window of its own:
+        // a private or mistyped repository would otherwise open a sign-in window (or wait on
+        // one in CI) for an install nobody is watching.
+        c.env("GCM_INTERACTIVE", "never");
     }
     c
 }
@@ -202,6 +206,17 @@ mod tests {
     const A: &str = "1111111111111111111111111111111111111111";
     const B: &str = "2222222222222222222222222222222222222222";
     const C: &str = "3333333333333333333333333333333333333333";
+
+    #[test]
+    fn never_asks_in_a_window_when_nobody_can_answer() {
+        let c = git();
+        let env = |name: &str| c.get_envs().find(|(k, _)| *k == name).and_then(|(_, v)| v).map(|v| v.to_owned());
+        // Wherever git may not prompt on a terminal, Git Credential Manager may not open one.
+        assert_eq!(env("GIT_TERMINAL_PROMPT").is_some(), env("GCM_INTERACTIVE").is_some());
+        if env("GIT_TERMINAL_PROMPT").is_some() {
+            assert_eq!(env("GCM_INTERACTIVE").as_deref(), Some(std::ffi::OsStr::new("never")));
+        }
+    }
 
     #[test]
     fn picks_a_commit_from_ls_remote() {
