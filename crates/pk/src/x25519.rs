@@ -182,5 +182,5 @@ pub fn public_key(secret: &[u8; 32]) -> [u8; 32] {
 /// The shared secret, or `None` when it is all zeros (the peer sent a low-order point).
 pub fn shared_secret(secret: &[u8; 32], peer: &[u8; 32]) -> Option<[u8; 32]> {
     let k = scalar_mult(secret, peer);
-    if crate::ct_eq(&k, &[0; 32]) { None } else { Some(k) }
+    if jpm_crypto::ct_eq(&k, &[0; 32]) { None } else { Some(k) }
 }

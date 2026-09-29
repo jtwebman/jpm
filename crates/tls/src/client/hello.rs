@@ -5,7 +5,8 @@
 use std::io::{Read, Write};
 
 use jpm_crypto::hash::{self, Hasher};
-use jpm_crypto::{aead, p256, rand, x25519};
+use jpm_crypto::{aead, rand};
+use jpm_pk::{p256, x25519};
 
 use super::record::{Conn, HANDSHAKE};
 use super::{Config, Error, Result, alert, tls12, tls13};

@@ -5,8 +5,9 @@
 
 use std::io::{self, Cursor, Read, Write};
 
+use jpm_crypto::aead::Alg::Aes128Gcm;
 use jpm_crypto::hash::{self, Alg::Sha256, Hasher};
-use jpm_crypto::{aead::Alg::Aes128Gcm, x25519};
+use jpm_pk::x25519;
 
 use super::Error;
 use super::record::{ALERT, APPLICATION_DATA, Conn, HANDSHAKE};

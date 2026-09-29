@@ -1,19 +1,14 @@
-//! The cryptography jpm needs and nothing more: the hashes behind integrity strings and TLS, the
-//! two AEAD ciphers and three curves TLS negotiates, RSA and ECDSA signature checks, and the
-//! operating system's random numbers.
+//! The cryptography jpm runs per byte: the hashes behind integrity strings and TLS, the two AEAD
+//! ciphers TLS negotiates, and the operating system's random numbers. Built for speed; the
+//! handshake's public-key code is in `jpm-pk`, built for size.
 //!
-//! Code that touches secrets (keys, key-exchange scalars, plaintext) runs in constant time: no
-//! branch or memory index depends on a secret. Signature checks only see public data and may
-//! branch freely. Nothing here panics on input from the network; bad input is `None` or `false`.
+//! Code that touches secrets (keys, plaintext) runs in constant time: no branch or memory index
+//! depends on a secret. Nothing here panics on input from the network; bad input is `None` or
+//! `false`.
 
 pub mod aead;
-mod ec;
 pub mod hash;
-pub mod p256;
-pub mod p384;
 pub mod rand;
-pub mod rsa;
-pub mod x25519;
 
 /// Equal in constant time: the time taken says nothing about where two slices differ.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
