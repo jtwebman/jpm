@@ -62,6 +62,7 @@ jpm lock                             # write jpm.lock without installing
 jpm resolve vue@^3                   # show which version a spec picks
 jpm fetch --lock                     # fill the store from jpm.lock, no linking
 jpm prune                            # remove entries and store content no project uses
+jpm patch lodash                     # copy a package to edit; patch-commit saves the patch
 ```
 
 Commit `jpm.lock` with `package.json`. `jpm --help` lists every option.
@@ -144,6 +145,21 @@ records the patch's sha256 on the package (`patch <hash>`): editing, adding or r
 makes the file out of date, so `jpm install` writes it again and `--frozen-lockfile` fails. A
 package that is also approved for install scripts is patched before they run.
 `pnpm-lock.yaml` and `bun.lock` are carried over when they name the same patches.
+
+To make a patch:
+
+```sh
+jpm patch lodash                     # copies lodash to node_modules/.jpm_patches/lodash@4.17.21
+                                     # edit the files there, then:
+jpm patch-commit node_modules/.jpm_patches/lodash@4.17.21
+```
+
+`jpm patch <name>[@version]` copies the version jpm.lock has into a directory to edit
+(`--edit-dir` picks another), with the project's patch for it already applied. `jpm
+patch-commit <dir>` writes the difference from the published package with `git diff` to
+`patches/<name>@<version>.patch` (a scope's `/` as `__`), or to the file that already patches
+it, names it in `patchedDependencies` (in `pnpm-workspace.yaml` when that file lists patches,
+else in package.json), and installs. git must be installed.
 
 A script that edits `node_modules/<name>` in place, as patch-package does, fails: those files
 are read-only links into the store.

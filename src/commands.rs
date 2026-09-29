@@ -1352,6 +1352,170 @@ pub fn remove(names: &[String], opts: Opts) -> Result<(Vec<String>, InstallResul
     Ok((removed, result))
 }
 
+// --- patch, patch-commit -------------------------------------------------------------------
+
+/// Where `jpm patch` puts a package to edit, as pnpm's `.pnpm_patches`: a dot name in
+/// node_modules, which the linker leaves alone.
+const PATCHES: &str = ".jpm_patches";
+
+/// The one package jpm.lock has for `spec`, `name` or `name@<version or range>`.
+fn locked_package(ctx: &Ctx, dir: &Path, spec: &str) -> Result<Package> {
+    let none = || fail("ELOCK", format!("no {LOCKFILE} in {}: run jpm install first", dir.display()));
+    let (lock, _) = lock::read_lockfile(dir)?.ok_or_else(none)?;
+    let (name, range) = match spec.get(1..).and_then(|s| s.find('@')) {
+        Some(i) => (&spec[..=i], Some(&spec[i + 2..])),
+        None => (spec, None),
+    };
+    let fits = |p: &Package| range.is_none_or(|r| p.version == r || semver::satisfies(&p.version, r));
+    let res = lock::from_lockfile(&lock, &ctx.base_for());
+    let mut found: Vec<Package> =
+        res.packages.into_values().filter(|p| p.local.is_none() && p.name == name && fits(p)).collect();
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(fail("ENOENT", format!("{LOCKFILE} has no {spec}"))),
+        _ => {
+            let all: Vec<String> = found.iter().map(|p| format!("{name}@{}", p.version)).collect();
+            Err(fail("EOPTION", format!("{LOCKFILE} has {}: give the version to patch", all.join(", "))))
+        }
+    }
+}
+
+/// The package as published, from the store.
+fn pristine(store: &Store, dir: &Path, p: &Package) -> Result<PathBuf> {
+    store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
+    store.pkg_dir(&p.integrity)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    crate::patch::copy_tree(from, to).map_err(|e| Error::io(&e, format!("cannot copy {}", from.display())))
+}
+
+/// The project's patch for `p`: the one it was installed with, else one keyed by its version.
+fn patch_of<'a>(project: &'a Project, p: &Package) -> Option<&'a crate::patch::Patch> {
+    let patches = &project.manifest.patches;
+    let own = |x: &&crate::patch::Patch| x.name == p.name && x.range.as_deref() == Some(p.version.as_str());
+    patches.iter().find(|x| p.patch.as_ref() == Some(&x.hash)).or_else(|| patches.iter().find(own))
+}
+
+/// `jpm patch <name>[@version]`: the locked version's files, with the project's patch for it
+/// applied when it applies, copied into a directory to edit. Where that is.
+pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf> {
+    let mut ctx = Ctx::open(opts, false)?;
+    let project = ctx.load_project()?;
+    let dir = project.dir.clone();
+    let p = locked_package(&ctx, &dir, spec)?;
+    let at = match edit_dir {
+        Some(d) => std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()),
+        None => dir.join("node_modules").join(PATCHES).join(format!("{}@{}", p.name, p.version)),
+    };
+    if at.exists() {
+        let why = "commit it with jpm patch-commit, or remove it";
+        return Err(fail("EEXIST", format!("{} is already there: {why}", at.display())));
+    }
+    let src = pristine(&ctx.store(false), &dir, &p)?;
+    copy_tree(&src, &at)?;
+    if let Some(patch) = patch_of(&project, &p) {
+        let text = std::fs::read(dir.join(&patch.path)).unwrap_or_default();
+        if let Err(why) = crate::patch::apply(&at, &text, false) {
+            warn(&format!("{} does not apply ({why}): this is {}@{} as published", patch.path, p.name, p.version));
+            crate::store::remove_tree(&at);
+            copy_tree(&src, &at)?;
+        }
+    }
+    Ok(at)
+}
+
+pub struct Committed {
+    /// The patch file, from the project root.
+    pub file: String,
+    pub install: InstallResult,
+}
+
+/// `jpm patch-commit <dir>`: the difference between the package `dir` holds and the package as
+/// published, written as its patch (pnpm's `patches/<name>@<version>.patch` for a new one, `/`
+/// as `__`), named in `patchedDependencies`, and installed.
+pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
+    let mut ctx = Ctx::open(opts.clone(), false)?;
+    let project = ctx.load_project()?;
+    let dir = project.dir.clone();
+    let edited = std::path::absolute(edited).unwrap_or_else(|_| edited.to_path_buf());
+    let m = project::read_manifest(&edited.join("package.json"))?;
+    let (Some(name), Some(version)) = (m.name, m.version) else {
+        return Err(fail("EMANIFEST", format!("{}/package.json has no name and version", edited.display())));
+    };
+    let p = locked_package(&ctx, &dir, &format!("{name}@{version}"))?;
+    let src = pristine(&ctx.store(false), &dir, &p)?;
+    let work = dir.join("node_modules").join(PATCHES).join(format!(".tmp-{}", crate::util::temp_suffix()));
+    let made = copy_tree(&src, &work.join("a"))
+        .and_then(|()| copy_tree(&edited, &work.join("b")))
+        .and_then(|()| crate::git::diff(&work));
+    crate::store::remove_tree(&work);
+    let text = made?;
+    if text.is_empty() {
+        return Err(fail(
+            "EPATCH",
+            format!("{} is {name}@{version} as published: nothing to commit", edited.display()),
+        ));
+    }
+    if text.split(|&b| b == b'\n').any(|l| l.starts_with(b"Binary files ")) {
+        return Err(fail("EPATCH", format!("{} changes a binary file, which a patch cannot hold", edited.display())));
+    }
+    let existing = patch_of(&project, &p);
+    let file =
+        existing.map_or_else(|| format!("patches/{}@{version}.patch", name.replace('/', "__")), |x| x.path.clone());
+    let at = dir.join(&file);
+    if let Some(parent) = at.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+    }
+    crate::util::write_atomic(&at, &text)?;
+    if existing.is_none() {
+        name_patch(&dir, &format!("{name}@{version}"), &file)?;
+    }
+    if edited.starts_with(dir.join("node_modules").join(PATCHES)) {
+        crate::store::remove_tree(&edited);
+    }
+    let install = install_tree(&mut Ctx::open(opts, false)?, None, None)?;
+    Ok(Committed { file, install })
+}
+
+/// Add a patch where the project names its patches: pnpm-workspace.yaml when it has a
+/// `patchedDependencies:` block, else package.json's `patchedDependencies` (bun's) when it has
+/// one, else `pnpm.patchedDependencies`.
+fn name_patch(dir: &Path, key: &str, path: &str) -> Result<()> {
+    let yaml = dir.join(rules::PNPM_WORKSPACE);
+    let text = std::fs::read_to_string(&yaml).unwrap_or_default();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        at += line.len();
+        if line.trim_end() == "patchedDependencies:" {
+            let next = &text[at..];
+            let indent = &next[..next.len() - next.trim_start_matches(' ').len()];
+            let indent = if indent.is_empty() { "  " } else { indent };
+            let eol = if line.ends_with("\r\n") { "\r\n" } else { "\n" };
+            let edited = format!("{}{indent}'{key}': {path}{eol}{next}", &text[..at]);
+            return crate::util::write_atomic(&yaml, edited.as_bytes());
+        }
+    }
+    let file = dir.join("package.json");
+    let raw = std::fs::read_to_string(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
+    let mut doc = RootManifest::parse(&raw, &file)?.doc;
+    let add = |o: Option<&Value>| {
+        let mut list = o.and_then(Value::as_object).cloned().unwrap_or_default();
+        list.insert(key, path.into());
+        Value::Object(list)
+    };
+    if doc.contains_key("patchedDependencies") {
+        let list = add(doc.get("patchedDependencies"));
+        doc.insert("patchedDependencies", list);
+    } else {
+        let mut pnpm = doc.get("pnpm").and_then(Value::as_object).cloned().unwrap_or_default();
+        pnpm.insert("patchedDependencies", add(pnpm.get("patchedDependencies")));
+        doc.insert("pnpm", Value::Object(pnpm));
+    }
+    std::fs::write(&file, project::format_manifest(&doc, &raw))
+        .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))
+}
+
 // --- lock, fetch, resolve, prune ------------------------------------------------------------
 
 /// The lockfile of the whole graph, every platform's builds and dev packages included.

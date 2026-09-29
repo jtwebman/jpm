@@ -180,6 +180,32 @@ fn git() -> Command {
     c
 }
 
+/// `git diff --no-index` of the directories `a` and `b` in `dir`, as a patch names its files:
+/// `a/<path>` and `b/<path>`. No renames, and nothing from the user's config that changes the text.
+pub fn diff(dir: &Path) -> Result<Vec<u8>> {
+    let mut c = git();
+    c.current_dir(dir).args(["-c", "core.quotepath=false", "diff", "--no-index", "--no-color", "--no-ext-diff"]);
+    c.args(["--no-textconv", "--no-renames", "--no-prefix", "a", "b"]);
+    let out = c.stderr(Stdio::piped()).output().map_err(|e| missing(&e, "patch-commit"))?;
+    // 1 says the directories differ.
+    if !matches!(out.status.code(), Some(0 | 1)) {
+        return Err(Error::new("EGIT", format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr).trim())));
+    }
+    // A new or deleted file's header names one directory twice: `diff --git b/x b/x`.
+    let mut text = Vec::with_capacity(out.stdout.len());
+    for line in out.stdout.split_inclusive(|&b| b == b'\n') {
+        let mut line = line.to_vec();
+        let n = line.len().saturating_sub(12);
+        if line.starts_with(b"diff --git ") && line.ends_with(b"\n") && n % 2 == 1 {
+            let q = usize::from(line[11] == b'"');
+            line[11 + q] = b'a';
+            line[11 + n / 2 + 1 + q] = b'b';
+        }
+        text.extend_from_slice(&line);
+    }
+    Ok(text)
+}
+
 /// Run git to the end: its output, or its error's last lines.
 fn run(c: &mut Command, what: &str) -> Result<String> {
     let out = c.stderr(Stdio::piped()).output().map_err(|e| missing(&e, what))?;

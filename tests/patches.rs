@@ -1,4 +1,4 @@
-//! End to end: pnpm's and bun's `patchedDependencies`.
+//! End to end: pnpm's and bun's `patchedDependencies`, yarn's `patch:`, and `jpm patch`.
 
 mod common;
 
@@ -213,4 +213,63 @@ fn applies_yarns_patch_protocol() {
     env.ok(&["install"]);
     assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'b@1.0.0'");
     assert!(!env.read("jpm.lock").contains("patch"));
+}
+
+#[test]
+fn patch_and_patch_commit() {
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        return; // patch-commit diffs with git
+    }
+    let r = Registry::start(vec![
+        pkg("b", "1.0.0", json!({})),
+        pkg("@s/c", "1.0.0", json!({})).file("lib/x.js", 0o644, "x\n"),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "app", "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    let out = env.ok(&["patch", "b"]);
+    let edit = "node_modules/.jpm_patches/b@1.0.0";
+    assert!(out.contains(&format!("jpm patch-commit {}", env.path(edit).display())), "{out}");
+    assert_eq!(env.read(&format!("{edit}/index.js")), "module.exports = 'b@1.0.0'");
+    assert!(fails(&env, &["patch", "b"]).contains("is already there"));
+    env.write(&format!("{edit}/index.js"), "module.exports = 'edited'\n");
+    env.write(&format!("{edit}/lib/new.js"), "new\n");
+    let edit_dir = env.path(edit).display().to_string();
+    let out = env.ok(&["patch-commit", &edit_dir]);
+    assert!(out.contains("wrote patches/b@1.0.0.patch"), "{out}");
+    let patch = env.read("patches/b@1.0.0.patch");
+    assert!(patch.starts_with("diff --git a/index.js b/index.js\n"), "{patch}");
+    assert!(patch.contains("diff --git a/lib/new.js b/lib/new.js\nnew file mode 100644\n"), "{patch}");
+    let manifest: serde_json::Value = serde_json::from_str(&env.read("package.json")).unwrap();
+    assert_eq!(manifest["pnpm"]["patchedDependencies"], json!({ "b@1.0.0": "patches/b@1.0.0.patch" }));
+    assert_eq!(manifest["name"], "app");
+    assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'edited'\n");
+    assert_eq!(env.read("node_modules/b/lib/new.js"), "new\n");
+    assert!(!env.exists(edit), "committed, the copy goes");
+    // Again: from the patched package, into the same file.
+    env.ok(&["patch", "b"]);
+    assert_eq!(env.read(&format!("{edit}/index.js")), "module.exports = 'edited'\n");
+    env.write(&format!("{edit}/index.js"), "module.exports = 'twice'\n");
+    env.ok(&["patch-commit", &edit_dir]);
+    assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'twice'\n");
+    let manifest: serde_json::Value = serde_json::from_str(&env.read("package.json")).unwrap();
+    assert_eq!(manifest["pnpm"]["patchedDependencies"], json!({ "b@1.0.0": "patches/b@1.0.0.patch" }));
+    // A project that names its patches in pnpm-workspace.yaml gets the new one there; a scope's
+    // `/` is `__` in the file name. --edit-dir puts the copy anywhere.
+    env.write("pnpm-workspace.yaml", "patchedDependencies:\n  b@1.0.0: patches/b@1.0.0.patch\n");
+    env.manifest(json!({ "name": "app", "dependencies": { "b": "1.0.0", "@s/c": "1.0.0" } }));
+    env.ok(&["install"]);
+    let own = env.root.join("edit-c");
+    env.ok(&["patch", "@s/c@1.0.0", "--edit-dir", &own.display().to_string()]);
+    assert!(fails(&env, &["patch-commit", &own.display().to_string()]).contains("nothing to commit"));
+    std::fs::write(own.join("lib/x.js"), "y\n").unwrap();
+    env.ok(&["patch-commit", &own.display().to_string()]);
+    let yaml = env.read("pnpm-workspace.yaml");
+    assert_eq!(
+        yaml,
+        "patchedDependencies:\n  '@s/c@1.0.0': patches/@s__c@1.0.0.patch\n  b@1.0.0: patches/b@1.0.0.patch\n"
+    );
+    assert_eq!(env.read("node_modules/@s/c/lib/x.js"), "y\n");
+    assert!(own.exists(), "a directory of the user's own stays");
+    assert!(fails(&env, &["patch", "nope"]).contains("jpm.lock has no nope"));
 }
