@@ -172,18 +172,13 @@ impl Registry {
         let key = format!("{} {url}", if accept == CORGI { "corgi" } else { "full" });
         let rechecked = self.rechecked.lock().map_err(|_| poisoned())?.contains(name);
         let kept = self.cache.as_ref().and_then(|c| c.get(&key));
-        if let (Some(doc), Some(cache)) = (&kept, &self.cache) {
-            let current = match cache.mode {
-                CacheMode::Revalidate => {
-                    doc.max_age.is_some_and(|age| now_ms() - doc.at < age * 1000)
-                        || self.before.is_some_and(|b| doc.at >= b && !self.excluded(name))
-                }
-                _ => true,
-            };
-            if current && !ask && !rechecked {
-                self.unasked.lock().map_err(|_| poisoned())?.insert(name.to_string());
-                return Ok(doc.body.clone());
-            }
+        if let Some(doc) = &kept
+            && self.current(name, doc)
+            && !ask
+            && !rechecked
+        {
+            self.unasked.lock().map_err(|_| poisoned())?.insert(name.to_string());
+            return Ok(doc.body.clone());
         }
         if self.mode() == Some(CacheMode::Only) {
             return Err(Error::new("EOFFLINE", format!("offline: cannot ask the registry for {name}")));
@@ -214,6 +209,23 @@ impl Registry {
             404 => Err(Error::new("E404", format!("Package \"{name}\" not found in registry"))),
             status => Err(Error::new("EREGISTRY", format!("Registry returned {status} for {url}"))),
         }
+    }
+
+    /// Whether a kept document answers without asking the registry, as the cache mode says.
+    fn current(&self, name: &str, doc: &Kept) -> bool {
+        match self.mode() {
+            Some(CacheMode::Revalidate) => {
+                doc.max_age.is_some_and(|age| now_ms() - doc.at < age * 1000)
+                    || self.before.is_some_and(|b| doc.at >= b && !self.excluded(name))
+            }
+            _ => true,
+        }
+    }
+
+    /// Whether `key`'s kept document would answer without asking.
+    fn answers(&self, name: &str, key: &str) -> bool {
+        let rechecked = || self.rechecked.lock().is_ok_and(|r| r.contains(name));
+        self.cache.as_ref().and_then(|c| c.get(key)).is_some_and(|doc| self.current(name, &doc)) && !rechecked()
     }
 
     fn load_corgi(&self, name: &str) -> Result<Arc<Packument>> {
@@ -317,12 +329,24 @@ impl Registry {
         {
             return Ok(Some(m));
         }
-        if !name.starts_with('@')
+        // An unscoped pin is asked for by its own route, past the release cutoff. When the
+        // route was never kept, a kept packument that answers without asking goes first.
+        let unscoped = !name.starts_with('@');
+        let url = self.path(name)?;
+        let route_kept = self.cache.as_ref().is_some_and(|c| c.file(&format!("full {url}/{version}")).is_file());
+        if unscoped
+            && (route_kept || !self.answers(name, &format!("corgi {url}")))
             && let Some(m) = self.route(name, version)?
         {
             return Ok(Some(m));
         }
         let cut = self.packument(name).ok().and_then(|doc| doc.version(version));
+        if cut.is_none()
+            && unscoped
+            && let Some(m) = self.route(name, version)?
+        {
+            return Ok(Some(m));
+        }
         Ok(if cut.is_none() && exempt { self.manifest(name, version).ok() } else { cut })
     }
 
