@@ -221,7 +221,7 @@ fn names_the_dependency_forms_it_does_not_read() {
     let r = registry();
     let env = Env::new(&r);
     for (spec, says) in [
-        ("catalog:", r#""catalog:" dependencies are not supported yet"#),
+        ("catalog:", "x@catalog:, but no catalogs are defined here or above"),
         ("github:watson/ci-info#v1", "git dependencies are not supported yet: github:watson/ci-info#v1"),
         ("file:../dir", "directory dependencies are not supported yet: file:../dir"),
     ] {
@@ -974,4 +974,57 @@ fn passes_arguments_through_scripts_and_shims() {
             .unwrap_or_else(|_| panic!("{how:?}: {text}{}", String::from_utf8_lossy(&out.stderr)));
         assert_eq!(got, json!(args), "{how:?}");
     }
+}
+
+#[test]
+fn reads_pnpm_workspaces_and_catalogs() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "dependencies": { "one": "workspace:*", "a": "catalog:" } }));
+    // As people write it: comments, and a list no deeper than its key.
+    env.write(
+        "pnpm-workspace.yaml",
+        "# the workspaces\npackages:\n- 'packages/*' # all of them\n\ncatalog:\n  a: 1.0.0\ncatalogs:\n  next:\n    'b': ^2 # newest\n",
+    );
+    env.write(
+        "packages/one/package.json",
+        r#"{ "name": "one", "version": "1.0.0", "dependencies": { "b": "catalog:next" } }"#,
+    );
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+    assert!(env.read("packages/one/node_modules/b/index.js").contains("b@2.0.0"));
+    assert!(env.exists("node_modules/one"));
+
+    // The catalog moves; the install follows it.
+    let yaml = std::fs::read_to_string(env.project().join("pnpm-workspace.yaml")).unwrap();
+    env.write("pnpm-workspace.yaml", &yaml.replace("a: 1.0.0", "a: 1.1.0"));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/a/index.js").contains("a@1.1.0"));
+
+    // A name the catalog does not have is an error that says so.
+    env.write(
+        "packages/one/package.json",
+        r#"{ "name": "one", "version": "1.0.0", "dependencies": { "c": "catalog:" } }"#,
+    );
+    let out = env.jpm(&["install"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("catalog default"), "{text}");
+}
+
+#[test]
+fn reads_catalogs_from_package_json() {
+    let r = registry();
+    let env = Env::new(&r);
+    // bun's spelling, under workspaces.
+    env.manifest(json!({
+        "name": "root",
+        "workspaces": { "packages": ["packages/*"], "catalog": { "b": "1.1.0" } },
+        "dependencies": { "one": "workspace:*" }
+    }));
+    env.write(
+        "packages/one/package.json",
+        r#"{ "name": "one", "version": "1.0.0", "dependencies": { "b": "catalog:" } }"#,
+    );
+    env.ok(&["install"]);
+    assert!(env.read("packages/one/node_modules/b/index.js").contains("b@1.1.0"));
 }

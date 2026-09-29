@@ -80,6 +80,10 @@ Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and 
   is an older format such as npm 6's or pnpm 8's), jpm resolves the tree with the file's
   versions preferred wherever the ranges in `package.json` allow them.
 
+Workspaces are read from package.json, or from `pnpm-workspace.yaml` when package.json lists
+none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-workspace.yaml`,
+`.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
+
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
 old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committed.
