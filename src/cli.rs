@@ -66,6 +66,7 @@ Options
   --production         skip dev-only packages
   --registry <url>     override the registry
   -s, --silent         no progress, run banner or install summary (also -q, --loglevel)
+  --no-progress        install: no progress line (drawn only on a terminal, not in CI)
   --store <dir>        package store directory (default: JPM_STORE or ~/.jpm/store)
   --ignore-scripts     install: run no install or lifecycle scripts (also ignore-scripts=true)
   --legacy-peer-deps   install no peers; link one only to what the tree has
@@ -120,7 +121,7 @@ Notes
 
   npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
   (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:
-  -S, --save, -P, --save-prod, --no-audit, --no-fund, --no-progress, --verbose and --force.
+  -S, --save, -P, --save-prod, --no-audit, --no-fund, --verbose and --force.
 
 Npm
   These commands run npm through exec. Only --dir goes before them.
@@ -158,6 +159,7 @@ struct Cli {
     before: Option<String>,
     exclude: Option<Vec<String>>,
     quiet: bool,
+    no_progress: bool,
     offline: bool,
     prefer_offline: bool,
     global_store: Option<bool>,
@@ -181,8 +183,7 @@ const COMMANDS: [&str; 13] = [
     "patch-commit",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 9] =
-    ["--no-audit", "--no-fund", "--no-progress", "--force", "--verbose", "-S", "--save", "-P", "--save-prod"];
+const NOOPS: [&str; 8] = ["--no-audit", "--no-fund", "--force", "--verbose", "-S", "--save", "-P", "--save-prod"];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
 fn npm_command(name: &str) -> bool {
@@ -287,6 +288,7 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             }
             _ if NOOPS.contains(&arg.as_str()) => {}
             "-s" | "--silent" | "-q" | "--quiet" => cli.quiet = true,
+            "--no-progress" => cli.no_progress = true,
             "-y" | "--yes" => cli.yes = true,
             "--workspaces" => cli.workspaces = true,
             "--include-workspace-root" => cli.include_root = true,
@@ -370,6 +372,7 @@ pub fn main(argv0: &str, args: Vec<String>) -> i32 {
         Err(e) => return usage(&e),
     };
     ui::set_quiet(cli.quiet);
+    ui::set_no_progress(cli.json || cli.no_progress);
     if cli.version {
         ui::out(&format!("{}\n", env!("CARGO_PKG_VERSION")));
         return 0;

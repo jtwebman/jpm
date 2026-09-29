@@ -68,6 +68,12 @@ jpm patch lodash                     # copy a package to edit; patch-commit save
 
 Commit `jpm.lock` with `package.json`. `jpm --help` lists every option.
 
+An install that takes longer than a tenth of a second shows one line of progress on stderr
+(packages resolved, fetched and linked), and takes it off before the summary. Windows
+Terminal, iTerm2 3.6 and later, Ghostty, WezTerm, ConEmu and VS Code also show it on their tab
+or taskbar (OSC 9;4). There is no progress when stderr is not a terminal, when `CI` is set,
+or with `--silent`, `--json` or `--no-progress`.
+
 ## Coming from another package manager
 
 Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and writes
