@@ -675,3 +675,30 @@ fn finds_install_scripts_bun_lock_leaves_out() {
     env.ok(&["approve", "bld"]);
     assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
 }
+
+#[test]
+fn an_alias_never_takes_another_packages_place() {
+    // `b` declares `real` as an alias for `evil` at the version `a`'s real `real` has: each
+    // must get its own package.
+    let r = Registry::start(vec![
+        pkg("real", "1.0.0", json!({})),
+        pkg("evil", "1.0.0", json!({})),
+        pkg("a", "1.0.0", json!({ "dependencies": { "real": "1.0.0" } })),
+        pkg("b", "1.0.0", json!({ "dependencies": { "real": "npm:evil@1.0.0" } })),
+    ]);
+    // jpm keeps one package per name and version, so the tree is refused rather than letting
+    // either stand in for the other.
+    for order in [["a", "b"], ["b", "a"]] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { order[0]: "1.0.0", order[1]: "1.0.0" } }));
+        let out = env.jpm(&["install"]);
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && text.contains("real@1.0.0 is two different packages"), "{order:?}: {text}");
+        assert!(!env.exists("node_modules/a"), "{order:?}: nothing is linked");
+    }
+    // An alias under a name nothing else uses is fine.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"));
+}
