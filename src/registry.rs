@@ -252,9 +252,9 @@ impl Registry {
 
     /// Publish dates for every version, from the full document.
     fn times(&self, name: &str, corgi: &Packument) -> Result<Map> {
-        let full = self.full(name)?;
-        if corgi.versions().all(|v| full.time.contains_key(v)) || self.mode() == Some(CacheMode::Only) {
-            let mut times = full.time.clone();
+        let kept = self.kept_times(name)?;
+        if corgi.versions().all(|v| kept.contains_key(v)) || self.mode() == Some(CacheMode::Only) {
+            let mut times = kept;
             // Offline, a version without a date is taken as too new: it was published since.
             let now = crate::manifest::iso_date(now_ms());
             for v in corgi.versions() {
@@ -272,6 +272,30 @@ impl Registry {
             m.insert(name.to_string(), Arc::new(cell));
         }
         Ok(times)
+    }
+
+    /// The full document's `time`. It is kept beside the document too, stamped with the file it
+    /// was read from: kilobytes read instead of megabytes (typescript's is 16 MB) for every name
+    /// the release cutoff has to date.
+    fn kept_times(&self, name: &str) -> Result<Map> {
+        let Some(cache) = &self.cache else { return Ok(self.full(name)?.time.clone()) };
+        let file = cache.file(&format!("full {}", self.path(name)?));
+        let side = file.with_file_name("_full.times");
+        let stamp = || crate::state::stamp_of(&file).map(|s| s.join(" "));
+        if let (Some(now), Ok(text)) = (stamp(), std::fs::read_to_string(&side))
+            && let Some((kept, body)) = text.split_once('\n')
+            && kept == now
+            && let Ok(doc) = Packument::parse(body.as_bytes().to_vec())
+            && !doc.time.is_empty()
+        {
+            return Ok(doc.time);
+        }
+        let full = self.full(name)?;
+        if let Some(now) = stamp() {
+            let body = crate::json::to_string(&crate::json::obj([("time", crate::json::str_map(&full.time))]));
+            let _ = crate::util::write_atomic(&side, format!("{now}\n{body}").as_bytes());
+        }
+        Ok(full.time.clone())
     }
 
     fn full(&self, name: &str) -> Result<Arc<Packument>> {
@@ -654,6 +678,38 @@ mod tests {
         });
         let got = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("wildcard hung");
         assert_eq!(got, (false, false, true));
+    }
+
+    #[test]
+    fn keeps_publish_dates_beside_the_full_document() {
+        let dir = std::env::temp_dir().join(format!("jpm-times-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config { registry: "https://r.test".into(), offline: true, ..Config::default() };
+        let times = || Registry::new(&config, Some(&dir)).kept_times("a").map(|t| t["1.0.0"].clone());
+        let cache = DocCache { dir: dir.clone(), mode: CacheMode::Only };
+        let keep = |date: &str| {
+            let body = format!(r#"{{"name":"a","versions":{{"1.0.0":{{}}}},"time":{{"1.0.0":"{date}"}}}}"#);
+            cache.set("full https://r.test/a", body.as_bytes(), 0, None, None);
+        };
+        let side = dir.join("r.test/a/_full.times");
+        keep("2020-01-01");
+        assert_eq!(times().unwrap(), "2020-01-01");
+        let text = std::fs::read_to_string(&side).unwrap();
+        // Read from beside the document while its stamp is the document's.
+        std::fs::write(&side, text.replace("2020-01-01", "2021-01-01")).unwrap();
+        assert_eq!(times().unwrap(), "2021-01-01");
+        // The document written again: stale, so read from the document and written again.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        keep("2022-01-01");
+        assert_eq!(times().unwrap(), "2022-01-01");
+        assert!(std::fs::read_to_string(&side).unwrap().contains("2022-01-01"));
+        // Unreadable, or with no dates: the document answers.
+        let stamp = std::fs::read_to_string(&side).unwrap().lines().next().unwrap().to_string();
+        for bad in ["{\"time\":", "{}", ""] {
+            std::fs::write(&side, format!("{stamp}\n{bad}")).unwrap();
+            assert_eq!(times().unwrap(), "2022-01-01", "{bad}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn doc() -> Packument {
