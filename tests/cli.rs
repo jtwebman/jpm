@@ -702,3 +702,39 @@ fn an_alias_never_takes_another_packages_place() {
     env.ok(&["install"]);
     assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"));
 }
+
+#[cfg(unix)]
+#[test]
+fn approvals_hold_only_for_the_registrys_own_package() {
+    let r = scripted();
+    r.publish(pkg("evil", "1.0.0", json!({ "scripts": { "postinstall": "touch pwned.txt" } })));
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" } }));
+    env.ok(&["approve", "bld"]);
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+    // A lockfile edit keeps the approval but points the package at another tarball, integrity
+    // and all: it installs, and its scripts do not run.
+    let evil =
+        common::sha512(&pkg("evil", "1.0.0", json!({ "scripts": { "postinstall": "touch pwned.txt" } })).tarball());
+    let lock = env.read("jpm.lock");
+    let at = lock.find("package bld@1.0.0\n").unwrap();
+    let end = lock[at..].find("\npackage ").map_or(lock.len(), |i| at + i + 1);
+    let entry = format!(
+        "package bld@1.0.0\n  resolved {}/evil/-/evil-1.0.0.tgz\n  integrity {evil}\n  dep dep 1.0.0\n  scripts\n  build\n",
+        r.url
+    );
+    env.write("jpm.lock", &format!("{}{entry}{}", &lock[..at], &lock[end..]));
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    let out = env.ok(&["install"]);
+    assert!(out.contains("tarball is not the registry's"), "{out}");
+    assert!(!env.exists("node_modules/bld/pwned.txt"), "the substituted package's script ran");
+
+    // An alias wearing a trusted name is not the package the name says.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "npm:evil@1.0.0" }, "trustedDependencies": ["bld"] }));
+    env.ok(&["install"]);
+    let out = env.jpm(&["approve", "bld"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("not the registry"), "{text}");
+    assert!(!env.exists("node_modules/bld/pwned.txt"));
+}
