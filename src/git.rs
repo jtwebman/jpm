@@ -208,7 +208,7 @@ pub fn diff(dir: &Path) -> Result<Vec<u8>> {
 
 /// Run git to the end: its output, or its error's last lines.
 fn run(c: &mut Command, what: &str) -> Result<String> {
-    let out = c.stderr(Stdio::piped()).output().map_err(|e| missing(&e, what))?;
+    let out = crate::pool::blocking(|| c.stderr(Stdio::piped()).output()).map_err(|e| missing(&e, what))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }
