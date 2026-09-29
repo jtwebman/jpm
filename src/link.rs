@@ -840,13 +840,21 @@ impl Linker<'_> {
         }
     }
 
-    /// One entry of every package name in the hidden hoist: the root's own version where it
-    /// has one, else the highest. Links that are already right stay; the rest converge.
+    /// One entry of every package name in the hidden hoist, the highest. A name the root links
+    /// stays out: Node looks here first, so it would hide the root's own (a workspace, a git
+    /// dependency), and the root's `node_modules` is the next place Node looks anyway. Links
+    /// that are already right stay; the rest converge.
     fn hoist(&self, dir: &Path) -> Result<()> {
-        let direct = &self.res.root.dependencies;
-        let rank = |e: &Entry| (direct.get(&e.pkg.name) == Some(&e.pkg.version), crate::semver::parse(&e.pkg.version));
+        let linked = |name: &str, version: &String| {
+            let id = format!("{name}@{version}");
+            self.wanted.get(&id).is_some_and(|e| self.present(e))
+                || self.res.packages.get(&id).is_some_and(|p| p.local.is_some())
+        };
+        let root: HashSet<&str> =
+            self.res.root.dependencies.iter().filter(|(n, v)| linked(n, v)).map(|(n, _)| n.as_str()).collect();
+        let rank = |e: &Entry| crate::semver::parse(&e.pkg.version);
         let mut pick: BTreeMap<&str, &Entry> = BTreeMap::new();
-        for e in self.wanted.values() {
+        for e in self.wanted.values().filter(|e| !root.contains(e.pkg.name.as_str())) {
             if !self.present(e) {
                 continue;
             }
@@ -1053,7 +1061,7 @@ fn standing(
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     let shared = st.shared.is_empty() || global.is_some_and(|g| st.shared.iter().all(|k| g.join(k).is_dir()));
-    (shared && st.entries.iter().all(|k| present.contains(k))).then_some(root?)
+    (shared && entries_standing(st, &present)).then_some(root?)
 }
 
 fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, production: bool) -> Option<RootLinks> {
@@ -1132,5 +1140,11 @@ pub fn tree_standing(dir: &Path, st: &State) -> bool {
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    st.entries.iter().all(|k| present.contains(k))
+    entries_standing(st, &present)
+}
+
+/// Every entry built in the project is there, and so is the hoist made with them: a tree from
+/// before there was one gets it on its next install.
+fn entries_standing(st: &State, present: &HashSet<String>) -> bool {
+    st.entries.iter().all(|k| present.contains(k)) && (st.entries.is_empty() || present.contains(HOIST))
 }
