@@ -14,6 +14,23 @@ jobs:
       # Installs the version rust-toolchain.toml pins.
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  # The ARM crypto paths: AES, PMULL and SHA instructions on a native arm64 runner, and the
+  # portable code 32-bit Raspberry Pi OS runs, under qemu.
+  arm:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, run: cargo test --workspace }
+          - { os: ubuntu-latest, run: cross test -p jpm-crypto -p jpm-tls --target armv7-unknown-linux-musleabihf, cross: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - if: matrix.cross
+        uses: taiki-e/install-action@cross
+      - run: ${{ matrix.run }}

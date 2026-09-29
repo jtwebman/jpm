@@ -192,9 +192,9 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "jpm-crypto",
+ "jpm-tls",
  "junction",
  "libc",
- "rustls",
  "serde_json",
  "webpki-roots",
 ]
