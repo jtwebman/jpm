@@ -4,6 +4,9 @@
 //!
 //! Layout under the store root:
 //! - `v1/pkg/<shard>/<name>/`: the files, never written after the rename that publishes them.
+//!   On Windows each is stored as `<path>.jpm` (the index says so): Windows Defender scans a file
+//!   it sees written as `.js` as script, a third more work than one with a name it does not
+//!   know, and every cold install writes thousands. Links into projects keep the real names.
 //! - `v1/pkg/<shard>/<name>.idx`: the index; its presence is what makes the entry real.
 //! - `v1/tmp/`: entries being unpacked, renamed into `pkg/` once whole.
 //! - `v1/links/`: the global virtual store's entries (see `link`).
@@ -35,11 +38,24 @@ pub struct FileEntry {
 pub struct Index {
     pub files: Vec<FileEntry>,
     pub unpacked_size: u64,
+    /// Each file is stored as `<path>.jpm` (Windows); see `stored`.
+    pub suffixed: bool,
 }
 
+/// What a stored file's name ends with where the store suffixes names.
+pub const STORED_SUFFIX: &str = ".jpm";
+
+/// Whether this platform's store suffixes the files it unpacks: Windows, for Defender.
+pub const SUFFIX_FILES: bool = cfg!(windows);
+
 impl Index {
+    /// A file's name in the store: its path, with the suffix when this entry has one.
+    pub fn stored(&self, path: &str) -> String {
+        if self.suffixed { format!("{path}{STORED_SUFFIX}") } else { path.to_string() }
+    }
+
     fn render(&self) -> String {
-        let mut out = format!("jpm-index 1 {}\n", self.unpacked_size);
+        let mut out = format!("jpm-index {} {}\n", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
         for f in &self.files {
             out.push_str(&format!("{} {} {}\n", if f.exec { 'x' } else { '-' }, f.size, f.path));
         }
@@ -49,7 +65,12 @@ impl Index {
     /// A torn or hand-edited index reads as absent: the entry is fetched again.
     fn parse(text: &str) -> Option<Self> {
         let mut lines = text.lines();
-        let unpacked_size = lines.next()?.strip_prefix("jpm-index 1 ")?.parse().ok()?;
+        let head = lines.next()?;
+        let (suffixed, size) = match head.strip_prefix("jpm-index 2 ") {
+            Some(size) => (true, size),
+            None => (false, head.strip_prefix("jpm-index 1 ")?),
+        };
+        let unpacked_size = size.parse().ok()?;
         let files = lines
             .map(|line| {
                 let (flag, rest) = line.split_once(' ')?;
@@ -61,7 +82,7 @@ impl Index {
                 Some(FileEntry { path: path.to_string(), size: size.parse().ok()?, exec: flag == "x" })
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(Self { files, unpacked_size })
+        Some(Self { files, unpacked_size, suffixed })
     }
 }
 
@@ -172,7 +193,7 @@ impl Store {
     /// Every file still there at the size the index says: what `--verify` pays for.
     fn intact(&self, integrity: &str, index: &Index) -> bool {
         let Ok(dir) = self.pkg_dir(integrity) else { return false };
-        index.files.iter().all(|f| fs::metadata(dir.join(&f.path)).is_ok_and(|m| m.len() == f.size))
+        index.files.iter().all(|f| fs::metadata(dir.join(index.stored(&f.path))).is_ok_and(|m| m.len() == f.size))
     }
 
     pub fn was_fetched(&self, integrity: &str) -> bool {
@@ -251,7 +272,7 @@ impl Store {
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
             let unpacked = match small_head(&mut input, length) {
-                Ok(head) => extract(&mut head.as_slice().chain(&mut input), &temp),
+                Ok(head) => extract(&mut head.as_slice().chain(&mut input), &temp, SUFFIX_FILES),
                 Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
             };
             // The rest still counts toward the hash; a source that never ends is refused.
@@ -331,9 +352,29 @@ impl Store {
         Ok(index)
     }
 
-    /// A file of a stored entry.
+    /// A stored entry's files in `to` under their own names, as copies to edit: writable, an
+    /// executable still executable, no `node_modules`.
+    pub fn copy_out(&self, integrity: &str, to: &Path) -> Result<()> {
+        let index =
+            self.index(integrity).ok_or_else(|| Error::new("ENOENT", format!("{integrity} is not in the store")))?;
+        let from = self.pkg_dir(integrity)?;
+        fs::create_dir_all(to).map_err(|e| Error::io(&e, format!("cannot create {}", to.display())))?;
+        for f in index.files.iter().filter(|f| f.path.split('/').all(|p| p != "node_modules")) {
+            let at = to.join(&f.path);
+            if let Some(parent) = at.parent() {
+                fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+            }
+            fs::copy(from.join(index.stored(&f.path)), &at)
+                .map_err(|e| Error::io(&e, format!("cannot copy {}", at.display())))?;
+            editable(&at, f.exec).map_err(|e| Error::io(&e, format!("cannot write {}", at.display())))?;
+        }
+        Ok(())
+    }
+
+    /// A file of a stored entry, under its stored name.
     pub fn file(&self, integrity: &str, path: &str) -> Result<PathBuf> {
-        Ok(self.pkg_dir(integrity)?.join(path))
+        let stored = self.index(integrity).map_or_else(|| path.to_string(), |i| i.stored(path));
+        Ok(self.pkg_dir(integrity)?.join(stored))
     }
 
     pub fn tmp_dir(&self) -> PathBuf {
@@ -411,7 +452,8 @@ fn writable(p: &Path) {
 
 /// Gunzip (when gzipped) and write every regular file under `dest`, read-only, the
 /// executables and declared bins executable. One copy of this for every kind of source.
-pub fn extract(source: &mut dyn Read, dest: &Path) -> Result<Index> {
+/// With `suffix`, each file is written as `<path>.jpm` (see `Index::stored`).
+pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index> {
     fs::create_dir_all(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
     let mut head = Vec::with_capacity(2);
     (&mut *source)
@@ -425,8 +467,9 @@ pub fn extract(source: &mut dyn Read, dest: &Path) -> Result<Index> {
     let mut files: BTreeMap<String, FileEntry> = BTreeMap::new();
     let mut made: HashSet<PathBuf> = HashSet::new();
     let mut manifest: Option<Vec<u8>> = None;
+    let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
     tar::read_entries(&mut input, |path, mode, size, body| {
-        let file = dest.join(path);
+        let file = dest.join(name(path));
         if let Some(parent) = file.parent()
             && made.insert(parent.to_path_buf())
         {
@@ -467,11 +510,11 @@ pub fn extract(source: &mut dyn Read, dest: &Path) -> Result<Index> {
             && !f.exec
         {
             f.exec = true;
-            set_mode(&dest.join(&f.path), true);
+            set_mode(&dest.join(name(&f.path)), true);
         }
     }
     let unpacked_size = files.values().map(|f| f.size).sum();
-    Ok(Index { files: files.into_values().collect(), unpacked_size })
+    Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
 }
 
 /// Take out of an unpacked repository what `npm pack` would leave out under package.json's
@@ -607,6 +650,23 @@ fn set_mode(file: &Path, exec: bool) {
     let _ = (file, exec);
 }
 
+/// A copy out of the store made writable, keeping whether it runs.
+fn editable(file: &Path, exec: bool) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(file, fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 }))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = exec;
+        let mut perm = fs::metadata(file)?.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        fs::set_permissions(file, perm)
+    }
+}
+
 fn make_writable(file: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -676,6 +736,12 @@ pub mod tests {
         assert_eq!(index.files.len(), 3);
         assert!(index.files.iter().find(|f| f.path == "cli.js").unwrap().exec);
         assert_eq!(fs::read(store.file(&integrity, "lib/x.js").unwrap()).unwrap(), b"x");
+        // Stored as `<path>.jpm` on Windows, for Defender; by its own name elsewhere.
+        assert_eq!(index.suffixed, SUFFIX_FILES);
+        let on_disk = store.pkg_dir(&integrity).unwrap().join("lib");
+        assert_eq!(on_disk.join("x.js.jpm").is_file(), SUFFIX_FILES);
+        assert_eq!(on_disk.join("x.js").is_file(), !SUFFIX_FILES);
+        assert_eq!(Index::parse(&index.render()).as_ref(), Some(&*index), "the index says which");
         // A second read is the index on disk.
         let again = Store::new(dir.join("store"), BTreeMap::new(), true, false);
         assert_eq!(*again.ensure(&Tarball::Url("http://nowhere".into()), &integrity).unwrap(), *index);
@@ -684,6 +750,17 @@ pub mod tests {
         assert_eq!(store.ensure(&Tarball::File(file), &bad).unwrap_err().code, "EINTEGRITY");
         assert!(!store.has(&bad));
         remove_tree(&dir);
+    }
+
+    #[test]
+    fn reads_an_index_from_before_suffixes() {
+        // A store written before `.jpm` names: its entries stay as they are, found by their names.
+        let old = Index::parse("jpm-index 1 3\n- 3 lib/x.js\n").unwrap();
+        assert!(!old.suffixed);
+        assert_eq!(old.stored("lib/x.js"), "lib/x.js");
+        let new = Index::parse("jpm-index 2 3\n- 3 lib/x.js\n").unwrap();
+        assert!(new.suffixed);
+        assert_eq!(new.stored("lib/x.js"), "lib/x.js.jpm");
     }
 
     #[test]
@@ -699,7 +776,7 @@ pub mod tests {
         let head = small_head(&mut input, Some(100)).unwrap();
         assert_eq!(head.len() as u64, STREAM_MIN + 1);
         let dir = scratch("head");
-        let index = extract(&mut head.as_slice().chain(input), &dir.join("x")).unwrap();
+        let index = extract(&mut head.as_slice().chain(input), &dir.join("x"), false).unwrap();
         assert_eq!(index.unpacked_size, big.len() as u64 + 1);
         remove_tree(&dir);
     }
