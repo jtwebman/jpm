@@ -437,8 +437,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             Ok((facts, keys, filter_platform(checked, &platform)?))
         });
     ui::phase("planned");
-    // Nothing more is queued; a failed plan also drops what is still waiting.
-    fetcher.close(planned.is_err());
+    // A failed plan drops the fetcher, and with it what is still waiting.
     let ((workspaces, locked, lock_hash, tarballs), keys, resolution) = planned?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
@@ -471,6 +470,25 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     // optional packages: whether they arrived decides which entries may be shared. The rest,
     // and in the project layout the optional ones too, are waited for as they are needed.
     let overlap = prefetching && !settled;
+    // A plan read from a lockfile walked nothing, so nothing is downloading yet: all of it now,
+    // on the fetcher's threads, optional packages first (the global store waits for them), the
+    // rest in the order the linker asks for them. Not when the store has every one of a sample:
+    // a warm install links at once, and whatever is missing is fetched as the linker needs it.
+    // ponytail: 16 sampled, so a store missing only a few fetches them on the linker's threads.
+    let walked = !skipped.lock().unwrap_or_else(PoisonError::into_inner).is_empty();
+    let lacking = || wanted.iter().step_by(wanted.len().div_ceil(16).max(1)).any(|p| !store.has(&p.integrity));
+    if overlap && !walked && lacking() {
+        for p in wanted.iter().filter(|p| !p.integrity.is_empty()) {
+            let platform_built = p.os.is_some() || p.cpu.is_some() || p.libc.is_some();
+            fetcher.queue(
+                tarball_of(&dir, &p.resolved, p.source.as_deref()),
+                p.integrity.clone(),
+                platform_built || p.optional,
+            );
+        }
+    }
+    // Nothing more is queued.
+    fetcher.close(false);
     if overlap && global.is_some() {
         let optional: Vec<&Package> = wanted.iter().copied().filter(|p| p.optional).collect();
         for p in &optional {
@@ -710,7 +728,7 @@ impl Fetcher {
                         }
                     };
                     let Some((tarball, integrity)) = job else { break };
-                    if !stop.load(Ordering::Relaxed) {
+                    if !stop.load(Ordering::Relaxed) && !store.has(&integrity) {
                         let _ = store.ensure(&tarball, &integrity);
                     }
                     arrivals.arrive(&integrity);

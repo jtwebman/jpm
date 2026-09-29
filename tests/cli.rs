@@ -1343,6 +1343,62 @@ fn links_while_downloads_are_under_way() {
 }
 
 #[test]
+fn fetches_a_locked_tree_into_a_cold_store_once() {
+    let mut pkgs: Vec<common::Pkg> = (0..40).map(|i| pkg(&format!("p{i:02}"), "1.0.0", json!({}))).collect();
+    pkgs.push(pkg(
+        "native",
+        "1.0.0",
+        json!({ "optionalDependencies": { "native-mars": "1.0.0", "native-any": "1.0.0" } }),
+    ));
+    pkgs.push(pkg("native-mars", "1.0.0", json!({ "os": ["mars"] })));
+    pkgs.push(pkg("native-any", "1.0.0", json!({})));
+    // Where the store keeps p01: its index file.
+    let digest =
+        common::sha512(&pkgs[1].tarball())["sha512-".len()..].replace('+', "-").replace('/', "_").replace('=', "");
+    let p01 = format!("v1/pkg/{}/sha512-{}.idx", &digest[..2], &digest[2..]);
+    let r = Registry::start(pkgs);
+    let env = Env::new(&r);
+    let mut deps: serde_json::Map<String, serde_json::Value> =
+        (0..40).map(|i| (format!("p{i:02}"), json!("1.0.0"))).collect();
+    deps.insert("native".into(), json!("1.0.0"));
+    env.manifest(json!({ "dependencies": deps }));
+    env.ok(&["lock"]);
+    // native-any's download fails: an optional package, skipped each time.
+    r.serve("/native-any/-/native-any-1.0.0.tgz", b"not a tarball".to_vec());
+    let asked = || r.hits.lock().unwrap().len();
+    let tarballs = |from: usize| -> Vec<String> {
+        r.hits.lock().unwrap()[from..]
+            .iter()
+            .filter(|h| h.contains("/-/") && !h.contains("native-any"))
+            .cloned()
+            .collect()
+    };
+    for (n, layout) in ["--global-store", "--no-global-store"].into_iter().enumerate() {
+        let store = env.root.join(format!("cold{n}"));
+        let install = |from: usize| {
+            let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+            let out = env.ok(&["install", layout, "--store", store.to_str().unwrap()]);
+            assert!(out.contains("skipped optional native-any@1.0.0"), "{out}");
+            assert!(env.read("node_modules/p01/index.js").contains("p01@1.0.0"));
+            tarballs(from)
+        };
+        // From jpm.lock into an empty store: each package this platform installs, once.
+        let mut got = install(asked());
+        let all = got.len();
+        got.sort();
+        got.dedup();
+        assert_eq!((got.len(), all), (41, 41), "{got:?}");
+        assert!(!got.iter().any(|h| h.contains("native-mars")));
+        // Warm: nothing.
+        assert_eq!(install(asked()), Vec::<String>::new());
+        // A store that lost one package fetches that one.
+        std::fs::remove_file(store.join(&p01)).unwrap();
+        let got = install(asked());
+        assert!(got.iter().all(|h| h.starts_with("/p01/")), "{got:?}");
+    }
+}
+
+#[test]
 fn drops_an_optional_package_that_fails_while_linking() {
     let r = registry();
     // native-any's tarball is not what the registry's integrity says: its download fails.

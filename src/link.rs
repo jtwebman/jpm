@@ -360,7 +360,8 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         settled: Mutex::default(),
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
-    let ids: Vec<&String> = linker.wanted.keys().collect();
+    // In the graph's order, which is the order an install queues their downloads in.
+    let ids: Vec<&String> = res.packages.keys().filter(|id| linker.wanted.contains_key(*id)).collect();
     crate::ui::count(&crate::ui::TO_LINK, ids.len());
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
