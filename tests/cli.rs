@@ -1271,6 +1271,28 @@ fn builds_in_the_project_for_frameworks_that_need_it() {
 }
 
 #[test]
+fn finds_the_framework_in_workspaces_and_edits() {
+    let r = registry();
+    let env = Env::new(&r);
+    // In a workspace, not the root.
+    env.manifest(json!({ "workspaces": ["w"], "dependencies": { "a": "1.1.0" } }));
+    env.write("w/package.json", r#"{ "name": "w", "dependencies": { "next": "1.0.0" } }"#);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("building packages in the project"), "{out}");
+    assert!(link_of(&env.project(), "a").starts_with(".jpm"), "{}", link_of(&env.project(), "a"));
+    // Added and removed: the edited package.json decides, not the one read before the edit.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    assert!(link_of(&env.project(), "a").contains("v1"), "{}", link_of(&env.project(), "a"));
+    let out = env.ok(&["add", "next@1.0.0"]);
+    assert!(out.contains("building packages in the project"), "{out}");
+    assert!(link_of(&env.project(), "next").starts_with(".jpm"), "{}", link_of(&env.project(), "next"));
+    env.ok(&["remove", "next"]);
+    assert!(link_of(&env.project(), "a").contains("v1"), "{}", link_of(&env.project(), "a"));
+}
+
+#[test]
 fn links_while_downloads_are_under_way() {
     let r = registry();
     r.slow_tarballs(300);
