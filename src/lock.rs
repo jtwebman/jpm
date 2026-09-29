@@ -771,7 +771,14 @@ pub fn same_tree(lock: &Lockfile, manifest: &RootManifest, workspaces: &[Workspa
     if !same_specs(manifest.specs().as_ref(), lock.root.specs.as_ref()) {
         return false;
     }
-    if lock.workspaces.len() != workspaces.len() {
+    // The root listed as a workspace, there while something links to it: its specs say that.
+    let root = lock.workspaces.get(crate::project::ROOT_PATH);
+    let version = manifest.version.as_deref().unwrap_or("0.0.0");
+    if root.is_some_and(|r| manifest.name.as_ref() != Some(&r.name) || r.version != version || r.bin != manifest.bins())
+    {
+        return false;
+    }
+    if lock.workspaces.len() != workspaces.len() + usize::from(root.is_some()) {
         return false;
     }
     workspaces.iter().all(|ws| {
