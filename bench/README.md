@@ -16,20 +16,32 @@ Each manager gets its own home, caches and store under the work dir, a fresh cop
 fixture, lifecycle scripts off, and no telemetry or update checks. jpm is built with
 `cargo build --release` first, so the working tree is what is measured.
 
+## Managers
+
+Every run measures the latest release of each manager. Before timing, the jpm just built
+installs the newest npm, pnpm, yarn (berry), upm, bun and deno from the npm registry into
+the work dir's `tools/`, with no minimum release age, so a version published minutes ago
+is used. aube comes from its latest GitHub release. pnpm, bun and deno run as their native
+binaries, not through the packages' Node launchers.
+
+`--installed` measures the managers on `PATH` instead, and `--bin name=path` names one
+binary.
+
 ## Requirements
 
-A POSIX shell, coreutils, GNU time at `/usr/bin/time` (`apt install time` on Debian and
-Ubuntu), and the package managers. Known runners: jpm, npm, pnpm, bun, yarn (berry), deno,
-aube and upm. Those not on `PATH` are skipped.
+Linux, a POSIX shell, coreutils, curl and tar (for aube), GNU time at `/usr/bin/time`
+(`apt install time` on Debian and Ubuntu), cargo, and Node.js on `PATH` for npm, yarn and
+upm.
 
 ## Options
 
 ```
--r, --runners a,b     package managers (default: all that are found)
+-r, --runners a,b     package managers (default: all)
 -f, --fixtures a,b    fixtures (default: nitro,nuxt,next; tiny also exists)
 -n, --samples N       runs per phase (default: 3)
     --phases a,b      cold, warm, repeat (default: all three)
     --bin name=path   use this binary for a runner (repeatable)
+    --installed       use the managers on PATH instead of fetching the latest
     --min-free GB     stop when the work dir has less free space (default: 3)
     --keep            keep the projects and caches afterwards
     --dry-run         print what would run
