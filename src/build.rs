@@ -92,9 +92,10 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
                 continue;
             }
             let text = fs::read_to_string(&log).unwrap_or_default();
-            let tail: Vec<&str> = text.lines().rev().take(40).collect();
-            let tail: String = tail.into_iter().rev().map(|l| format!("\n  {l}")).collect();
-            let why = format!("{}@{} {event} failed ({status}){tail}", p.name, p.version);
+            let cut = (text.len().saturating_sub(2000)..text.len()).find(|&i| text.is_char_boundary(i));
+            let tail = &text[cut.unwrap_or(text.len())..];
+            let why =
+                format!("{}@{} {event} failed ({status}); the end of {}:\n{tail}", p.name, p.version, log.display());
             if p.optional {
                 ui::warn(&format!("skipped optional {why}"));
                 continue 'packages;
@@ -133,9 +134,7 @@ pub fn run_lifecycle(tops: &[(&Path, &RootManifest)]) -> Result<()> {
 fn order<'a>(res: &'a Resolution, keys: &'a HashMap<String, String>) -> Vec<&'a String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    let mut ids: Vec<&String> = keys.keys().collect();
-    ids.sort();
-    for id in ids {
+    for id in res.packages.keys().filter(|id| keys.contains_key(*id)) {
         visit(res, keys, id, &mut seen, &mut out);
     }
     out
@@ -145,11 +144,11 @@ fn visit<'a>(
     res: &'a Resolution,
     keys: &'a HashMap<String, String>,
     id: &'a String,
-    seen: &mut HashSet<&'a String>,
+    seen: &mut HashSet<&'a str>,
     out: &mut Vec<&'a String>,
 ) {
     let Some((id, p)) = res.packages.get_key_value(id) else { return };
-    if !seen.insert(id) {
+    if !seen.insert(id.as_str()) {
         return;
     }
     for (name, version) in p.dependencies.iter().chain(&p.optional_dependencies) {
@@ -173,9 +172,13 @@ fn read_scripts(file: &Path) -> HashMap<String, String> {
 /// A dependency's scripts are someone else's code: no npm token or password reaches them.
 fn without_credentials(command: &mut Command) {
     for (key, _) in std::env::vars_os() {
-        let k = key.to_string_lossy().to_ascii_lowercase();
-        let secret = ["auth", "token", "password"].iter().any(|s| k.contains(s));
-        if k == "npm_token" || k == "node_auth_token" || (k.starts_with("npm_config_") && secret) {
+        let k = key.as_encoded_bytes();
+        let has = |word: &[u8]| k.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word));
+        let npm = k.len() > 11 && k[..11].eq_ignore_ascii_case(b"npm_config_");
+        if k.eq_ignore_ascii_case(b"NPM_TOKEN")
+            || k.eq_ignore_ascii_case(b"NODE_AUTH_TOKEN")
+            || (npm && (has(b"auth") || has(b"token") || has(b"password")))
+        {
             command.env_remove(&key);
         }
     }
