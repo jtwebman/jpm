@@ -225,7 +225,9 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         offline: merged.get("offline").is_some_and(|v| v == "true"),
         prefer_offline: merged.get("prefer-offline").is_some_and(|v| v == "true"),
         global_store: merged.get("global-store").map(|v| v == "true"),
-        ignore_scripts: merged.get("ignore-scripts").is_some_and(|v| v == "true"),
+        // Any layer can turn scripts off and none can turn them back on: a cloned repo's .npmrc
+        // must not undo the user's own `ignore-scripts=true`.
+        ignore_scripts: layers.iter().any(|l| l.get("ignore-scripts").is_some_and(|v| v == "true")),
     })
 }
 
@@ -372,6 +374,15 @@ mod tests {
         // A path-scoped token stays on its path, as npm keeps it.
         assert!(!config.auth.contains_key("//r.test/"));
         assert_eq!(config.auth["//s.test/"], format!("Basic {}", to_base64(b"u:p")));
+    }
+
+    #[test]
+    fn ignore_scripts_only_turns_on() {
+        let on: Layer = [("ignore-scripts".into(), "true".into())].into();
+        let off: Layer = [("ignore-scripts".into(), "false".into())].into();
+        assert!(to_config(&[on.clone(), off.clone()], None).unwrap().ignore_scripts, "a later layer cannot undo it");
+        assert!(to_config(&[off.clone(), on], None).unwrap().ignore_scripts);
+        assert!(!to_config(&[off], None).unwrap().ignore_scripts);
     }
 
     #[test]

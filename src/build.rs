@@ -169,14 +169,16 @@ fn read_scripts(file: &Path) -> HashMap<String, String> {
     scripts.into_iter().flatten().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()
 }
 
-/// A dependency's scripts are someone else's code: no npm token or password reaches them.
+/// A dependency's scripts are someone else's code: no npm, yarn or bun token or password
+/// reaches them through the environment. Hygiene, not a sandbox: a script can still read the
+/// user's files, .npmrc among them.
 fn without_credentials(command: &mut Command) {
     for (key, _) in std::env::vars_os() {
         let k = key.as_encoded_bytes();
         let has = |word: &[u8]| k.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word));
         let npm = k.len() > 11 && k[..11].eq_ignore_ascii_case(b"npm_config_");
-        if k.eq_ignore_ascii_case(b"NPM_TOKEN")
-            || k.eq_ignore_ascii_case(b"NODE_AUTH_TOKEN")
+        let named = [&b"NPM_TOKEN"[..], b"NODE_AUTH_TOKEN", b"YARN_NPM_AUTH_TOKEN", b"BUN_AUTH_TOKEN"];
+        if named.iter().any(|n| k.eq_ignore_ascii_case(n))
             || (npm && (has(b"auth") || has(b"token") || has(b"password")))
         {
             command.env_remove(&key);

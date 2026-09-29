@@ -201,6 +201,8 @@ fn repairs_a_damaged_tree_under_verify() {
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
     env.ok(&["install"]);
     let b = std::fs::canonicalize(env.project().join("node_modules/b")).unwrap();
+    // A shared entry is sealed; damaging it takes lifting that first, as a user could.
+    let _ = std::process::Command::new("chmod").arg("u+w").arg(&b).output();
     std::fs::remove_file(b.join("index.js")).unwrap();
     let out = env.ok(&["install", "--verify"]);
     assert!(out.contains("repaired"), "{out}");
@@ -737,4 +739,41 @@ fn approvals_hold_only_for_the_registrys_own_package() {
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success() && text.contains("not the registry"), "{text}");
     assert!(!env.exists("node_modules/bld/pwned.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn seals_shared_entries() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    // Nothing one project runs may change what another links to: not a file, and not the
+    // directories that hold them.
+    let a = std::fs::canonicalize(env.project().join("node_modules/a")).unwrap();
+    assert!(a.starts_with(std::fs::canonicalize(env.store()).unwrap()), "{a:?}");
+    let root = unsafe { libc_geteuid() } == 0;
+    if !root {
+        assert!(std::fs::write(a.join("planted.js"), "x").is_err(), "a file was added to a shared entry");
+        assert!(std::fs::remove_file(a.join("index.js")).is_err(), "a file was removed from a shared entry");
+        assert!(std::fs::write(a.join("index.js"), "x").is_err());
+    }
+    // Pruning still removes a sealed entry.
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    let out = env.ok(&["prune", "--json"]);
+    assert!(out.contains("\"shared\""), "{out}");
+    let links = env.store().join("v1/links");
+    assert_eq!(
+        std::fs::read_dir(&links)
+            .unwrap()
+            .filter(|e| !e.as_ref().unwrap().file_name().to_string_lossy().starts_with('.'))
+            .count(),
+        0
+    );
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    #[link_name = "geteuid"]
+    fn libc_geteuid() -> u32;
 }
