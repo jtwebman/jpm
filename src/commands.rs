@@ -1464,10 +1464,10 @@ fn locked_package(ctx: &Ctx, dir: &Path, spec: &str) -> Result<Package> {
     }
 }
 
-/// The package as published, from the store.
-fn pristine(store: &Store, dir: &Path, p: &Package) -> Result<PathBuf> {
+/// The package as published, from the store, copied into `to` under its files' own names.
+fn pristine(store: &Store, dir: &Path, p: &Package, to: &Path) -> Result<()> {
     store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
-    store.pkg_dir(&p.integrity)
+    store.copy_out(&p.integrity, to)
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
@@ -1496,14 +1496,14 @@ pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf>
         let why = "commit it with jpm patch-commit, or remove it";
         return Err(fail("EEXIST", format!("{} is already there: {why}", at.display())));
     }
-    let src = pristine(&ctx.store(false), &dir, &p)?;
-    copy_tree(&src, &at)?;
+    let store = ctx.store(false);
+    pristine(&store, &dir, &p, &at)?;
     if let Some(patch) = patch_of(&project, &p) {
         let text = std::fs::read(dir.join(&patch.path)).unwrap_or_default();
         if let Err(why) = crate::patch::apply(&at, &text, false) {
             warn(&format!("{} does not apply ({why}): this is {}@{} as published", patch.path, p.name, p.version));
             crate::store::remove_tree(&at);
-            copy_tree(&src, &at)?;
+            pristine(&store, &dir, &p, &at)?;
         }
     }
     Ok(at)
@@ -1528,9 +1528,8 @@ pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
         return Err(fail("EMANIFEST", format!("{}/package.json has no name and version", edited.display())));
     };
     let p = locked_package(&ctx, &dir, &format!("{name}@{version}"))?;
-    let src = pristine(&ctx.store(false), &dir, &p)?;
     let work = dir.join("node_modules").join(PATCHES).join(format!(".tmp-{}", crate::util::temp_suffix()));
-    let made = copy_tree(&src, &work.join("a"))
+    let made = pristine(&ctx.store(false), &dir, &p, &work.join("a"))
         .and_then(|()| copy_tree(&edited, &work.join("b")))
         .and_then(|()| crate::git::diff(&work));
     crate::store::remove_tree(&work);
