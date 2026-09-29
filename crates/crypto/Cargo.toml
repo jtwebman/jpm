@@ -1,0 +1,17 @@
+[package]
+name = "jpm-crypto"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The cryptography jpm's TLS client and integrity checks need"
+rust-version = "1.89"
+publish = false
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+# Test vectors ship gzipped; ring is the reference the differential tests compare against.
+flate2 = "1.1.10"
+ring = "0.17.14"
+serde_json = "1"
