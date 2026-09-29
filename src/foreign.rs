@@ -27,7 +27,13 @@ pub struct ForeignLock {
     /// The file never says which packages have install scripts (bun.lock).
     pub scriptless: bool,
     pub warnings: Vec<String>,
+    /// Runtimes the root depends on (pnpm's `runtime:`), left for install to fetch the builds of.
+    pub runtimes: Runtimes,
 }
+
+/// Runtime name -> the exact version the file locked, and the builds it recorded for it, each
+/// `(url, integrity)`.
+pub type Runtimes = BTreeMap<String, (String, Vec<(String, String)>)>;
 
 /// One package as the file records it, edges already exact versions.
 #[derive(Debug, Clone, Default)]
@@ -62,6 +68,7 @@ struct Source {
     overrides: Option<Value>,
     /// `patchedDependencies`: pnpm's key -> `{ path, hash }` or hash, bun's key -> path.
     patches: Value,
+    runtimes: Runtimes,
 }
 
 /// What an edge finds: a version, a copy inside the parent's tarball, or nothing from a registry.
@@ -212,7 +219,9 @@ fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
                         None => continue,
                     },
                 };
-                if crate::semver::is_exact(&version) {
+                // A runtime is preferred at the version pnpm locked, `runtime:` and all.
+                let runtime = version.strip_prefix(crate::runtime::PROTOCOL).unwrap_or(&version);
+                if crate::semver::is_exact(runtime) {
                     out.push((name, version));
                 }
             }
@@ -346,7 +355,7 @@ fn read_npm(text: &str) -> Result<Source> {
     }
     let (specs, root) =
         root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(npm_version).map(str::to_string));
-    Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null })
+    Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null, runtimes: Runtimes::new() })
 }
 
 /// npm's and bun's paths as the folders they name, each a list of the packages up to it, so
@@ -586,6 +595,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let top = importers.and_then(|i| i.get("."));
     let mut groups: [Deps; 3] = Default::default();
     let mut versions = Deps::new();
+    let mut runtimes = Runtimes::new();
     for (group, specs) in GROUPS.iter().zip(&mut groups) {
         let Some(map) = top.and_then(|t| t.get(group)).and_then(Value::as_object) else { continue };
         for (name, dep) in map {
@@ -596,6 +606,20 @@ fn read_pnpm(text: &str) -> Result<Source> {
             let specifier = specifier.strip_prefix("catalog:").and_then(listed).unwrap_or(specifier);
             specs.insert(name.clone(), specifier);
             let r = dep.get("version").map(string_of).unwrap_or_default();
+            // A runtime's builds are pnpm's own archives: install reads the release for jpm's.
+            if let Some(v) =
+                r.strip_prefix(crate::runtime::PROTOCOL).filter(|_| crate::runtime::NAMES.contains(&name.as_str()))
+            {
+                let variants = package_index
+                    .get(format!("{name}@{r}").as_str())
+                    .and_then(|p| p.get("resolution")?.get("variants")?.as_array());
+                let builds = variants.into_iter().flatten().filter_map(|b| {
+                    let r = b.get("resolution")?;
+                    Some((r.get("url")?.as_str()?.to_string(), r.get("integrity")?.as_str()?.to_string()))
+                });
+                runtimes.insert(name.clone(), (v.to_string(), builds.collect()));
+                continue;
+            }
             versions.insert(name.clone(), pnpm_edge(&mut aliases, name, &r)?);
         }
     }
@@ -608,7 +632,8 @@ fn read_pnpm(text: &str) -> Result<Source> {
         let node = Node { name: alias, real: Some(real.clone()), ..nodes[i].clone() };
         nodes.push(node);
     }
-    let (specs, root) = root_of(groups, &|name| versions.get(name).cloned());
+    let (specs, mut root) = root_of(groups, &|name| versions.get(name).cloned());
+    root.retain(|name, _| !runtimes.contains_key(name));
     // The overrides it was resolved under, as pnpm-workspace.yaml or `pnpm.overrides` give them.
     let overrides = doc.get("overrides").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Object(Map::new()));
     Ok(Source {
@@ -617,6 +642,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
         root,
         overrides: Some(overrides),
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+        runtimes,
     })
 }
 
@@ -721,6 +747,7 @@ fn read_bun(text: &str) -> Result<Source> {
         root,
         overrides: Some(overrides),
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+        runtimes: Runtimes::new(),
     })
 }
 
@@ -950,7 +977,7 @@ fn build(
         .filter(|(key, _)| seen.contains(key))
         .map(|(_, what)| format!("{file} {what} for every copy"))
         .collect();
-    Ok(ForeignLock { lock, binless, scriptless: false, warnings })
+    Ok(ForeignLock { lock, binless, scriptless: false, warnings, runtimes: source.runtimes })
 }
 
 /// Whether two integrity fields name one tarball: equal, or the same digests for the strongest
@@ -1559,6 +1586,45 @@ package tool@1.0.0
                 "package-lock.json resolves readable-stream, a dependency of through2@2.0.5, two ways (2.3.7 and 2.3.8); jpm links 2.3.8 for every copy"
             ]
         );
+    }
+
+    #[test]
+    fn leaves_a_pnpm_runtime_to_install_at_its_version() {
+        let text = "lockfileVersion: '9.0'
+importers:
+  .:
+    devDependencies:
+      node:
+        specifier: runtime:^22.0.0
+        version: runtime:22.11.0
+packages:
+  node@runtime:22.11.0:
+    hasBin: true
+    resolution:
+      type: variations
+      variants:
+        - resolution:
+            archive: tarball
+            integrity: sha256-x
+            type: binary
+            url: https://nodejs.org/download/release/v22.11.0/node-v22.11.0-linux-x64.tar.gz
+          targets:
+            - cpu: x64
+              os: linux
+    version: 22.11.0
+snapshots:
+  node@runtime:22.11.0: {}
+";
+        let doc =
+            json!({ "devEngines": { "runtime": { "name": "node", "version": "^22.0.0", "onFail": "download" } } });
+        let read = read("pnpm-lock.yaml", text, doc).unwrap();
+        assert!(read.lock.packages.is_empty() && read.lock.root.dependencies.is_empty());
+        let url = "https://nodejs.org/download/release/v22.11.0/node-v22.11.0-linux-x64.tar.gz";
+        assert_eq!(read.runtimes["node"], ("22.11.0".into(), vec![(url.into(), "sha256-x".into())]));
+        // Out of date, it is still the version preferred.
+        assert_eq!(prefer("pnpm-lock.yaml", text).unwrap().versions["node"], ["runtime:22.11.0"]);
+        let stale = json!({ "devEngines": { "runtime": { "name": "node", "version": "22", "onFail": "download" } } });
+        assert!(err("pnpm-lock.yaml", text, stale).contains("out of date"));
     }
 
     #[test]
