@@ -201,3 +201,34 @@ fn adds_a_directory_by_its_path() {
     leads(&env.project(), "x-lib", &env.project().join("libs/x"));
     leads(&env.project(), "y", &env.project().join("libs/x"));
 }
+
+#[test]
+fn installs_file_directories_that_share_a_name() {
+    let r = registry();
+    let env = Env::new(&r);
+    // SvelteKit's test apps: each has a `server-side-dep` directory of its own, one name.
+    env.manifest(json!({ "name": "root", "workspaces": ["apps/*"] }));
+    for (app, b) in [("one", "1.0.0"), ("two", "2.0.0")] {
+        env.write(
+            &format!("apps/{app}/package.json"),
+            &format!(r#"{{ "name": "{app}", "dependencies": {{ "dep": "file:dep" }} }}"#),
+        );
+        env.write(
+            &format!("apps/{app}/dep/package.json"),
+            &format!(r#"{{ "name": "dep", "version": "1.0.0", "dependencies": {{ "b": "{b}" }} }}"#),
+        );
+    }
+    env.ok(&["install"]);
+    // Each app links its own directory, and each directory installs its own dependencies.
+    for (app, b) in [("one", "b@1.0.0"), ("two", "b@2.0.0")] {
+        let dir = env.project().join("apps").join(app);
+        leads(&dir, "dep", &dir.join("dep"));
+        assert!(env.read(&format!("apps/{app}/dep/node_modules/b/index.js")).contains(b), "{app}");
+    }
+    let lock = env.lock();
+    assert_eq!(lock["workspaces"]["apps/one/dep"]["name"], "dep");
+    assert_eq!(lock["workspaces"]["apps/two/dep"]["name"], "dep");
+    // The lockfile it wrote reads back: up to date, and enough for a frozen install.
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
+}
