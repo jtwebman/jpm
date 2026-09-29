@@ -113,16 +113,16 @@ fn quote_cmd(arg: &str, batch: bool) -> String {
 /// A shell running `line` in `cwd` with `dirs` first on PATH.
 pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf]) -> Command {
     let (key, path) = with_path(dirs);
-    let mut command = if cfg!(windows) {
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
         let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-        let c = Command::new(comspec);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{line}\""));
-        }
+        let mut c = Command::new(comspec);
+        c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{line}\""));
         c
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut command = {
         let mut c = Command::new("sh");
         c.args(["-c", line]);
         c

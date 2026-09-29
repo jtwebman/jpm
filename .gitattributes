@@ -1,0 +1,2 @@
+# LF everywhere, whatever core.autocrlf says: install.sh must run as checked out on any OS.
+* text=auto eol=lf

@@ -7,10 +7,17 @@ on:
 
 jobs:
   test:
-    # Linux x64 only for now. The ARM jobs (a native arm64 runner, and armv7 under qemu for
-    # 32-bit Raspberry Pi OS) come back once Linux, macOS and Windows are stable: the armv7 one
-    # took about 45 minutes.
-    runs-on: ubuntu-latest
+    # Linux x64 and Windows x64 for now. The ARM jobs (a native arm64 runner, and armv7 under
+    # qemu for 32-bit Raspberry Pi OS) come back once Linux, macOS and Windows are stable: the
+    # armv7 one took about 45 minutes.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       # Installs the version rust-toolchain.toml pins.
