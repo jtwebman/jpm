@@ -1011,6 +1011,25 @@ fn reads_pnpm_workspaces_and_catalogs() {
 }
 
 #[test]
+fn reads_catalogs_from_yarnrc_after_plugins() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "dependencies": { "a": "catalog:" } }));
+    env.write(
+        ".yarnrc.yml",
+        "nodeLinker: node-modules\nplugins:\n  - path: .yarn/plugins/x.cjs\n    spec: \"x\"\ncatalog:\n  a: 1.0.0\n",
+    );
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+
+    // A file it cannot read is named, not taken for one with no catalogs.
+    env.write(".yarnrc.yml", "catalog:\n  a: 1.0.0\n    b: 1\n");
+    let out = env.jpm(&["install"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains(".yarnrc.yml"), "{text}");
+}
+
+#[test]
 fn reads_catalogs_from_package_json() {
     let r = registry();
     let env = Env::new(&r);

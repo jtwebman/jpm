@@ -229,9 +229,13 @@ type Catalogs = std::collections::BTreeMap<String, Deps>;
 
 /// A root's catalogs, wherever its package manager keeps them: `pnpm-workspace.yaml`,
 /// `.yarnrc.yml`, or package.json at the top or under `workspaces` (bun). `None` when the
-/// directory defines none.
-fn catalogs_in(dir: &Path) -> Option<Catalogs> {
-    let yarnrc = std::fs::read_to_string(dir.join(".yarnrc.yml")).ok().and_then(|t| crate::foreign::read_yaml(&t).ok());
+/// directory defines none; an error when its `.yarnrc.yml` cannot be read.
+fn catalogs_in(dir: &Path) -> std::result::Result<Option<Catalogs>, String> {
+    let file = dir.join(".yarnrc.yml");
+    let yarnrc = match std::fs::read_to_string(&file) {
+        Ok(t) => Some(crate::foreign::read_yaml(&t).map_err(|e| format!("{}: {}", file.display(), e.message))?),
+        Err(_) => None,
+    };
     let manifest = std::fs::read_to_string(dir.join("package.json")).ok().and_then(|t| json::parse(&t).ok());
     let workspaces = manifest.as_ref().and_then(|m| m.get("workspaces")).filter(|w| w.as_object().is_some());
     let docs = [pnpm_workspace(dir).map(Value::Object), yarnrc, manifest.clone(), workspaces.cloned()];
@@ -252,14 +256,14 @@ fn catalogs_in(dir: &Path) -> Option<Catalogs> {
             out.entry(name.clone()).or_default().extend(map(c));
         }
     }
-    found.then_some(out)
+    Ok(found.then_some(out))
 }
 
 /// The range a `catalog:` or `catalog:<name>` stands for, from the nearest directory at or above
 /// the package.json that defines catalogs: the workspace root.
 pub fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
-    static FOUND: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<Catalogs>>>> =
-        std::sync::Mutex::new(None);
+    type Found = std::result::Result<Option<Catalogs>, String>;
+    static FOUND: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Found>>> = std::sync::Mutex::new(None);
     let which = match spec["catalog:".len()..].trim() {
         "" => "default",
         other => other,
@@ -269,6 +273,8 @@ pub fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
     let cache = cache.get_or_insert_with(Default::default);
     for dir in start.ancestors().skip(1) {
         let catalogs = cache.entry(dir.to_path_buf()).or_insert_with(|| catalogs_in(dir));
+        let catalogs =
+            catalogs.as_ref().map_err(|why| manifest_error(format!("{}: {name}@{spec}: {why}", file.display())))?;
         if let Some(catalogs) = catalogs {
             return catalogs.get(which).and_then(|c| c.get(name)).cloned().ok_or_else(|| {
                 manifest_error(format!(
