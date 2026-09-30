@@ -256,23 +256,33 @@ impl Dir {
         if !path.is_dir() {
             return Err(io::Error::new(io::ErrorKind::NotFound, format!("{} is not a directory", path.display())));
         }
-        Ok(Self { path: path.to_path_buf() })
+        let verbatim = std::env::var_os("JPM_VERBATIM").is_some();
+        let path = if verbatim && path.is_absolute() && !path.to_string_lossy().starts_with(r"\\") {
+            PathBuf::from(format!(r"\\?\{}", normalize(path).display()))
+        } else {
+            path.to_path_buf()
+        };
+        Ok(Self { path })
+    }
+
+    fn at(&self, rel: &str) -> PathBuf {
+        self.path.join(rel.replace('/', "\\"))
     }
 
     pub fn mkdir(&self, rel: &str) -> io::Result<()> {
-        std::fs::create_dir(self.path.join(rel))
+        std::fs::create_dir(self.at(rel))
     }
 
     pub fn link(&self, from: &Dir, from_rel: &str, rel: &str) -> io::Result<()> {
-        std::fs::hard_link(from.path.join(from_rel), self.path.join(rel))
+        std::fs::hard_link(from.at(from_rel), self.at(rel))
     }
 
     pub fn create(&self, rel: &str, _mode: u32) -> io::Result<std::fs::File> {
-        std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(self.path.join(rel))
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(self.at(rel))
     }
 
     pub fn is_dir(&self, rel: &str) -> bool {
-        self.path.join(rel).is_dir()
+        self.at(rel).is_dir()
     }
 }
 
