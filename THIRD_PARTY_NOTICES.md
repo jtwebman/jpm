@@ -30,7 +30,6 @@ Where a crate offers MIT or Apache-2.0, jpm takes it under MIT.
 | Data | License | Copyright | Where |
 | --- | --- | --- | --- |
 | [Node.js release keys](https://github.com/nodejs/release-keys) | MIT | Copyright 2019 Devin Canterberry | `src/pgp.rs` keeps the keys' fingerprints; the keys are fetched from that repository |
-| HPACK's static table and Huffman code ([RFC 7541](https://www.rfc-editor.org/rfc/rfc7541) appendices A and B) | IETF Trust | Copyright (c) 2015 IETF Trust and the persons identified as the document authors | `crates/http/src/hpack.rs` (the Huffman code kept as its symbols in canonical order and a count per code length) |
 
 ## Test data in this repository
 

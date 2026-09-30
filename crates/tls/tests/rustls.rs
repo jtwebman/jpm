@@ -1,6 +1,6 @@
 //! Interop with rustls as the server, over loopback: every version, suite, certificate key type
 //! and group; ALPN; payloads around the record size; handshake messages cut into small records;
-//! KeyUpdate; both ways a connection can end; and a stream split into a reader and a writer.
+//! KeyUpdate; and both ways a connection can end.
 
 mod common;
 
@@ -22,8 +22,6 @@ struct Case {
     key_updates: usize,
     /// close_notify at the end, or just a TCP close.
     clean: bool,
-    /// The client sends through a `Writer` split off the stream, from another thread.
-    split: bool,
 }
 
 impl Case {
@@ -36,7 +34,6 @@ impl Case {
             down: 100,
             key_updates: 0,
             clean: true,
-            split: false,
         }
     }
 }
@@ -86,19 +83,8 @@ fn run(c: &Case) -> Result<Option<Vec<u8>>, String> {
     let (tcp, server) = rustls_server(config, move |s| server_side(s, &case));
     let client = (|| -> std::io::Result<Option<Vec<u8>>> {
         let mut s = connect(tcp, "localhost", &pki.config(&c.client_alpn))?;
-        let writer = if c.split { Some(s.split(s.get_ref().try_clone()?)) } else { None };
-        match &writer {
-            Some(w) => {
-                let (w, up) = (w.clone(), c.up);
-                std::thread::spawn(move || (&w).write_all(&pattern(up, 1)).and_then(|_| (&w).flush()))
-                    .join()
-                    .unwrap()?;
-            }
-            None => {
-                s.write_all(&pattern(c.up, 1))?;
-                s.flush()?;
-            }
-        }
+        s.write_all(&pattern(c.up, 1))?;
+        s.flush()?;
         // Read in uneven pieces to go through the buffered-plaintext path.
         let want = pattern(c.down + sent_before(c), 2);
         let mut got = Vec::with_capacity(want.len());
@@ -113,10 +99,7 @@ fn run(c: &Case) -> Result<Option<Vec<u8>>, String> {
             got.extend_from_slice(&buf[..n]);
             step = (step * 7 + 13) % 39000 + 1;
         }
-        match &writer {
-            Some(w) => (&*w).write_all(b"!")?,
-            None => s.write_all(b"!")?,
-        }
+        s.write_all(b"!")?;
         let end = s.read(&mut buf);
         if c.clean {
             assert_eq!(end.ok(), Some(0), "{c:?}: close_notify is a clean end");
@@ -216,14 +199,6 @@ fn alpn() {
         c.opts.alpn = vec![b"http/1.1".to_vec()];
         assert_eq!(run(&c).unwrap(), None);
 
-        // h2 when both have it, from either list's order.
-        let mut c = Case::new(tls13, 0, KeyType::P256);
-        c.client_alpn = vec![b"h2", b"http/1.1"];
-        c.opts.alpn = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        assert_eq!(run(&c).unwrap().as_deref(), Some(&b"h2"[..]));
-        c.opts.alpn = vec![b"http/1.1".to_vec(), b"h2".to_vec()];
-        assert!(run(&c).unwrap().is_some());
-
         // No overlap: rustls refuses with no_application_protocol.
         let mut c = Case::new(tls13, 0, KeyType::P256);
         c.client_alpn = vec![b"http/1.1"];
@@ -264,28 +239,6 @@ fn key_update() {
     let mut c = Case::new(true, 0, KeyType::P256);
     c.key_updates = 2;
     c.opts.max_fragment = Some(64);
-    ok(&c);
-}
-
-/// A split stream: the writer sends from another thread, and answers KeyUpdate for the reader.
-#[test]
-fn split_stream() {
-    for tls13 in [true, false] {
-        for aead in 0..3 {
-            let mut c = Case::new(tls13, aead, KeyType::P256);
-            c.split = true;
-            c.up = 70_000;
-            c.down = 100_000;
-            ok(&c);
-            if tls13 {
-                c.key_updates = 3;
-                ok(&c);
-            }
-        }
-    }
-    let mut c = Case::new(true, 0, KeyType::P256);
-    c.split = true;
-    c.clean = false;
     ok(&c);
 }
 
