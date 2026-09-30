@@ -593,6 +593,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
         own
     });
+    let keys = if global.is_none() { short_keys(keys, &resolution, &chosen) } else { keys };
     let build_keys: HashMap<String, String> =
         chosen.iter().filter_map(|id| Some((id.clone(), keys.get(id)?.clone()))).collect();
     let options = link::Options {
@@ -746,6 +747,59 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
     std::fs::write(&file, text).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
     let install = install_tree(&mut Ctx::open(opts, false)?, None, None)?;
     Ok(Approved { approved, pending: install.unbuilt.clone(), install: Some(install) })
+}
+
+/// Entries built in the project are named `<name>@<version>`, and a copy for other peers by the
+/// peers as well, `<name>@<version>(<peer>@<version>)`, not by their subgraph's hash: every link
+/// to an entry spells its name, and a link of up to 59 bytes fits in its inode, where a longer
+/// one takes a block of its own. A package built by its scripts or patched keeps the hash: a
+/// standing entry's files are not checked against the store, so a change to the patch or the
+/// approval must change the name. So does a name that would be longer than the hashed one, one
+/// a path could not hold, and one two entries would share.
+fn short_keys(keys: HashMap<String, String>, res: &Resolution, built: &HashSet<String>) -> HashMap<String, String> {
+    let name_of = |id: &String| -> Option<String> {
+        let p = res.packages.get(id)?;
+        if built.contains(id) || p.patch.is_some() {
+            return None;
+        }
+        let peers = id.find('(').map_or("", |at| &id[at..]);
+        let name = format!("{}@{}{peers}", p.dir_name(), p.version).replace('/', "+");
+        let safe = !name.starts_with('.') && !name.contains(['\\', '\0', ':', '/']) && peers.len() <= 23;
+        safe.then_some(name)
+    };
+    // Each key's one name, when every package it holds agrees on it.
+    let mut named: HashMap<&str, Option<String>> = HashMap::new();
+    for (id, key) in &keys {
+        let name = name_of(id);
+        named
+            .entry(key)
+            .and_modify(|n| {
+                if *n != name {
+                    *n = None
+                }
+            })
+            .or_insert(name);
+    }
+    // A name is taken once by the key it names; a second holder, or a key spelled like it, and
+    // it names neither.
+    let mut holders: HashMap<String, usize> = keys.values().map(|k| (k.clone(), 1)).collect();
+    for name in named.values().flatten() {
+        *holders.entry(name.clone()).or_default() += 1;
+    }
+    let renamed: HashMap<String, String> = named
+        .into_iter()
+        .filter_map(|(key, name)| Some((key.to_string(), name?)))
+        .filter(|(_, name)| holders.get(name) == Some(&1))
+        .collect();
+    keys.into_iter().map(|(id, key)| (id, renamed.get(&key).cloned().unwrap_or(key))).collect()
+}
+
+/// An entry's package name and version, from its name with the subgraph's hash or without.
+fn entry_name_version(entry: &str) -> Option<(String, &str)> {
+    crate::keys::name_version(entry).or_else(|| {
+        let at = crate::graph::name_end(entry)?;
+        Some((entry[..at].replace('+', "/"), &entry[at + 1..]))
+    })
 }
 
 /// The global virtual store's entry directory, when it is wanted and the store can be written.
@@ -1189,7 +1243,7 @@ fn plan(
     let installed = state::read(dir).filter(|_| existing.is_none() && !ctx.dedupe).map(|s| {
         info(&format!("no {LOCKFILE}; resolving with the versions in node_modules preferred"));
         let mut prefer = resolve::Prefer::default();
-        for (name, version) in s.entries.iter().chain(&s.shared).filter_map(|e| crate::keys::name_version(e)) {
+        for (name, version) in s.entries.iter().chain(&s.shared).filter_map(|e| entry_name_version(e)) {
             prefer.versions.entry(name).or_default().push(version.to_string());
         }
         prefer

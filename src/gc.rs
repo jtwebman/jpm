@@ -77,15 +77,15 @@ pub fn sweep_entries(dir: &Path, keep: &HashSet<String>) -> Swept {
     out
 }
 
-/// `<name>@<version>-<22-character digest>`: only what jpm itself names an entry.
+/// `<name>@<version>`, with `-<22-character digest>` or without: only what jpm itself names an
+/// entry.
 fn entry_name(name: &str) -> bool {
-    let Some((head, digest)) = name.len().checked_sub(22).and_then(|at| name.split_at_checked(at)) else {
-        return false;
-    };
-    head.len() > 2
-        && head.ends_with('-')
-        && head[1..].contains('@')
-        && digest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    let Some(at) = crate::graph::name_end(name) else { return false };
+    let (package, version) = (&name[..at], &name[at + 1..]);
+    !package.is_empty()
+        && !package.starts_with('.')
+        && !version.is_empty()
+        && version.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.+".contains(&b))
 }
 
 /// What the registered projects use: global entry names, and the store directories of the
@@ -265,13 +265,17 @@ mod tests {
         let dir = crate::store::tests::scratch("gc2");
         let entries = dir.join("node_modules").join(".jpm");
         let (a, b) = ("a@1.0.0-aaaaaaaaaaaaaaaaaaaaaa", "b@1.0.0-bbbbbbbbbbbbbbbbbbbbbb");
-        for name in [a, b, ".tmp-1", "not-an-entry"] {
+        // Project entries named without the digest, where the name alone tells them apart.
+        let (c, d) = ("@s+c@2.0.0-rc.1", "d@1.0.0");
+        for name in [a, b, c, d, ".tmp-1", "not-an-entry", "node_modules", ".exec"] {
             fs::create_dir_all(entries.join(name)).unwrap();
         }
-        let keep: HashSet<String> = [a.to_string()].into();
-        assert_eq!(sweep_entries(&dir, &keep).removed, 1);
-        assert!(entries.join(a).exists() && entries.join(".tmp-1").exists() && entries.join("not-an-entry").exists());
-        assert!(!entries.join(b).exists());
+        let keep: HashSet<String> = [a.to_string(), d.to_string()].into();
+        assert_eq!(sweep_entries(&dir, &keep).removed, 2);
+        for kept in [a, d, ".tmp-1", "not-an-entry", "node_modules", ".exec"] {
+            assert!(entries.join(kept).exists(), "{kept}");
+        }
+        assert!(!entries.join(b).exists() && !entries.join(c).exists());
         remove_tree(&dir);
     }
 }

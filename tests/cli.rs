@@ -2247,6 +2247,38 @@ fn links_into_a_node_modules_it_made_and_converges_one_it_found() {
 }
 
 #[test]
+fn names_project_entries_by_name_version_and_peers() {
+    let r = Registry::start(vec![
+        pkg("host", "1.0.0", json!({})),
+        pkg("host", "2.0.0", json!({})),
+        pkg("plugin", "1.0.0", json!({ "peerDependencies": { "host": ">=1" } })),
+        pkg("p1", "1.0.0", json!({ "dependencies": { "plugin": "1.0.0", "host": "1.0.0" } })),
+        pkg("p2", "1.0.0", json!({ "dependencies": { "plugin": "1.0.0", "host": "2.0.0" } })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "p1": "1.0.0", "p2": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    let list = entries(&env.project());
+    // plugin has a copy for each host, named by it.
+    for short in
+        ["host@1.0.0", "host@2.0.0", "p1@1.0.0", "p2@1.0.0", "plugin@1.0.0(host@1.0.0)", "plugin@1.0.0(host@2.0.0)"]
+    {
+        assert!(list.iter().any(|e| e == short), "{short} in {list:?}");
+    }
+    assert_eq!(list.len(), 6, "{list:?}");
+    assert!(env.read("node_modules/p2/../host/index.js").contains("host@2.0.0"));
+    assert!(env.read("node_modules/p1/../plugin/../host/index.js").contains("host@1.0.0"));
+    // An entry the tree no longer wants is pruned, named either way.
+    env.manifest(json!({ "dependencies": { "p1": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    env.ok(&["prune"]);
+    let list = entries(&env.project());
+    assert!(!list.iter().any(|e| e.starts_with("p2@") || e == "host@2.0.0"), "{list:?}");
+    assert!(list.iter().any(|e| e == "p1@1.0.0"), "{list:?}");
+    assert!(env.read("node_modules/p1/../plugin/../host/index.js").contains("host@1.0.0"));
+}
+
+#[test]
 fn the_hoist_never_hides_what_the_root_links() {
     // Node looks in the hoist before the root's node_modules, so a registry `b` there would
     // stand in for the root's workspace `b` in every undeclared import.
