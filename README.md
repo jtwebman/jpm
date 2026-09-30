@@ -608,5 +608,6 @@ also MIT. See [LICENSE](LICENSE).
 jpm also builds on BearSSL's constant-time AES and GHASH, npm's cmd-shim, and the crates it is
 compiled with (flate2, zlib-rs, webpki-roots and others); its tests use Project Wycheproof's and
 the RFCs' test vectors, and check jpm against node-semver's, npm-package-arg's and
-hosted-git-info's own test cases. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) credits each with its
+hosted-git-info's own test cases, npm arborist's and Bun's lockfiles, and Bun's and Yarn berry's
+install scenarios. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) credits each with its
 license, and ships with every release.

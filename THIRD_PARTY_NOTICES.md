@@ -42,6 +42,9 @@ These are in the source repository only, never in jpm's binaries.
 | [node-semver](https://github.com/npm/node-semver) test tables | ISC | Copyright (c) Isaac Z. Schlueter and Contributors | `tests/conformance/semver` (generated from them; the license is beside them) |
 | [npm-package-arg](https://github.com/npm/npm-package-arg) test cases | ISC | Copyright (c) npm, Inc. | `tests/conformance/npm-package-arg` (generated from them; the license is beside them) |
 | [hosted-git-info](https://github.com/npm/hosted-git-info) test cases | ISC | Copyright (c) 2015, Rebecca Turner | `tests/conformance/hosted-git-info` (generated from them; the license is beside them) |
+| [@npmcli/arborist](https://github.com/npm/cli/tree/latest/workspaces/arborist) fixture lockfiles | ISC | Copyright npm, Inc. | `tests/conformance/arborist` (the license is beside them) |
+| [Bun](https://github.com/oven-sh/bun) install tests and lockfiles | MIT | Copyright (c) Oven and Bun contributors | `tests/conformance/bun` (the license is beside them) and `tests/bun.rs` (scenarios re-created from bun's tests) |
+| [Yarn berry](https://github.com/yarnpkg/berry) acceptance scenarios | BSD-2-Clause | Copyright (c) 2016-present, Yarn Contributors | `tests/berry.rs` (scenarios and fixture manifests re-created from `packages/acceptance-tests`; the license is below) |
 
 ---
 
@@ -50,7 +53,7 @@ These are in the source repository only, never in jpm's binaries.
 ### MIT License
 
 Applies to upm, BearSSL, flate2, rustls-pki-types, junction, scopeguard, windows-sys,
-windows-link and the Node.js release keys, each with its copyright line above.
+windows-link, the Node.js release keys and Bun's tests, each with its copyright line above.
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -74,7 +77,7 @@ SOFTWARE.
 
 ### ISC License (cmd-shim)
 
-The same terms cover node-semver, npm-package-arg and hosted-git-info, each under its own
+The same terms cover node-semver, npm-package-arg, hosted-git-info and @npmcli/arborist, each under its own
 copyright line above; their full license files are beside their test data.
 
 ```
@@ -93,6 +96,36 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### BSD 2-Clause License (Yarn berry)
+
+```
+BSD 2-Clause License
+
+Copyright (c) 2016-present, Yarn Contributors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### zlib License (zlib-rs)
