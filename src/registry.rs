@@ -167,6 +167,11 @@ impl Registry {
         self.cache.as_ref().map(|c| c.mode)
     }
 
+    /// Where kept documents go, when they are kept.
+    pub fn metadata_dir(&self) -> Option<&Path> {
+        self.cache.as_ref().map(|c| c.dir.as_path())
+    }
+
     pub fn offline(&self) -> bool {
         self.mode() == Some(CacheMode::Only)
     }

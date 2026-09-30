@@ -325,6 +325,15 @@ dependencies (`@oven/bun-linux-x64`, `@deno/linux-x64-glibc`, …) are the build
 the registry like any package. pnpm takes Bun and Deno from their GitHub release zips instead.
 On arm64 macOS and Windows, a version with no arm64 build installs the x64 one.
 
+As in pnpm, the `SHASUMS256.txt` is trusted only once its signature, `SHASUMS256.txt.sig`, checks
+out against Node's release keys. jpm carries only the keys' fingerprints (every current and past
+releaser's, from nodejs/release-keys): it fetches the signer's key from that repository once,
+keeps it under the store's `metadata/`, and uses it only when it has the fingerprint jpm expects.
+This happens when a version is resolved; installs from `jpm.lock` check downloads against the
+lock alone. A mirror that publishes no signatures needs `verify-node-signature=false` in
+`.npmrc` or `--no-verify-node-signature`. unofficial-builds.nodejs.org's musl list is not
+signed; it is trusted as far as its TLS download, as pnpm trusts it.
+
 In `jpm.lock` the runtime is a package holding every platform's build:
 
 ```
@@ -475,7 +484,10 @@ compiled.
 
 The git tests use bare repositories on disk and a local server for GitHub's archives, through
 two switches meant for tests only: `JPM_GIT_ALLOW_FILE=1` lets git fetch `file://` urls, and
-`JPM_CODELOAD_URL` replaces `https://codeload.github.com`.
+`JPM_CODELOAD_URL` replaces `https://codeload.github.com`. The runtime tests serve real Node
+release signatures and keys (`tests/fixtures/node`) from a local server, which
+`JPM_NODE_KEYS_URL` points jpm at in place of nodejs/release-keys; a key is still used only when
+its fingerprint is one jpm carries.
 
 jpm has its own TLS and cryptography, in three crates:
 
