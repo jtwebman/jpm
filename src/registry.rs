@@ -512,9 +512,11 @@ pub fn pick_manifest(doc: &Packument, spec: &Spec) -> Result<Arc<Manifest>> {
         return key.and_then(|k| doc.version(&k)).ok_or_else(fail);
     }
     let range = &spec.fetch_spec;
-    // The default tag usually wins, and skips parsing and sorting the list.
-    if let Some(tagged) = doc.tags.get("latest")
-        && (range == "*" || semver::satisfies(tagged, range))
+    // The default tag usually wins, and skips parsing and sorting the list. `*` takes a
+    // prerelease there only when there is no release, as pnpm picks (npm takes it anyway).
+    let latest = doc.tags.get("latest");
+    if let Some(tagged) = latest
+        && semver::satisfies(tagged, range)
         && let Some(m) = doc.version(tagged).filter(|m| !m.deprecated && engine_ok(m))
     {
         return Ok(m);
@@ -535,7 +537,7 @@ pub fn pick_manifest(doc: &Packument, spec: &Spec) -> Result<Arc<Manifest>> {
             best = Some((rank, v, m));
         }
     }
-    best.map(|(_, _, m)| m).ok_or_else(fail)
+    best.map(|(_, _, m)| m).or_else(|| latest.filter(|_| range == "*").and_then(|t| doc.version(t))).ok_or_else(fail)
 }
 
 // --- documents kept on disk -----------------------------------------------------------------
@@ -754,7 +756,26 @@ mod tests {
         assert_eq!(pick("^1.2").unwrap(), "1.2.0"); // deprecated, but the only match
         assert_eq!(pick("next").unwrap(), "2.0.0-rc.1");
         assert_eq!(pick("=1.0.0").unwrap(), "1.0.0");
+        assert_eq!(pick("*").unwrap(), "1.1.0");
         assert_eq!(pick("^3").unwrap_err().code, "ETARGET");
         assert_eq!(pick("nope").unwrap_err().code, "ETARGET");
+    }
+
+    #[test]
+    fn star_takes_a_prerelease_latest_only_when_there_is_no_release() {
+        // pnpm's registry-mock has-prerelease and has-beta-only.
+        let doc = |versions: &[&str]| {
+            let list: Vec<String> =
+                versions.iter().map(|v| format!(r#""{v}":{{"name":"a","version":"{v}"}}"#)).collect();
+            let text = format!(
+                r#"{{"name":"a","dist-tags":{{"latest":"{}"}},"versions":{{{}}}}}"#,
+                versions[0],
+                list.join(",")
+            );
+            Packument::parse(text.into_bytes()).unwrap()
+        };
+        let star = |d: &Packument| pick_manifest(d, &parse_dep("a", "*").unwrap()).unwrap().version.clone();
+        assert_eq!(star(&doc(&["3.0.0-rc.0", "1.0.0", "2.0.0"])), "2.0.0");
+        assert_eq!(star(&doc(&["1.0.0-beta.1"])), "1.0.0-beta.1");
     }
 }
