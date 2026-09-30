@@ -709,8 +709,10 @@ impl Linker<'_> {
             let final_nm = self.root_of(entry).join(&entry.key).join("node_modules");
             for (bin, (dep, target)) in bins {
                 if WIN {
+                    // Relative to where the shim ends up, as `intact` reads it.
                     let file = final_nm.join(&dep).join(&target);
-                    for (sfx, text) in self.shims(&bin_dir, &file, dep_pkg(&deps, &dep), &target)? {
+                    let shims = self.shims(&final_nm.join(".bin"), &file, dep_pkg(&deps, &dep), &target)?;
+                    for (sfx, text) in shims {
                         let at = bin_dir.join(format!("{bin}{sfx}"));
                         fs::write(&at, text)
                             .map_err(|e| Error::io(&e, format!("cannot write {}", at.display())).with_code("ELINK"))?;
@@ -1174,7 +1176,8 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
                 // Relative to the link (unix) or absolute (a junction).
                 let local = dir.join("node_modules").join(".jpm");
                 let store = relative(at.parent()?, &local);
-                let tail = Path::new("node_modules").join(name);
+                // An alias's entry holds its package under the real name.
+                let tail = Path::new("node_modules").join(pkg.map_or(name.as_str(), Package::dir_name));
                 let to_path = Path::new(&to);
                 let within = to_path.starts_with(&store)
                     || to_path.starts_with(&local)
