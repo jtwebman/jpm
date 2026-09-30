@@ -114,6 +114,10 @@ const STREAM_MIN: u64 = 1024 * 1024;
 
 /// Files of a tarball written by the thread reading it; past these, writer threads take over.
 const INLINE_FILES: usize = 64;
+/// Inflated bytes read ahead of the tar reader.
+const INFLATED_BUF: usize = 64 * 1024;
+/// The largest write of a file the reading thread writes itself.
+const COPY_BUF: usize = 128 * 1024;
 /// Writer threads for one tarball, at most.
 const WRITERS: usize = 8;
 /// File bodies read ahead of the writers.
@@ -522,8 +526,15 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
         .read_to_end(&mut head)
         .map_err(|e| Error::new("EBADTAR", format!("Corrupt tarball: {e}")))?;
     let gz = head.starts_with(&[0x1f, 0x8b]);
-    let raw = io::BufReader::with_capacity(256 * 1024, io::Cursor::new(head).chain(source));
-    let input: Box<dyn Read + '_> = if gz { Box::new(GzDecoder::new(raw)) } else { Box::new(raw) };
+    let raw = io::Cursor::new(head).chain(source);
+    // The buffer is on the inflated side: the decoder buffers its own input, and has no
+    // `read_buf`, so each of the tar reader's small reads (every header, every small file) would
+    // zero its buffer first and inflate a few hundred bytes at a time.
+    let input: Box<dyn Read + '_> = if gz {
+        Box::new(io::BufReader::with_capacity(INFLATED_BUF, GzDecoder::new(raw)))
+    } else {
+        Box::new(io::BufReader::with_capacity(INFLATED_BUF, raw))
+    };
     let mut input = input.take(tar::MAX_ARCHIVE + 1);
     let mut files: BTreeMap<String, FileEntry> = BTreeMap::new();
     let mut made: HashSet<PathBuf> = HashSet::new();
@@ -593,7 +604,9 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
                 manifest = Some(data);
             } else {
-                io::copy(body, &mut out).map_err(corrupt)?;
+                // Only as big as the file: 32 downloads unpack at once, and most files are small.
+                let mut buf = vec![0u8; usize::try_from(size).unwrap_or(COPY_BUF).clamp(1, COPY_BUF)];
+                copy_body(body, &mut out, &mut buf, &file)?;
             }
             Ok(())
         });
@@ -622,6 +635,26 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     }
     let unpacked_size = files.values().map(|f| f.size).sum();
     Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
+}
+
+/// A file's body into `out` in `buf`-sized writes: one write for most files, where `io::copy`
+/// would write every 8 KiB. A read error is a corrupt tarball, a write error the disk's.
+fn copy_body(body: &mut dyn Read, out: &mut impl Write, buf: &mut [u8], file: &Path) -> Result<()> {
+    loop {
+        let mut n = 0;
+        while n < buf.len() {
+            match body.read(&mut buf[n..]) {
+                Ok(0) => break,
+                Ok(k) => n += k,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(Error::new("EBADTAR", format!("Corrupt tarball: {e}"))),
+            }
+        }
+        out.write_all(&buf[..n]).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+        if n < buf.len() {
+            return Ok(());
+        }
+    }
 }
 
 /// A download that is a Windows program, not an archive (Node's `win-x64/node.exe`): kept as the
@@ -995,6 +1028,54 @@ pub mod tests {
         assert_eq!(paths, if crate::sys::FOLDS_CASE { vec!["foo.js"] } else { vec!["Foo.js", "foo.js"] });
         assert_eq!(fs::read(dir.join("x/foo.js")).unwrap(), b"lower");
         remove_tree(&dir);
+    }
+
+    #[test]
+    fn copies_a_body_in_whole_buffers() {
+        /// Every write's length, and the bytes.
+        #[derive(Default)]
+        struct Writes(Vec<usize>, Vec<u8>);
+        impl Write for Writes {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                self.0.push(b.len());
+                self.1.extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let data: Vec<u8> = (0..2500u32).map(|i| i as u8).collect();
+        let file = Path::new("x");
+        let mut buf = [0u8; 1000];
+        // A reader that hands out a few bytes at a time still fills each write.
+        let mut out = Writes::default();
+        let mut trickle = io::BufReader::with_capacity(7, data.as_slice());
+        copy_body(&mut trickle, &mut out, &mut buf, file).unwrap();
+        assert_eq!((out.0, out.1), (vec![1000, 1000, 500], data.clone()));
+        let mut out = Writes::default();
+        copy_body(&mut &data[..2000], &mut out, &mut buf, file).unwrap();
+        assert_eq!(out.0, [1000, 1000]);
+        let mut out = Writes::default();
+        copy_body(&mut io::empty(), &mut out, &mut buf, file).unwrap();
+        assert!(out.0.is_empty());
+        // A body that fails is a corrupt tarball; a disk that fails is not.
+        struct Fails;
+        impl Read for Fails {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("bad deflate"))
+            }
+        }
+        impl Write for Fails {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        assert_eq!(copy_body(&mut Fails, &mut Writes::default(), &mut buf, file).unwrap_err().code, "EBADTAR");
+        assert_ne!(copy_body(&mut &data[..], &mut Fails, &mut buf, file).unwrap_err().code, "EBADTAR");
     }
 
     #[test]
