@@ -18,16 +18,17 @@ jobs:
       - name: build
         run: |
           source bench/ab.env
-          for v in A B; do
-            ref=${!v}
-            git worktree add --detach ../build-$v $ref
-            (cd ../build-$v && CARGO_TARGET_DIR=$PWD/../target-$v cargo build --release 2>&1 | tail -1)
-            echo "$v=$ref $(git rev-parse --short $ref) $(stat -c %s ../target-$v/release/jpm) bytes"
+          for v in $REFS; do
+            tag=${v%%=*} ref=${v#*=}
+            git worktree add --detach ../build-$tag $ref
+            (cd ../build-$tag && CARGO_TARGET_DIR=$PWD/../target-$tag cargo build --release 2>&1 | tail -1)
+            echo "$tag=$ref $(git rev-parse --short $ref) $(stat -c %s ../target-$tag/release/jpm) bytes"
           done | tee sizes.txt
       - name: ab
         run: |
           source bench/ab.env
-          bash bench/ab.sh $PWD/../target-A/release/jpm $PWD/../target-B/release/jpm $N $PHASES $FIXTURES | tee ab.out
+          bins=(); for v in $REFS; do tag=${v%%=*}; bins+=("$tag=$PWD/../target-$tag/release/jpm"); done
+          bash bench/ab.sh $N $PHASES $FIXTURES "${bins[@]}" | tee ab.out
           { echo "## A/B on ubuntu-latest ($(nproc) cores)"; echo; sed 's/$/  /' sizes.txt; echo; grep '^|' ab.out; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

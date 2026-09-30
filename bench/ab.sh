@@ -1,8 +1,10 @@
 #!/bin/bash
 # Throwaway (never merged): interleaved A/B installs of two jpm builds on one runner.
-# ab.sh <binA> <binB> <n> <phases> <fixtures>
+# ab.sh <n> <phases> <fixtures> <tag=bin>...: every build once per round, the order rotating.
 set -u
-A=$1 B=$2 N=$3 PH=$4 FX=$5
+N=$1 PH=$2 FX=$3; shift 3
+BUILDS=("$@")
+A=${BUILDS[0]#*=}
 W=$RUNNER_TEMP/ab; mkdir -p $W
 FIX=$PWD/bench/fixtures
 wipe() { chmod -R u+w "$1" 2>/dev/null; rm -rf "$1"; }
@@ -25,7 +27,11 @@ for f in ${FX//,/ }; do
   (cd $W/$f/proj && HOME=$W/$f/home JPM_STORE=$W/$f/home/store $A install --ignore-scripts >/dev/null 2>&1); cp $W/$f/proj/jpm.lock $W/$f.lock
   for p in ${PH//,/ }; do
     for i in $(seq 1 $N); do
-      if [ $((i % 2)) = 0 ]; then run $A $f $p A; run $B $f $p B; else run $B $f $p B; run $A $f $p A; fi
+      k=${#BUILDS[@]}
+      for j in $(seq 0 $((k - 1))); do
+        b=${BUILDS[$(( (i + j) % k ))]}
+        run ${b#*=} $f $p ${b%%=*}
+      done
     done
   done
 done > $W/rows
