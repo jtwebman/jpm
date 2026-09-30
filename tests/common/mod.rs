@@ -318,6 +318,9 @@ impl Env {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("home")).unwrap();
         std::fs::create_dir_all(root.join("project")).unwrap();
+        // jpm prints and passes on real paths: macOS's temp directory is under a /var link.
+        #[cfg(unix)]
+        let root = std::fs::canonicalize(&root).unwrap();
         Self { root, registry: registry.url.clone() }
     }
 

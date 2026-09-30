@@ -97,8 +97,8 @@ fn node_options_hold_any_project_path() {
 }
 
 /// NODE_OPTIONS cannot spell a path that is not Unicode; a lossy spelling names no file and
-/// stops every node.
-#[cfg(unix)]
+/// stops every node. (APFS takes no such name.)
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn node_starts_under_a_project_path_that_is_not_unicode() {
     use std::os::unix::ffi::OsStrExt;

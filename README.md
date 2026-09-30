@@ -34,8 +34,8 @@ another directory. Each platform has its own build:
 | Windows x64   | `jpm-windows-x64.exe`   | `x86_64-pc-windows-msvc`         |
 | Windows arm64 | `jpm-windows-arm64.exe` | `aarch64-pc-windows-msvc`        |
 
-The Linux builds are static, so they run on glibc and musl (Alpine) alike. Tests run on Linux
-and Windows; macOS builds are not yet tested in CI.
+The Linux builds are static, so they run on glibc and musl (Alpine) alike. Tests run on
+Linux x64, Windows x64 and macOS arm64.
 
 Or build it:
 

@@ -670,6 +670,7 @@ fn pack(dir: &Path, index: Index) -> Result<Index> {
         kept
     };
     let mut out = Index::default();
+    let mut emptied = Vec::new();
     for f in index.files {
         if f.path.split('/').all(|p| p != "node_modules") && kept(&f.path) {
             out.unpacked_size += f.size;
@@ -679,6 +680,17 @@ fn pack(dir: &Path, index: Index) -> Result<Index> {
         let file = dir.join(&f.path);
         let _ = make_writable(&file);
         fs::remove_file(&file).map_err(|e| Error::io(&e, format!("cannot remove {}", file.display())))?;
+        emptied.push(f.path);
+    }
+    // No directory left empty either: macOS clones the whole directory, not the index.
+    for path in emptied {
+        let mut at = Path::new(&path).parent();
+        while let Some(d) = at.filter(|d| !d.as_os_str().is_empty()) {
+            if fs::remove_dir(dir.join(d)).is_err() {
+                break;
+            }
+            at = d.parent();
+        }
     }
     Ok(out)
 }

@@ -647,7 +647,9 @@ impl Linker<'_> {
         fs::create_dir_all(parent)
             .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
         let src = self.opts.store.pkg_dir(&pkg.integrity)?;
+        // A runtime's entry is less than its store directory (see `index`): never a clone.
         let cloned = !entry.build
+            && entry.pkg.runtime.is_none()
             && sys::clone_dir(&src, &pkg_dir)
                 .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
         if cloned {
