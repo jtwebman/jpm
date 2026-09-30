@@ -1095,7 +1095,17 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
             } else {
                 dirs.iter().any(|s| spec::join_path(top.base, &s.fetch_spec[5..]) == path)
             };
-            if !named {
+            // pnpm's `workspace:<other>@<range>`: the one workspace so named, under this name.
+            let aliased = || {
+                let ws = lock.workspaces.get(path);
+                asked.iter().any(|s| {
+                    s.kind == Kind::Workspace
+                        && s.fetch_name != *name
+                        && ws.is_some_and(|w| w.name == s.fetch_name)
+                        && lock.workspaces.values().filter(|w| w.name == s.fetch_name).count() == 1
+                })
+            };
+            if !named && !aliased() {
                 return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
             }
         } else if (spec::is_git(version) || version.contains("://") || version.starts_with("file:"))
