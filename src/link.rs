@@ -837,10 +837,11 @@ impl Linker<'_> {
         // Both held open: each file is linked by its path in the package alone.
         let from_dir = sys::Dir::open(src).map_err(|e| Error::io(&e, format!("cannot read {}", src.display())))?;
         let to_dir = sys::Dir::open(dest).map_err(|e| cannot_create(e, dest))?;
-        let mut made: HashSet<&str> = HashSet::new();
+        let mut made: HashSet<String> = HashSet::new();
         for f in &index.files {
             if let Some((dir, _)) = f.path.rsplit_once('/') {
-                make_dirs(&to_dir, dir, &mut made).map_err(|e| cannot_create(e, &dest.join(dir)).with_code("ELINK"))?;
+                crate::store::make_dirs(&to_dir, dir, &mut made)
+                    .map_err(|e| cannot_create(e, &dest.join(dir)).with_code("ELINK"))?;
             }
         }
         let place = |f: &FileEntry| -> Result<()> {
@@ -1095,24 +1096,6 @@ impl Linker<'_> {
             }
         }
     }
-}
-
-/// `dir` under `root` and each directory between them, made top down, each once: `made` holds
-/// every one made, so no mkdir is asked for twice or fails for want of its parent. Where the disk
-/// folds case, `Lib/` and `lib/` are one directory.
-fn make_dirs<'a>(root: &sys::Dir, dir: &'a str, made: &mut HashSet<&'a str>) -> io::Result<()> {
-    if made.contains(dir) {
-        return Ok(());
-    }
-    if let Some((parent, _)) = dir.rsplit_once('/') {
-        make_dirs(root, parent, made)?;
-    }
-    match root.mkdir(dir) {
-        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
-        _ => {}
-    }
-    made.insert(dir);
-    Ok(())
 }
 
 fn dep_pkg<'a>(deps: &'a [(String, Dep)], name: &str) -> Option<&'a Package> {

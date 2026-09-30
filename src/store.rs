@@ -30,7 +30,7 @@ use flate2::read::GzDecoder;
 use crate::error::{Error, Result};
 use crate::integrity::Integrity;
 use crate::util::{short_hash, temp_suffix, to_base64, to_base64_url, write_atomic};
-use crate::{bin, http, tar};
+use crate::{bin, http, sys, tar};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
@@ -149,7 +149,7 @@ const QUEUED_BYTES: u64 = 32 * 1024 * 1024;
 
 /// A file body for a writer thread: where, whether it runs, the bytes, and what they took of the
 /// budget.
-type Queued = (PathBuf, bool, Vec<u8>, u64);
+type Queued = (String, bool, Vec<u8>, u64);
 
 /// Bytes queued to `extract`'s writers and not yet written.
 #[derive(Default)]
@@ -696,7 +696,10 @@ fn writable(p: &Path) {
 /// executables and declared bins executable. One copy of this for every kind of source.
 /// With `suffix`, each file is written as `<path>.jpm` (see `Index::stored`).
 pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index> {
-    fs::create_dir_all(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
+    let cannot_create = |e: io::Error| Error::io(&e, format!("cannot create {}", dest.display()));
+    fs::create_dir_all(dest).map_err(cannot_create)?;
+    // Held open: each file is created by its path in the package alone.
+    let root = &sys::Dir::open(dest).map_err(cannot_create)?;
     let mut head = Vec::with_capacity(2);
     (&mut *source)
         .take(2)
@@ -715,19 +718,14 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     let mut input = input.take(tar::MAX_ARCHIVE + 1);
     // Each file's size and whether it runs, by path: its `FileEntry` once the tarball is read.
     let mut files: BTreeMap<String, (u64, bool)> = BTreeMap::new();
-    let mut made: HashSet<PathBuf> = HashSet::new();
+    let mut made: HashSet<String> = HashSet::new();
     let mut folded: HashMap<String, String> = HashMap::new();
     let mut manifest: Option<Vec<u8>> = None;
     // The buffer the files this thread writes itself pass through, one for the whole tarball:
     // one per file was 65 MB allocated and zeroed on nuxt.
     let mut copy: Vec<u8> = Vec::new();
-    let stored = |path: &str| {
-        let mut file = dest.join(path);
-        if suffix {
-            file.as_mut_os_string().push(STORED_SUFFIX);
-        }
-        file
-    };
+    // A file's whole path, for what is not done through `root`.
+    let full = |rel: &str| dest.join(rel);
     // Past the first files, small bodies go to writer threads: one tarball of thousands of files
     // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
     let failed = &Mutex::new(None::<Error>);
@@ -738,10 +736,10 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
                 return Err(e);
             }
-            let file = stored(path);
-            if let Some(parent) = file.parent() {
-                make_dirs(dest, parent, &mut made)
-                    .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+            let file = stored_name(path, suffix);
+            if let Some((parent, _)) = path.rsplit_once('/') {
+                make_dirs(root, parent, &mut made)
+                    .map_err(|e| Error::io(&e, format!("cannot create {}", full(parent).display())))?;
             }
             let exec = mode & 0o111 != 0;
             let mut seen = files.insert(path.to_string(), (size, exec)).is_some();
@@ -757,8 +755,8 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             if seen {
                 // A later entry for the path wins, as tar has it: any queued write of it first.
                 finish(&mut writers);
-                let _ = make_writable(&file);
-                let _ = fs::remove_file(&file);
+                let _ = make_writable(&full(&file));
+                let _ = fs::remove_file(full(&file));
             } else if path != "package.json" && size <= QUEUED_MAX && files.len() > INLINE_FILES {
                 budget.take(size);
                 let mut data = Vec::with_capacity(size as usize);
@@ -771,23 +769,24 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                     let recv = Arc::new(Mutex::new(recv));
                     let spawn = |_| {
                         let recv = recv.clone();
-                        scope.spawn(move || write_queued(&recv, failed, budget))
+                        scope.spawn(move || write_queued(root, &recv, failed, budget))
                     };
                     (send, (0..crate::pool::disk_threads().min(WRITERS)).map(spawn).collect())
                 });
-                if send.send((file, exec, data, size)).is_err() {
+                if send.send((file.into_owned(), exec, data, size)).is_err() {
                     budget.give(size);
                 }
                 return Ok(());
             }
-            let mut out = create(&file, exec).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+            let cannot_write = |e: io::Error| Error::io(&e, format!("cannot write {}", full(&file).display()));
+            let mut out = create(root, &file, exec).map_err(cannot_write)?;
             if path == "package.json" {
                 if size > crate::tar::MAX_META {
                     return Err(Error::new("EBADTAR", format!("package.json of {size} bytes")));
                 }
                 let mut data = Vec::with_capacity(size as usize);
                 body.read_to_end(&mut data).map_err(corrupt)?;
-                out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+                out.write_all(&data).map_err(cannot_write)?;
                 manifest = Some(data);
             } else {
                 // Only as big as the tarball's biggest such file: 32 downloads unpack at once,
@@ -796,7 +795,7 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 if copy.len() < want {
                     copy.resize(want, 0);
                 }
-                copy_body(body, &mut out, &mut copy[..want], &file)?;
+                copy_body(body, &mut out, &mut copy[..want], &full(&file))?;
             }
             Ok(())
         });
@@ -821,7 +820,7 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             && !*exec
         {
             *exec = true;
-            set_mode(&stored(path), true);
+            set_mode(&full(&stored_name(path, suffix)), true);
         }
     }
     let unpacked_size = files.values().map(|(size, _)| size).sum();
@@ -829,22 +828,27 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     Ok(Index { files, unpacked_size, suffixed: suffix })
 }
 
-/// `dir` and each directory between it and `root` (which is there), made top down, each once:
-/// `made` holds every one made, so a file beside another never asks for its directory again,
-/// and no mkdir fails because its parent was not made yet.
-fn make_dirs(root: &Path, dir: &Path, made: &mut HashSet<PathBuf>) -> io::Result<()> {
-    if dir == root || made.contains(dir) {
+/// A file's name in an entry: its path, and the suffix where the store has one.
+fn stored_name(path: &str, suffix: bool) -> std::borrow::Cow<'_, str> {
+    if suffix { format!("{path}{STORED_SUFFIX}").into() } else { path.into() }
+}
+
+/// `dir` under `root` (a path in it, `/`-separated) and each directory between them, made top
+/// down, each once: `made` holds every one made, so a file beside another never asks for its
+/// directory again, and no mkdir fails because its parent was not made yet.
+pub fn make_dirs(root: &sys::Dir, dir: &str, made: &mut HashSet<String>) -> io::Result<()> {
+    if dir.is_empty() || made.contains(dir) {
         return Ok(());
     }
-    if let Some(parent) = dir.parent().filter(|p| p.starts_with(root)) {
+    if let Some((parent, _)) = dir.rsplit_once('/') {
         make_dirs(root, parent, made)?;
     }
-    match fs::create_dir(dir) {
+    match root.mkdir(dir) {
         // Where the disk folds case, `Lib/` and `lib/` are one directory.
-        Err(e) if !(e.kind() == io::ErrorKind::AlreadyExists && dir.is_dir()) => return Err(e),
+        Err(e) if !(e.kind() == io::ErrorKind::AlreadyExists && root.is_dir(dir)) => return Err(e),
         _ => {}
     }
-    made.insert(dir.to_path_buf());
+    made.insert(dir.to_string());
     Ok(())
 }
 
@@ -876,8 +880,11 @@ fn store_exe(source: &mut dyn Read, dest: &Path, url: &str) -> Result<Index> {
         return Err(Error::new("EBADTAR", format!("{url} does not end in a file name")));
     }
     fs::create_dir_all(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
-    let file = dest.join(if SUFFIX_FILES { format!("{name}{STORED_SUFFIX}") } else { name.to_string() });
-    let mut out = create(&file, true).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
+    let stored = if SUFFIX_FILES { format!("{name}{STORED_SUFFIX}") } else { name.to_string() };
+    let file = dest.join(&stored);
+    let root = sys::Dir::open(dest).map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())))?;
+    let mut out =
+        create(&root, &stored, true).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
     let size = io::copy(&mut source.take(tar::MAX_ARCHIVE), &mut out)
         .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
     let files = vec![FileEntry { path: name.to_string(), size, exec: true }];
@@ -1018,34 +1025,25 @@ fn finish(writers: &mut Option<Writers<'_>>) {
 }
 
 /// A writer thread of `extract`: queued files until the queue closes, the first error kept.
-fn write_queued(recv: &Mutex<mpsc::Receiver<Queued>>, failed: &Mutex<Option<Error>>, budget: &Budget) {
+fn write_queued(root: &sys::Dir, recv: &Mutex<mpsc::Receiver<Queued>>, failed: &Mutex<Option<Error>>, budget: &Budget) {
     loop {
         let job = recv.lock().unwrap_or_else(PoisonError::into_inner).recv();
         let Ok((file, exec, data, taken)) = job else { return };
-        let written = create(&file, exec).and_then(|mut out| out.write_all(&data));
+        let written = create(root, &file, exec).and_then(|mut out| out.write_all(&data));
         budget.give(taken);
         if let Err(e) = written {
             failed
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .get_or_insert(Error::io(&e, format!("cannot write {}", file.display())));
+                .get_or_insert(Error::io(&e, format!("cannot write {file}")));
         }
     }
 }
 
 /// Created read-only: content is hardlinked into every project, so a write through one link
 /// would change all of them. The fd that creates it may still write.
-fn create(file: &Path, exec: bool) -> io::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(if exec { 0o555 } else { 0o444 });
-    }
-    #[cfg(not(unix))]
-    let _ = exec;
-    options.open(file)
+fn create(root: &sys::Dir, rel: &str, exec: bool) -> io::Result<fs::File> {
+    root.create(rel, if exec { 0o555 } else { 0o444 })
 }
 
 fn set_mode(file: &Path, exec: bool) {
@@ -1299,23 +1297,24 @@ pub mod tests {
     #[test]
     fn makes_each_directory_once_from_the_top() {
         let root = scratch("dirs");
+        let dir = crate::sys::Dir::open(&root).unwrap();
         let mut made = HashSet::new();
-        make_dirs(&root, &root.join("a/b/c"), &mut made).unwrap();
+        make_dirs(&dir, "a/b/c", &mut made).unwrap();
         assert!(root.join("a/b/c").is_dir());
         assert_eq!(made.len(), 3, "a, a/b and a/b/c");
         // Made once: asked again, nothing is asked of the disk (gone from it, it stays gone).
         fs::remove_dir(root.join("a/b/c")).unwrap();
-        make_dirs(&root, &root.join("a/b/c"), &mut made).unwrap();
+        make_dirs(&dir, "a/b/c", &mut made).unwrap();
         assert!(!root.join("a/b/c").exists());
         // A sibling under a made parent, and one already on the disk.
-        make_dirs(&root, &root.join("a/b/d"), &mut made).unwrap();
+        make_dirs(&dir, "a/b/d", &mut made).unwrap();
         fs::create_dir(root.join("e")).unwrap();
-        make_dirs(&root, &root.join("e/f"), &mut made).unwrap();
+        make_dirs(&dir, "e/f", &mut made).unwrap();
         assert!(root.join("a/b/d").is_dir() && root.join("e/f").is_dir());
         // The root itself is never made, and a file in the way fails.
-        make_dirs(&root, &root, &mut made).unwrap();
+        make_dirs(&dir, "", &mut made).unwrap();
         fs::write(root.join("g"), "x").unwrap();
-        assert!(make_dirs(&root, &root.join("g/h"), &mut made).is_err());
+        assert!(make_dirs(&dir, "g/h", &mut made).is_err());
         remove_tree(&root);
     }
 }
