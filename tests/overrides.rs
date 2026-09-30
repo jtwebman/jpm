@@ -94,6 +94,28 @@ fn applies_every_override_form() {
 }
 
 #[test]
+fn an_override_to_a_workspace_leaves_registry_packages_their_range() {
+    // As vite and nuxt have it: a workspace overrides the registry package of its name. The
+    // root and the workspaces link to it; a registry package keeps what it asked for.
+    let r = registry();
+    // A peer too: vitest's peer vite, in vite's own repository.
+    let (env, lock, out) = installed(
+        &r,
+        json!({ "name": "root", "workspaces": ["b", "host"], "dependencies": { "a": "1.1.0", "b": "^1.0.0", "plugin": "1" } }),
+        &[
+            ("pnpm-workspace.yaml", "overrides:\n  b: 'workspace:*'\n  host: 'workspace:*'\n"),
+            ("b/package.json", r#"{ "name": "b", "version": "1.5.0" }"#),
+            ("host/package.json", r#"{ "name": "host", "version": "3.0.0" }"#),
+        ],
+    );
+    assert_eq!(dep(&lock, "a@1.1.0", "b"), "1.1.0");
+    assert!(env.read("node_modules/b/package.json").contains("1.5.0"), "the root links the workspace");
+    assert!(out.contains("overrides send b to its workspace"), "{out}");
+    assert!(out.contains("overrides send host to its workspace"), "{out}");
+    assert!(dep(&lock, "plugin@1.0.0", "host").as_str().is_some_and(|v| v.starts_with("2.")), "{lock}");
+}
+
+#[test]
 fn an_override_change_makes_the_lockfile_stale() {
     let r = registry();
     let env = Env::new(&r);
