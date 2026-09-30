@@ -1,8 +1,17 @@
-//! npm's semver: versions, comparison and range matching, as `node-semver` reads them.
+//! npm's semver: versions, comparison and range matching, as `node-semver` reads them with
+//! `loose: true`, the way npm-package-arg and npm-pick-manifest call it.
+//!
+//! node-semver reads a range by rewriting its text (hyphens, operators' spaces, carets, tildes,
+//! x-ranges) and then parsing what is left as comparators. Its answers follow from those
+//! rewrites, oddities included, so ranges here go through the same steps as text.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+
+/// node-semver refuses a version longer than this, or with a part above 2^53-1.
+const MAX_LENGTH: usize = 256;
+const MAX_SAFE: u64 = (1 << 53) - 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Id {
@@ -28,6 +37,10 @@ impl Version {
             text.push_str(&join_ids(&pre));
         }
         Self { major, minor, patch, pre, text }
+    }
+
+    fn same_tuple(&self, other: &Version) -> bool {
+        (self.major, self.minor, self.patch) == (other.major, other.minor, other.patch)
     }
 }
 
@@ -70,12 +83,7 @@ fn cmp_pre(a: &[Id], b: &[Id]) -> Ordering {
             (None, _) => return Ordering::Less,
             (_, None) => return Ordering::Greater,
             (Some(x), Some(y)) => {
-                let o = match (x, y) {
-                    (Id::Num(x), Id::Num(y)) => x.cmp(y),
-                    (Id::Num(_), Id::Str(_)) => Ordering::Less,
-                    (Id::Str(_), Id::Num(_)) => Ordering::Greater,
-                    (Id::Str(x), Id::Str(y)) => x.cmp(y),
-                };
+                let o = cmp_id(x, y);
                 if o != Ordering::Equal {
                     return o;
                 }
@@ -85,79 +93,399 @@ fn cmp_pre(a: &[Id], b: &[Id]) -> Ordering {
     Ordering::Equal
 }
 
-/// `0|[1-9]\d*`, as a number.
-fn num(s: &str) -> Option<u64> {
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) || (s.len() > 1 && s.starts_with('0')) {
-        return None;
+/// Numbers sort below words. An all-digit identifier too big to be a number is still compared
+/// as one, as a JavaScript number is: a float.
+fn cmp_id(a: &Id, b: &Id) -> Ordering {
+    let num = |id: &Id| match id {
+        Id::Num(n) => Some(*n as f64),
+        Id::Str(s) => s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse().unwrap_or(f64::INFINITY)),
+    };
+    match (a, b) {
+        (Id::Num(x), Id::Num(y)) => x.cmp(y),
+        (Id::Str(x), Id::Str(y)) if num(a).is_none() && num(b).is_none() => x.cmp(y),
+        _ => match (num(a), num(b)) {
+            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
+            (Some(_), None) => Ordering::Less,
+            _ => Ordering::Greater,
+        },
     }
-    s.parse().ok()
 }
 
-/// A major, minor or patch: node-semver refuses one above `Number.MAX_SAFE_INTEGER`, which
-/// also leaves room for the `+ 1` of a range's upper bound.
-fn core_num(s: &str) -> Option<u64> {
-    num(s).filter(|n| *n < 1 << 53)
-}
+// --- reading text ------------------------------------------------------------------------------
 
-fn is_ident_char(b: u8) -> bool {
+fn is_ident(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-'
 }
 
-/// A dot-separated prerelease: numeric ids without leading zeros, or alphanumerics.
-fn parse_pre(s: &str) -> Option<Vec<Id>> {
-    s.split('.')
-        .map(|part| {
-            if part.is_empty() || !part.bytes().all(is_ident_char) {
-                None
-            } else if part.bytes().all(|b| b.is_ascii_digit()) {
-                num(part).map(Id::Num)
-            } else {
-                Some(Id::Str(part.to_string()))
-            }
-        })
-        .collect()
+/// Dot-separated identifiers of `[0-9A-Za-z-]`, none empty.
+fn ids_ok(s: &str) -> bool {
+    s.split('.').all(|p| !p.is_empty() && p.bytes().all(is_ident))
 }
 
-fn valid_build(s: &str) -> bool {
-    s.split('.').all(|p| !p.is_empty() && p.bytes().all(is_ident_char))
+fn digits(s: &str) -> usize {
+    s.bytes().take_while(u8::is_ascii_digit).count()
 }
 
-/// Split `core-pre+build` into its three parts, the build unchecked.
-fn split_tail(s: &str) -> (&str, Option<&str>, Option<&str>) {
-    let (rest, build) = match s.find('+') {
-        Some(i) => (&s[..i], Some(&s[i + 1..])),
+/// The `v`, `=` and spaces node-semver lets stand before a version.
+fn skip_prefix(s: &str) -> &str {
+    s.trim_start_matches(|c: char| c == 'v' || c == '=' || c.is_whitespace())
+}
+
+/// What may follow a patch: a prerelease, its `-` optional, then build metadata. The `-` is the
+/// separator when the rest reads without it; otherwise it starts the first identifier.
+fn tail(s: &str) -> Option<Option<&str>> {
+    let (pre, build) = match s.split_once('+') {
+        Some((p, b)) => (p, Some(b)),
         None => (s, None),
     };
-    match rest.find('-') {
-        Some(i) => (&rest[..i], Some(&rest[i + 1..]), build),
-        None => (rest, None, build),
+    if build.is_some_and(|b| !ids_ok(b)) {
+        return None;
     }
+    if pre.is_empty() {
+        return Some(None);
+    }
+    match pre.strip_prefix('-') {
+        Some(p) if ids_ok(p) => Some(Some(p)),
+        _ => ids_ok(pre).then_some(Some(pre)),
+    }
+}
+
+/// A patch's digits and its tail. Digits give way to the tail one at a time, as the regex
+/// backtracks: `1.2.34.5` is `1.2.3-4.5`.
+fn patch_tail(s: &str) -> Option<(&str, Option<&str>)> {
+    (1..=digits(s)).rev().find_map(|k| Some((&s[..k], tail(&s[k..])?)))
+}
+
+/// A whole version as written: node-semver's LOOSEPLAIN.
+struct Plain<'a> {
+    major: &'a str,
+    minor: &'a str,
+    patch: &'a str,
+    pre: Option<&'a str>,
+}
+
+fn loose_plain(s: &str) -> Option<Plain<'_>> {
+    let s = skip_prefix(s);
+    let (major, s) = s.split_at(digits(s));
+    let s = s.strip_prefix('.').filter(|_| !major.is_empty())?;
+    let (minor, s) = s.split_at(digits(s));
+    let s = s.strip_prefix('.').filter(|_| !minor.is_empty())?;
+    let (patch, pre) = patch_tail(s)?;
+    Some(Plain { major, minor, patch, pre })
+}
+
+/// Leading zeros are fine; a prerelease number from 2^53-1 up stays text, as node-semver keeps it.
+fn version(p: &Plain) -> Option<Version> {
+    let part = |s: &str| s.parse::<u64>().ok().filter(|n| *n <= MAX_SAFE);
+    let id = |s: &str| match s.parse::<u64>() {
+        Ok(n) if n < MAX_SAFE && s.bytes().all(|b| b.is_ascii_digit()) => Id::Num(n),
+        _ => Id::Str(s.to_string()),
+    };
+    let pre = p.pre.map_or_else(Vec::new, |pre| pre.split('.').map(id).collect());
+    Some(Version::new(part(p.major)?, part(p.minor)?, part(p.patch)?, pre))
 }
 
 pub fn parse(v: &str) -> Option<Version> {
-    let v = v.trim().trim_start_matches(|c: char| c.is_whitespace() || c == '=' || c == 'v');
-    let (core, pre, build) = split_tail(v);
-    if build.is_some_and(|b| !valid_build(b)) {
+    if v.len() > MAX_LENGTH {
         return None;
     }
-    let mut parts = core.split('.');
-    let major = core_num(parts.next()?)?;
-    let minor = core_num(parts.next()?)?;
-    let patch = core_num(parts.next()?)?;
-    if parts.next().is_some() {
-        return None;
-    }
-    let pre = match pre {
-        Some(p) => parse_pre(p)?,
-        None => Vec::new(),
-    };
-    Some(Version::new(major, minor, patch, pre))
+    version(&loose_plain(v.trim())?)
 }
 
 /// Whether `v` is exactly a version, spelled canonically.
 pub fn is_exact(v: &str) -> bool {
     parse(v).is_some_and(|p| p.text == v)
 }
+
+// --- ranges as text ----------------------------------------------------------------------------
+
+/// A version with wildcards, as written: node-semver's XRANGEPLAINLOOSE. Missing parts are `None`.
+struct XPlain<'a> {
+    major: &'a str,
+    minor: Option<&'a str>,
+    patch: Option<&'a str>,
+    pre: Option<&'a str>,
+}
+
+fn is_x(part: Option<&str>) -> bool {
+    part.is_none_or(|p| p.eq_ignore_ascii_case("x") || p == "*")
+}
+
+fn xid(s: &str) -> usize {
+    match s.as_bytes().first() {
+        Some(b'x' | b'X' | b'*') => 1,
+        _ => digits(s),
+    }
+}
+
+fn xrange_plain(s: &str) -> Option<XPlain<'_>> {
+    let s = skip_prefix(s);
+    let (major, s) = s.split_at(xid(s));
+    if major.is_empty() {
+        return None;
+    }
+    let short = |minor| XPlain { major, minor, patch: None, pre: None };
+    let Some(s) = s.strip_prefix('.') else { return s.is_empty().then(|| short(None)) };
+    let (minor, s) = s.split_at(xid(s));
+    if minor.is_empty() {
+        return None;
+    }
+    let Some(s) = s.strip_prefix('.') else { return s.is_empty().then(|| short(Some(minor))) };
+    let (patch, pre) = match xid(s) {
+        0 => return None,
+        1 if !s.as_bytes()[0].is_ascii_digit() => (&s[..1], tail(&s[1..])?),
+        _ => patch_tail(s)?,
+    };
+    Some(XPlain { major, minor: Some(minor), patch: Some(patch), pre })
+}
+
+/// `+part + 1` as JavaScript prints it: rounded past 2^53, exponential from 1e21. Either way
+/// the comparator it lands in is then refused or dropped, as node-semver's would be.
+fn inc(part: &str) -> String {
+    let n = part.parse::<f64>().unwrap_or(f64::INFINITY) + 1.0;
+    if !n.is_finite() {
+        "Infinity".into()
+    } else if n < 1e21 {
+        (n as u128).to_string()
+    } else {
+        format!("{n:e}").replace('e', "e+")
+    }
+}
+
+/// `(<|>)?=?` at the front, greedily.
+fn split_gtlt(s: &str) -> (&str, &str) {
+    let b = s.as_bytes();
+    let mut n = usize::from(matches!(b.first(), Some(b'<' | b'>')));
+    if b.get(n) == Some(&b'=') {
+        n += 1;
+    }
+    s.split_at(n)
+}
+
+/// Build metadata is cut out of the whole range first, wherever it stands.
+fn strip_builds(s: &str) -> String {
+    let b = s.as_bytes();
+    let (mut out, mut i, mut kept) = (String::with_capacity(s.len()), 0, 0);
+    while i < b.len() {
+        if b[i] != b'+' || !b.get(i + 1).copied().is_some_and(is_ident) {
+            i += 1;
+            continue;
+        }
+        out.push_str(&s[kept..i]);
+        i += 1;
+        loop {
+            while b.get(i).copied().is_some_and(is_ident) {
+                i += 1;
+            }
+            if b.get(i) == Some(&b'.') && b.get(i + 1).copied().is_some_and(is_ident) {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        kept = i;
+    }
+    out.push_str(&s[kept..]);
+    out
+}
+
+/// `a - b` as bounds; the whole set has to be that one hyphen range.
+fn hyphen(set: &str, inc_pr: bool) -> Option<String> {
+    let set = set.strip_prefix(' ').unwrap_or(set);
+    let set = set.strip_suffix(' ').unwrap_or(set);
+    let (from, to) = set.split_once(" - ")?;
+    let (f, t) = (xrange_plain(from)?, xrange_plain(to)?);
+    let z = if inc_pr { "-0" } else { "" };
+    let (fm, tm) = (f.minor.unwrap_or_default(), t.minor.unwrap_or_default());
+    let low = if is_x(Some(f.major)) {
+        String::new()
+    } else if is_x(f.minor) {
+        format!(">={}.0.0{z}", f.major)
+    } else if is_x(f.patch) {
+        format!(">={}.{fm}.0{z}", f.major)
+    } else if f.pre.is_some() {
+        format!(">={from}")
+    } else {
+        format!(">={from}{z}")
+    };
+    let high = if is_x(Some(t.major)) {
+        String::new()
+    } else if is_x(t.minor) {
+        format!("<{}.0.0-0", inc(t.major))
+    } else if is_x(t.patch) {
+        format!("<{}.{}.0-0", t.major, inc(tm))
+    } else if let Some(pr) = t.pre {
+        format!("<={}.{tm}.{}-{pr}", t.major, t.patch.unwrap_or_default())
+    } else if inc_pr {
+        format!("<{}.{tm}.{}-0", t.major, inc(t.patch.unwrap_or_default()))
+    } else {
+        format!("<={to}")
+    };
+    Some(format!("{low} {high}").trim().to_string())
+}
+
+/// How much of `s` a version-like match takes, if one starts there: a `v`/`=`/space prefix, then
+/// a digit, `x` or `*`, and the version's characters after it.
+fn versionish(s: &str) -> Option<usize> {
+    let body = skip_prefix(s);
+    let start = s.len() - body.len();
+    if !matches!(body.as_bytes().first(), Some(b'0'..=b'9' | b'x' | b'X' | b'*')) {
+        return None;
+    }
+    let run = body.bytes().take_while(|&b| is_ident(b) || matches!(b, b'.' | b'+' | b'*')).count();
+    Some(start + run)
+}
+
+/// The spaces node-semver closes up: after an operator before a version (`>= 1.2.3`), after `~`,
+/// `~>` and `^`. The first pass runs left to right, each match taking its version along.
+fn close_ops(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        let start = i + usize::from(s[i..].starts_with(' '));
+        let op = split_gtlt(&s[start..]).0.len();
+        let gap = usize::from(s[start + op..].starts_with(' '));
+        let at = start + op + gap;
+        if let Some(n) = versionish(&s[at..]) {
+            out.push_str(&s[i..start + op]);
+            out.push_str(&s[at..at + n]);
+            i = at + n;
+        } else {
+            let c = s[i..].chars().next().unwrap_or(' ');
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    let mut closed = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(c) = rest.chars().next() {
+        closed.push(c);
+        rest = &rest[c.len_utf8()..];
+        if c == '~' {
+            rest = rest.strip_prefix("> ").or_else(|| rest.strip_prefix(' ')).unwrap_or(rest);
+        } else if c == '^' {
+            rest = rest.strip_prefix(' ').unwrap_or(rest);
+        }
+    }
+    closed
+}
+
+/// `^x.y.z`: up to the next change of the first part that is not zero.
+fn caret(x: &XPlain, z: &str) -> String {
+    let (ma, mi, pa) = (x.major, x.minor.unwrap_or_default(), x.patch.unwrap_or_default());
+    if is_x(Some(ma)) {
+        return String::new();
+    }
+    if is_x(x.minor) {
+        return format!(">={ma}.0.0{z} <{}.0.0-0", inc(ma));
+    }
+    if is_x(x.patch) {
+        let high = if ma == "0" { format!("{ma}.{}.0", inc(mi)) } else { format!("{}.0.0", inc(ma)) };
+        return format!(">={ma}.{mi}.0{z} <{high}-0");
+    }
+    let low = match x.pre {
+        Some(pr) => format!(">={ma}.{mi}.{pa}-{pr}"),
+        None => format!(">={ma}.{mi}.{pa}"),
+    };
+    // node-semver asks whether a part is spelled "0", so `^00.1.2` reaches the next major.
+    let high = match (ma, mi) {
+        ("0", "0") => format!("{ma}.{mi}.{}", inc(pa)),
+        ("0", _) => format!("{ma}.{}.0", inc(mi)),
+        _ => format!("{}.0.0", inc(ma)),
+    };
+    format!("{low} <{high}-0")
+}
+
+/// `~x.y.z`: up to the next minor, or the next major when only that is given.
+fn tilde(x: &XPlain, z: &str) -> String {
+    let (ma, mi, pa) = (x.major, x.minor.unwrap_or_default(), x.patch.unwrap_or_default());
+    if is_x(Some(ma)) {
+        String::new()
+    } else if is_x(x.minor) {
+        format!(">={ma}.0.0{z} <{}.0.0-0", inc(ma))
+    } else if is_x(x.patch) {
+        format!(">={ma}.{mi}.0{z} <{ma}.{}.0-0", inc(mi))
+    } else if let Some(pr) = x.pre {
+        format!(">={ma}.{mi}.{pa}-{pr} <{ma}.{}.0-0", inc(mi))
+    } else {
+        format!(">={ma}.{mi}.{pa} <{ma}.{}.0-0", inc(mi))
+    }
+}
+
+/// `1.x`, `>=1.2`, `<=1`: wildcards become bounds. A wildcard's prerelease is ignored, and a
+/// token with a number after a wildcard (`1.x.3`) is left as it is, to be dropped.
+fn xrange(op: &str, x: &XPlain, token: &str, inc_pr: bool) -> String {
+    let (ma, mi) = (x.major, x.minor.unwrap_or_default());
+    if (is_x(Some(ma)) && !is_x(x.minor)) || (is_x(x.minor) && x.patch.is_some() && !is_x(x.patch)) {
+        return token.to_string();
+    }
+    let xma = is_x(Some(ma));
+    let xmi = xma || is_x(x.minor);
+    let any = xmi || is_x(x.patch);
+    let mut op = if op == "=" && any { "" } else { op };
+    let mut pr = if inc_pr { "-0" } else { "" };
+    if xma {
+        return if op == ">" || op == "<" { "<0.0.0-0" } else { "*" }.into();
+    }
+    if !op.is_empty() && any {
+        let (mut ma, mut mi) = (ma.to_string(), if xmi { "0".to_string() } else { mi.to_string() });
+        if op == ">" || op == "<=" {
+            // `>1.2` is `>=1.3.0`; `<=1.2` is `<1.3.0-0`.
+            op = if op == ">" { ">=" } else { "<" };
+            if xmi {
+                ma = inc(&ma);
+                mi = "0".into();
+            } else {
+                mi = inc(&mi);
+            }
+        }
+        if op == "<" {
+            pr = "-0";
+        }
+        return format!("{op}{ma}.{mi}.0{pr}");
+    }
+    if xmi {
+        format!(">={ma}.0.0{pr} <{}.0.0-0", inc(ma))
+    } else if any {
+        format!(">={ma}.{mi}.0{pr} <{ma}.{}.0-0", inc(mi))
+    } else {
+        token.to_string()
+    }
+}
+
+/// One token's comparators as text: node-semver's parseComparator.
+fn desugar(token: &str, inc_pr: bool) -> String {
+    let z = if inc_pr { "-0" } else { "" };
+    let out = if let Some(x) = token.strip_prefix('^').and_then(xrange_plain) {
+        caret(&x, z)
+    } else if let Some(x) = token.strip_prefix('~').and_then(|t| xrange_plain(t.strip_prefix('>').unwrap_or(t))) {
+        tilde(&x, z)
+    } else {
+        let (op, rest) = split_gtlt(token);
+        xrange_plain(rest).map_or_else(|| token.to_string(), |x| xrange(op, &x, token, inc_pr))
+    };
+    // The first `*`, with an operator before it, goes: `>=*` is anything, so is `1.2.3*`'s star.
+    let Some(star) = out.find('*') else { return out };
+    let head = &out[..star];
+    let head = head.strip_suffix(' ').unwrap_or(head);
+    let head = head.strip_suffix('=').unwrap_or(head);
+    let head = head.strip_suffix(['<', '>']).unwrap_or(head);
+    format!("{head}{}", &out[star + 1..])
+}
+
+/// JavaScript's `split(/\s+/)`: an empty piece at either end with a space there.
+fn split_ws(s: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = s.split_whitespace().collect();
+    if s.is_empty() || s.starts_with(char::is_whitespace) {
+        parts.insert(0, "");
+    }
+    if !s.is_empty() && s.ends_with(char::is_whitespace) {
+        parts.push("");
+    }
+    parts
+}
+
+// --- comparators -------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
@@ -166,199 +494,127 @@ enum Op {
     Gt,
     Ge,
     Eq,
+    /// Any version: node-semver's ANY, from `*` or an empty range. Its version is unused.
+    Any,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Comparator {
     op: Op,
     v: Version,
 }
 
-/// A partial version; `None` parts are wildcards.
-struct Partial {
-    major: Option<u64>,
-    minor: Option<u64>,
-    patch: Option<u64>,
-    pre: Vec<Id>,
-}
-
-fn parse_partial(s: &str) -> Option<Partial> {
-    let s = s.trim().trim_start_matches(['=', 'v']);
-    let (core, pre, build) = split_tail(s);
-    if build.is_some_and(|b| !valid_build(b)) {
-        return None;
+impl Comparator {
+    fn any() -> Self {
+        Comparator { op: Op::Any, v: Version::new(0, 0, 0, Vec::new()) }
     }
-    let part = |p: Option<&str>| -> Option<Option<u64>> {
-        match p {
-            None => Some(None),
-            Some("x" | "X" | "*") => Some(None),
-            Some(p) => core_num(p).map(Some),
-        }
-    };
-    let mut pieces = core.split('.');
-    let first = pieces.next()?;
-    if first.is_empty() {
-        return None;
-    }
-    let major = part(Some(first))?;
-    let minor = part(pieces.next())?;
-    let patch = part(pieces.next())?;
-    if pieces.next().is_some() {
-        return None;
-    }
-    // A concrete part may not follow a wildcard one.
-    let gap = match major {
-        None => minor.is_some() || patch.is_some(),
-        Some(_) => minor.is_none() && patch.is_some(),
-    };
-    if gap {
-        return None;
-    }
-    let pre = match pre {
-        // A prerelease needs all three parts, so `v2-latest` stays a tag rather than a range.
-        Some(_) if patch.is_none() => return None,
-        Some(p) => parse_pre(p)?,
-        None => Vec::new(),
-    };
-    Some(Partial { major, minor, patch, pre })
-}
 
-fn ge(ma: u64, mi: u64, p: u64, pre: Vec<Id>) -> Comparator {
-    Comparator { op: Op::Ge, v: Version::new(ma, mi, p, pre) }
-}
-
-/// Upper bounds end in `-0` so no prerelease of the excluded version slips in.
-fn lt(ma: u64, mi: u64, p: u64) -> Comparator {
-    Comparator { op: Op::Lt, v: Version::new(ma, mi, p, vec![Id::Num(0)]) }
-}
-
-fn expand(op: &str, q: &Partial, inc_pr: bool) -> Vec<Comparator> {
-    let partial = q.minor.is_none() || q.patch.is_none();
-    let pre = if !q.pre.is_empty() {
-        q.pre.clone()
-    } else if inc_pr && partial {
-        vec![Id::Num(0)]
-    } else {
-        Vec::new()
-    };
-    let Some(ma) = q.major else {
-        // `*` matches anything; `>*` and `<*` match nothing.
-        return if op == ">" || op == "<" { vec![lt(0, 0, 0)] } else { Vec::new() };
-    };
-    if op == "^" || op == "~" {
-        let low = ge(ma, q.minor.unwrap_or(0), q.patch.unwrap_or(0), pre);
-        let Some(mi) = q.minor else { return vec![low, lt(ma.saturating_add(1), 0, 0)] };
-        if op == "~" {
-            return vec![low, lt(ma, mi.saturating_add(1), 0)];
-        }
-        if ma != 0 {
-            return vec![low, lt(ma.saturating_add(1), 0, 0)];
-        }
-        // A caret on 0.x pins the minor, on 0.0.x the patch.
-        return match q.patch {
-            Some(p) if mi == 0 => vec![low, lt(0, 0, p.saturating_add(1))],
-            _ => vec![low, lt(0, mi.saturating_add(1), 0)],
+    /// As node-semver prints it, which is also how it tells comparators apart.
+    fn value(&self) -> String {
+        let op = match self.op {
+            Op::Lt => "<",
+            Op::Le => "<=",
+            Op::Gt => ">",
+            Op::Ge => ">=",
+            Op::Eq => "",
+            Op::Any => return String::new(),
         };
+        format!("{op}{}", self.v.text)
     }
-    if partial {
-        if op.is_empty() || op == "=" {
-            return match q.minor {
-                None => vec![ge(ma, 0, 0, pre), lt(ma.saturating_add(1), 0, 0)],
-                Some(mi) => vec![ge(ma, mi, 0, pre), lt(ma, mi.saturating_add(1), 0)],
-            };
-        }
-        // A comparator against a partial version shifts to the next whole range.
-        let (mut major, mut minor) = (ma, q.minor.unwrap_or(0));
-        let mut o = op;
-        if op == ">" || op == "<=" {
-            o = if op == ">" { ">=" } else { "<" };
-            if q.minor.is_none() {
-                major = major.saturating_add(1);
-            } else {
-                minor = minor.saturating_add(1);
-            }
-        }
-        let op = to_op(o);
-        let pre = if op == Op::Lt { vec![Id::Num(0)] } else { pre };
-        return vec![Comparator { op, v: Version::new(major, minor, 0, pre) }];
+
+    fn is_null(&self) -> bool {
+        self.op == Op::Lt && self.v.text == "0.0.0-0"
     }
-    let (Some(mi), Some(p)) = (q.minor, q.patch) else { return Vec::new() };
-    vec![Comparator { op: to_op(op), v: Version::new(ma, mi, p, q.pre.clone()) }]
+
+    fn up(&self) -> bool {
+        matches!(self.op, Op::Gt | Op::Ge)
+    }
+
+    fn down(&self) -> bool {
+        matches!(self.op, Op::Lt | Op::Le)
+    }
+
+    fn test(&self, v: &Version) -> bool {
+        let o = v.cmp(&self.v);
+        match self.op {
+            Op::Any => true,
+            Op::Eq => o == Ordering::Equal,
+            Op::Lt => o == Ordering::Less,
+            Op::Le => o != Ordering::Greater,
+            Op::Gt => o == Ordering::Greater,
+            Op::Ge => o != Ordering::Less,
+        }
+    }
 }
 
-fn to_op(op: &str) -> Op {
-    match op {
+/// A token as a comparator: `Ok(None)` for one node-semver's loose filter drops, `Err` for one
+/// it keeps but cannot read, which fails the whole range.
+fn comparator(token: &str) -> Result<Option<Comparator>, ()> {
+    if token.is_empty() {
+        return Ok(Some(Comparator::any()));
+    }
+    let (op, rest) = split_gtlt(token);
+    let Some(plain) = loose_plain(rest) else { return Ok(None) };
+    if rest.len() > MAX_LENGTH {
+        return Err(());
+    }
+    let op = match op {
         "<" => Op::Lt,
         "<=" => Op::Le,
         ">" => Op::Gt,
         ">=" => Op::Ge,
         _ => Op::Eq,
-    }
-}
-
-fn hyphen(a: &Partial, b: &Partial, inc_pr: bool) -> Vec<Comparator> {
-    let mut out = Vec::new();
-    let low = if !a.pre.is_empty() {
-        a.pre.clone()
-    } else if inc_pr {
-        vec![Id::Num(0)]
-    } else {
-        Vec::new()
     };
-    if let Some(ma) = a.major {
-        out.push(ge(ma, a.minor.unwrap_or(0), a.patch.unwrap_or(0), low));
-    }
-    if let Some(ma) = b.major {
-        match (b.minor, b.patch) {
-            (None, _) => out.push(lt(ma.saturating_add(1), 0, 0)),
-            (Some(mi), None) => out.push(lt(ma, mi.saturating_add(1), 0)),
-            (Some(mi), Some(p)) if b.pre.is_empty() && inc_pr => out.push(lt(ma, mi, p.saturating_add(1))),
-            (Some(mi), Some(p)) => {
-                out.push(Comparator { op: Op::Le, v: Version::new(ma, mi, p, b.pre.clone()) });
-            }
-        }
-    }
-    out
+    Ok(Some(Comparator { op, v: version(&plain).ok_or(())? }))
 }
 
-/// Split an operator off a token: `~>`, `<`, `<=`, `>`, `>=`, `~`, `^`, `=`.
-fn split_op(token: &str) -> (&str, &str) {
-    for op in ["~>", "<=", ">=", "<", ">", "~", "^", "="] {
-        if let Some(rest) = token.strip_prefix(op) {
-            return (op, rest);
+/// One `||` alternative. Empty when nothing in it reads as a comparator.
+fn parse_set(set: &str, inc_pr: bool) -> Result<Vec<Comparator>, ()> {
+    let set = strip_builds(set);
+    let set = close_ops(&hyphen(&set, inc_pr).unwrap_or(set));
+    let text = set.split(' ').map(|t| desugar(t, inc_pr)).collect::<Vec<_>>().join(" ");
+    let any = if inc_pr { ">=0.0.0-0" } else { ">=0.0.0" };
+    let mut comps = Vec::new();
+    for token in split_ws(&text) {
+        if let Some(c) = comparator(if token == any { "" } else { token })? {
+            comps.push(c);
         }
     }
-    ("", token)
+    let mut set: Vec<Comparator> = Vec::new();
+    for c in comps {
+        if c.is_null() {
+            return Ok(vec![c]);
+        }
+        if !set.iter().any(|s| s.value() == c.value()) {
+            set.push(c);
+        }
+    }
+    if set.len() > 1 {
+        set.retain(|c| c.op != Op::Any);
+    }
+    Ok(set)
 }
 
-fn parse_set(branch: &str, inc_pr: bool) -> Option<Vec<Comparator>> {
-    // An operator followed by spaces binds to the next word: `>= 1.2` is `>=1.2`.
-    let mut joined = String::with_capacity(branch.len());
-    let mut words = branch.split_whitespace().peekable();
-    while let Some(word) = words.next() {
-        joined.push_str(word);
-        let (op, rest) = split_op(word);
-        if !(rest.is_empty() && !op.is_empty() && words.peek().is_some()) {
-            joined.push(' ');
+fn read_range(range: &str, inc_pr: bool) -> Option<Vec<Vec<Comparator>>> {
+    let range = range.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut sets = Vec::new();
+    for branch in range.split("||") {
+        let set = parse_set(branch.trim(), inc_pr).ok()?;
+        // An alternative with nothing that reads drops out: `>=3.0.0 || insiders` is `>=3.0.0`.
+        if !set.is_empty() {
+            sets.push(set);
         }
     }
-    let tokens: Vec<&str> = joined.split_whitespace().collect();
-    let mut set = Vec::new();
-    let mut i = 0;
-    while i < tokens.len() {
-        if tokens.get(i + 1) == Some(&"-") {
-            let a = parse_partial(tokens[i])?;
-            let b = parse_partial(tokens.get(i + 2).copied().unwrap_or(""))?;
-            set.extend(hyphen(&a, &b, inc_pr));
-            i += 3;
-            continue;
+    if sets.len() > 1 {
+        let first = sets[0].clone();
+        sets.retain(|s| !s[0].is_null());
+        if sets.is_empty() {
+            sets.push(first);
+        } else if let Some(any) = sets.iter().find(|s| s[0].op == Op::Any) {
+            sets = vec![any.clone()];
         }
-        let (op, rest) = split_op(tokens[i]);
-        let q = parse_partial(rest)?;
-        set.extend(expand(if op == "~>" { "~" } else { op }, &q, inc_pr));
-        i += 1;
     }
-    Some(set)
+    (!sets.is_empty()).then_some(sets)
 }
 
 type Sets = Arc<Vec<Vec<Comparator>>>;
@@ -372,33 +628,20 @@ fn parse_range(range: &str, inc_pr: bool) -> Option<Sets> {
     if let Some(hit) = cache.lock().ok()?.get(&key) {
         return hit.clone();
     }
-    // As npm reads a range (node-semver, loose): an alternative that does not parse drops out,
-    // so `>=3.0.0 || insiders` is `>=3.0.0`. Nothing left that parses is no range.
-    let sets: Vec<_> = range.split("||").filter_map(|b| parse_set(b, inc_pr)).collect();
-    let sets = (!sets.is_empty()).then(|| Arc::new(sets));
+    let sets = read_range(range, inc_pr).map(Arc::new);
     if let Ok(mut c) = cache.lock() {
         c.insert(key, sets.clone());
     }
     sets
 }
 
-fn holds(o: Ordering, op: Op) -> bool {
-    match o {
-        Ordering::Equal => !matches!(op, Op::Lt | Op::Gt),
-        Ordering::Less => matches!(op, Op::Lt | Op::Le),
-        Ordering::Greater => matches!(op, Op::Gt | Op::Ge),
-    }
-}
-
 fn test_set(v: &Version, set: &[Comparator], inc_pr: bool) -> bool {
-    if !set.iter().all(|c| holds(v.cmp(&c.v), c.op)) {
+    if !set.iter().all(|c| c.test(v)) {
         return false;
     }
     // A prerelease only matches if some comparator opts into that exact tuple.
     if !v.pre.is_empty() && !inc_pr {
-        return set
-            .iter()
-            .any(|c| !c.v.pre.is_empty() && c.v.major == v.major && c.v.minor == v.minor && c.v.patch == v.patch);
+        return set.iter().any(|c| c.op != Op::Any && !c.v.pre.is_empty() && c.v.same_tuple(v));
     }
     true
 }
@@ -415,88 +658,185 @@ pub fn satisfies(version: &str, range: &str) -> bool {
     parse(version).is_some_and(|v| satisfies_version(&v, range, false))
 }
 
-/// A comparator set as the versions between two bounds, each `(version, inclusive)`; `None` is
-/// open. Prereleases are compared as versions, not held to their tuple.
-type Bound = Option<(Version, bool)>;
-
-fn bounds(set: &[Comparator]) -> (Bound, Bound) {
-    let (mut low, mut high): (Bound, Bound) = (None, None);
-    for c in set {
-        let (lower, upper) = match c.op {
-            Op::Ge => (Some((c.v.clone(), true)), None),
-            Op::Gt => (Some((c.v.clone(), false)), None),
-            Op::Le => (None, Some((c.v.clone(), true))),
-            Op::Lt => (None, Some((c.v.clone(), false))),
-            Op::Eq => (Some((c.v.clone(), true)), Some((c.v.clone(), true))),
-        };
-        if let Some(l) = lower
-            && low.as_ref().is_none_or(|(v, inc)| l.0 > *v || l.0 == *v && *inc && !l.1)
-        {
-            low = Some(l);
-        }
-        if let Some(u) = upper
-            && high.as_ref().is_none_or(|(v, inc)| u.0 < *v || u.0 == *v && *inc && !u.1)
-        {
-            high = Some(u);
-        }
+/// Whether two comparators leave a version between them: node-semver's Comparator.intersects,
+/// which decides by operators and an exact version's fit rather than by counting versions.
+fn meets(a: &Comparator, b: &Comparator) -> bool {
+    // An exact version meets a comparator whose range, read alone, takes it; the order matters,
+    // since `*` read as a range refuses an exact prerelease, while `*` itself meets anything.
+    match (a.op, b.op) {
+        (Op::Any, _) => return true,
+        (Op::Eq, _) => return satisfies_version(&a.v, &b.value(), false),
+        (_, Op::Any) => return true,
+        (_, Op::Eq) => return satisfies_version(&b.v, &a.value(), false),
+        _ => {}
     }
-    (low, high)
+    // Nothing is below 0.0.0 without prereleases.
+    if [a, b].iter().any(|c| c.op == Op::Lt && c.v.text.starts_with("0.0.0")) {
+        return false;
+    }
+    (a.up() && b.up())
+        || (a.down() && b.down())
+        || (a.v.text == b.v.text && matches!(a.op, Op::Ge | Op::Le) && matches!(b.op, Op::Ge | Op::Le))
+        || (a.v < b.v && a.up() && b.down())
+        || (a.v > b.v && a.down() && b.up())
 }
 
-fn empty((low, high): &(Bound, Bound)) -> bool {
-    match (low, high) {
-        (Some((l, li)), Some((h, hi))) => l > h || l == h && !(*li && *hi),
-        _ => false,
-    }
+/// Each comparator meets every one before it.
+fn satisfiable(set: &[Comparator]) -> bool {
+    (1..set.len()).rev().all(|i| set[..i].iter().all(|o| meets(&set[i], o)))
 }
 
-/// Whether some version satisfies both ranges (npm's `intersects`).
+/// Whether some version satisfies both ranges, as npm's `intersects` judges it: comparator by
+/// comparator, so `^1.2.3-beta.1` and `1.2.3-beta.2` do not meet.
 pub fn intersects(a: &str, b: &str) -> bool {
     let (Some(a), Some(b)) = (parse_range(a, false), parse_range(b, false)) else { return false };
-    // An exact version meets a range when the range takes it, prerelease rules and all:
-    // `2.0.0-rc.1` lies below `<2.0.0` but is not in it.
-    let exact = |set: &[Comparator]| match set {
-        [c] if c.op == Op::Eq => Some(c.v.clone()),
-        _ => None,
-    };
-    let meet = |x: &[Comparator], y: &[Comparator]| match (exact(x), exact(y)) {
-        (Some(v), _) => test_set(&v, y, false),
-        (_, Some(v)) => test_set(&v, x, false),
-        _ => !empty(&bounds(&[x, y].concat())),
-    };
-    a.iter().any(|x| b.iter().any(|y| meet(x, y)))
+    a.iter()
+        .any(|x| satisfiable(x) && b.iter().any(|y| satisfiable(y) && x.iter().all(|c| y.iter().all(|d| meets(c, d)))))
 }
 
-/// Whether every version `sub` allows, `sup` allows too (npm's `subset`), each of `sub`'s
-/// alternatives inside one of `sup`'s.
-pub fn subset(sub: &str, sup: &str) -> bool {
-    let (Some(sub), Some(sup)) = (parse_range(sub, false), parse_range(sup, false)) else { return false };
-    // `<x.y.z-0` (how `^1` or `<2` end) is `<x.y.z` to a range: its only other versions are
-    // x.y.z's prereleases, which a range without them never admits. As node-semver's subset.
-    let release = |(low, high): (Bound, Bound)| {
-        let high = match high {
-            Some((v, false)) if v.pre == [Id::Num(0)] => {
-                Some((Version::new(v.major, v.minor, v.patch, Vec::new()), false))
+/// Of two lower bounds, the tighter; `>1.2.3` is above `>=1.2.3`.
+fn higher<'a>(a: Option<&'a Comparator>, b: &'a Comparator) -> &'a Comparator {
+    let Some(a) = a else { return b };
+    match a.v.cmp(&b.v) {
+        Ordering::Greater => a,
+        Ordering::Less => b,
+        Ordering::Equal if b.op == Op::Gt && a.op == Op::Ge => b,
+        Ordering::Equal => a,
+    }
+}
+
+fn lower<'a>(a: Option<&'a Comparator>, b: &'a Comparator) -> &'a Comparator {
+    let Some(a) = a else { return b };
+    match a.v.cmp(&b.v) {
+        Ordering::Less => a,
+        Ordering::Greater => b,
+        Ordering::Equal if b.op == Op::Lt && a.op == Op::Le => b,
+        Ordering::Equal => a,
+    }
+}
+
+/// `<x.y.z-0` as `<x.y.z`, unless `set` lets in x.y.z's prereleases; others as they are.
+fn released(c: &Comparator, set: &[Comparator]) -> Comparator {
+    let mut c = c.clone();
+    let named = set.iter().any(|s| s.op != Op::Any && !s.v.pre.is_empty() && s.v.same_tuple(&c.v));
+    if c.op == Op::Lt && c.v.pre == [Id::Num(0)] && !named {
+        c.v = Version::new(c.v.major, c.v.minor, c.v.patch, Vec::new());
+    }
+    c
+}
+
+/// node-semver's simpleSubset: `None` when `sub` is a set no version satisfies.
+fn simple_subset(sub: &[Comparator], dom: &[Comparator]) -> Option<bool> {
+    if sub == dom {
+        return Some(true);
+    }
+    let min = [Comparator { op: Op::Ge, v: Version::new(0, 0, 0, Vec::new()) }];
+    let any = |s: &[Comparator]| s.len() == 1 && s[0].op == Op::Any;
+    if any(sub) && any(dom) {
+        return Some(true);
+    }
+    let sub = if any(sub) { &min[..] } else { sub };
+    let dom = if any(dom) { &min[..] } else { dom };
+    let (mut gt, mut lt, mut eq) = (None, None, Vec::new());
+    for c in sub {
+        if c.up() {
+            gt = Some(higher(gt, c));
+        } else if c.down() {
+            lt = Some(lower(lt, c));
+        } else if !eq.contains(&&c.v) {
+            eq.push(&c.v);
+        }
+    }
+    if eq.len() > 1 {
+        return None;
+    }
+    let mut gtlt = None;
+    if let (Some(g), Some(l)) = (gt, lt) {
+        let o = g.v.cmp(&l.v);
+        if o == Ordering::Greater || o == Ordering::Equal && (g.op != Op::Ge || l.op != Op::Le) {
+            return None;
+        }
+        gtlt = Some(o);
+    }
+    let takes = |c: &Comparator, v: &Version| satisfies_version(v, &c.value(), false);
+    if let Some(e) = eq.first() {
+        if gt.is_some_and(|g| !takes(g, e)) || lt.is_some_and(|l| !takes(l, e)) {
+            return None;
+        }
+        return Some(dom.iter().all(|c| takes(c, e)));
+    }
+    // A bound with a prerelease lets in that tuple's prereleases; `dom` has to name the tuple too.
+    let mut need_gt = gt.map(|g| &g.v).filter(|v| !v.pre.is_empty());
+    // `<1.2.3-0` is `<1.2.3`.
+    let mut need_lt = lt.filter(|l| !l.v.pre.is_empty() && !(l.op == Op::Lt && l.v.pre == [Id::Num(0)])).map(|l| &l.v);
+    let (mut dom_gt, mut dom_lt) = (false, false);
+    let exact = gtlt == Some(Ordering::Equal);
+    for c in dom {
+        dom_gt |= c.up();
+        dom_lt |= c.down();
+        let names = |need: Option<&Version>| need.is_some_and(|n| !c.v.pre.is_empty() && c.v.same_tuple(n));
+        if let Some(g) = gt {
+            if names(need_gt) {
+                need_gt = None;
             }
-            other => other,
-        };
-        (low, high)
-    };
-    let bounds = |set: &[Comparator]| release(bounds(set));
-    let inside = |(l, h): &(Bound, Bound), (sl, sh): &(Bound, Bound)| {
-        let low = match (l, sl) {
-            (_, None) => true,
-            (None, Some(_)) => false,
-            (Some((v, inc)), Some((sv, sinc))) => v > sv || v == sv && (*sinc || !inc),
-        };
-        let high = match (h, sh) {
-            (_, None) => true,
-            (None, Some(_)) => false,
-            (Some((v, inc)), Some((sv, sinc))) => v < sv || v == sv && (*sinc || !inc),
-        };
-        low && high
-    };
-    sub.iter().map(|s| bounds(s)).filter(|b| !empty(b)).all(|b| sup.iter().any(|s| inside(&b, &bounds(s))))
+            if c.up() {
+                if std::ptr::eq(higher(Some(g), c), c) {
+                    return Some(false);
+                }
+            } else if g.op == Op::Ge && !c.test(&g.v) {
+                return Some(false);
+            }
+        }
+        if let Some(l) = lt {
+            if names(need_lt) {
+                need_lt = None;
+            }
+            if c.down() {
+                // Unlike node-semver, `dom`'s `<x.y.z-0` (how `^1` or `<2` end) is `<x.y.z` here
+                // when `sub` names no x.y.z prerelease: the two differ only by those. So a pnpm
+                // override keyed `~1.2.0` still pins an edge `>=1.2.3 <1.3.0`.
+                let c = &released(c, sub);
+                if std::ptr::eq(lower(Some(l), c), c) {
+                    return Some(false);
+                }
+            } else if l.op == Op::Le && !c.test(&l.v) {
+                return Some(false);
+            }
+        }
+        if matches!(c.op, Op::Eq | Op::Any) && (lt.is_some() || gt.is_some()) && !exact {
+            return Some(false);
+        }
+    }
+    // A bound on one side only, against a `dom` bounded on the other, reaches past it.
+    if (gt.is_some() && dom_lt && lt.is_none() || lt.is_some() && dom_gt && gt.is_none()) && !exact {
+        return Some(false);
+    }
+    Some(need_gt.is_none() && need_lt.is_none())
+}
+
+/// Whether every version `sub` allows, `sup` allows too (npm's `subset`): each of `sub`'s
+/// alternatives inside one of `sup`'s, alternatives no version satisfies aside.
+pub fn subset(sub: &str, sup: &str) -> bool {
+    if sub == sup {
+        return true;
+    }
+    let (Some(sub), Some(sup)) = (parse_range(sub, false), parse_range(sup, false)) else { return false };
+    let mut saw_non_null = false;
+    for s in sub.iter() {
+        let mut inside = false;
+        for d in sup.iter() {
+            let r = simple_subset(s, d);
+            saw_non_null |= r.is_some();
+            if r == Some(true) {
+                inside = true;
+                break;
+            }
+        }
+        if !inside && saw_non_null {
+            return false;
+        }
+    }
+    true
 }
 
 /// The highest of `versions` the range allows, as written in the list.
@@ -517,6 +857,9 @@ where
     }
     best.map(|(_, raw)| raw)
 }
+
+#[cfg(test)]
+mod conformance;
 
 #[cfg(test)]
 mod tests {
@@ -550,7 +893,9 @@ mod tests {
             ("<2", ">=2", false),
             ("~1.2", "1.2.9", true),
             ("~1.2", ">=1.2.9 <1.3.0", true),
-            ("^1.2.3-beta.1", "1.2.3-beta.2", true),
+            // An exact version meets each comparator on its own, and `<2.0.0-0` alone refuses
+            // a 1.2.3 prerelease, so node-semver says no even though the caret takes it.
+            ("^1.2.3-beta.1", "1.2.3-beta.2", false),
             ("<2.0.0", "2.0.0-rc.1", false),
             ("^1", "1.5.0-rc.1", false),
         ] {
@@ -567,7 +912,8 @@ mod tests {
             ("*", "^1", false),
             ("~1.2.0", "*", true),
             ("latest", "*", false),
-            // node-semver's answers: `<x.y.z-0` ends a range where `<x.y.z` does.
+            // Not node-semver's answers, on purpose: it has `<x.y.z` reach past `<x.y.z-0`,
+            // though no version either admits tells them apart. See simple_subset.
             (">=1.2.3 <1.3.0", "~1.2.0", true),
             ("<2.0.0", "<2", true),
             ("<2", "<2.0.0", true),
@@ -596,19 +942,17 @@ mod tests {
             let _ = valid_range(&range);
             let _ = satisfies("1.0.0", &range);
         }
-        // Parts above 2^53-1 are refused, as node-semver does; at the limit, bounds still hold.
+        // Parts above 2^53-1 are refused, as node-semver does, bounds included: a range whose
+        // upper bound would pass the limit is no range.
         let safe = (1u64 << 53) - 1;
         assert!(parse(&format!("{}.0.0", safe + 1)).is_none());
         assert!(!satisfies("1.0.0", &format!(">{max}")) && !valid_range(&format!(">{max}")));
-        for (v, range) in [
-            (format!("0.{safe}.0"), format!("^0.{safe}.0")),
-            (format!("0.0.{safe}"), format!("^0.0.{safe}")),
-            (format!("{safe}.0.0"), format!("^{safe}.0.0")),
-            (format!("{safe}.{safe}.{safe}"), format!("<={safe}.{safe}")),
-            (format!("{safe}.{safe}.{safe}"), format!("1 - {safe}.{safe}.{safe}")),
-        ] {
-            assert!(satisfies(&v, &range), "{v} {range}");
+        for range in
+            [format!("^0.{safe}.0"), format!("^0.0.{safe}"), format!("^{safe}.0.0"), format!("<={safe}.{safe}")]
+        {
+            assert!(!valid_range(&range), "{range}");
         }
+        assert!(satisfies(&format!("{safe}.{safe}.{safe}"), &format!("1 - {safe}.{safe}.{safe}")));
         assert!(!satisfies(&format!("{safe}.0.0"), &format!(">{safe}")));
     }
 
@@ -617,10 +961,13 @@ mod tests {
         assert_eq!(parse("v1.2.3").unwrap().text, "1.2.3");
         assert_eq!(parse(" =1.2.3-beta.1+build.5 ").unwrap().text, "1.2.3-beta.1");
         assert!(parse("1.2").is_none());
-        assert!(parse("01.2.3").is_none());
-        assert!(parse("1.2.3-01").is_none());
+        // Loose, as npm reads them: leading zeros go, a prerelease's `-` may be left out.
+        assert_eq!(parse("01.2.3").unwrap().text, "1.2.3");
+        assert_eq!(parse("1.2.3-01").unwrap().text, "1.2.3-1");
+        assert_eq!(parse("1.2.3beta").unwrap().text, "1.2.3-beta");
         assert!(is_exact("1.2.3"));
         assert!(!is_exact("v1.2.3"));
+        assert!(!is_exact("01.2.3"));
     }
 
     #[test]
