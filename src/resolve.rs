@@ -1006,7 +1006,7 @@ impl Walk<'_> {
     ) -> Option<String> {
         let found: Vec<&Package> = pool.get(name).into_iter().flatten().filter_map(|k| s.records.get(k)).collect();
         if self.tops.contains_key(from)
-            && let Some(ws) = found.iter().find(|p| p.local.is_some() && fits(&p.version, range))
+            && let Some(ws) = found.iter().find(|p| p.local.is_some() && semver::satisfies_peer(&p.version, range))
         {
             return Some(ws.edge_version());
         }
@@ -1015,11 +1015,11 @@ impl Walk<'_> {
         // 4.1.8, not the 4.4.3 that astro pins somewhere below.
         let root = s.edges.get(ROOT).and_then(|l| l.iter().find(|e| e.name == name));
         if let Some(p) = root.and_then(|e| packages.iter().find(|p| p.edge_version() == e.version))
-            && semver::satisfies(&p.version, range)
+            && semver::satisfies_peer(&p.version, range)
         {
             return Some(p.edge_version());
         }
-        let best = semver::max_satisfying(packages.iter().map(|p| p.version.as_str()), range)?;
+        let best = semver::max_satisfying_peer(packages.iter().map(|p| p.version.as_str()), range)?;
         let mut same: Vec<&&Package> = packages.iter().filter(|p| p.version == best).collect();
         same.sort_by_key(|p| p.key());
         if same.len() < 2 {
@@ -1071,8 +1071,8 @@ impl Walk<'_> {
         let live = |k: &str| s.records.get(k).filter(|_| !s.dead.contains_key(k));
         let newest = |versions: &mut Vec<(&str, String)>| {
             versions.sort_by_key(|(v, _)| semver::parse(v));
-            let fitting = versions.iter().rev().find(|(v, _)| semver::satisfies(v, range));
-            fitting.or_else(|| versions.last()).map(|(v, edge)| (edge.clone(), semver::satisfies(v, range)))
+            let fitting = versions.iter().rev().find(|(v, _)| semver::satisfies_peer(v, range));
+            fitting.or_else(|| versions.last()).map(|(v, edge)| (edge.clone(), semver::satisfies_peer(v, range)))
         };
         let mut seen: HashSet<&str> = HashSet::from([from]);
         let mut level: Vec<&str> = vec![from];
