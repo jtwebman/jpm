@@ -212,9 +212,13 @@ fn says_what_it_does_not_read() {
     let r = registry();
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
-    env.write("pnpm-workspace.yaml", "minimumReleaseAge: 1440\npeerDependencyRules:\n  ignoreMissing: [x]\n");
+    env.write(
+        "pnpm-workspace.yaml",
+        "minimumReleaseAge: 1440\npublicHoistPattern: ['@types/*']\npeerDependencyRules:\n  ignoreMissing: [x]\n",
+    );
     let out = env.ok(&["install"]);
     assert!(out.contains("pnpm-workspace.yaml sets minimumReleaseAge, which jpm does not read"), "{out}");
+    assert!(out.contains("pnpm-workspace.yaml sets publicHoistPattern, which jpm does not read"), "{out}");
     assert!(!out.contains("peerDependencyRules"), "only settings that change the tree: {out}");
 }
 

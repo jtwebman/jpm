@@ -18,8 +18,13 @@ use crate::{semver, spec, ui};
 pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 11] = [
+const UNREAD: [&str; 16] = [
     "packageExtensions",
+    "publicHoistPattern",
+    "shamefullyHoist",
+    "hoistPattern",
+    "nodeLinker",
+    "hoistWorkspacePackages",
     "supportedArchitectures",
     "ignoredOptionalDependencies",
     "resolutionMode",
