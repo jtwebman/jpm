@@ -142,6 +142,11 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
             fetch_spec: range,
         });
     }
+    // pnpm's `workspace:<path>` links the directory there, as `link:` does (drizzle's
+    // `workspace:../drizzle-typebox/dist`, a workspace's build output).
+    if let Some(dir) = s.strip_prefix("workspace:").filter(|p| p.starts_with("./") || p.starts_with("../")) {
+        return build(name, &format!("link:{dir}"), raw);
+    }
     let repo = git(&s, raw)?;
     let source = if repo.is_some() { None } else { path(&s, raw)? };
     let mut local = false;
@@ -659,6 +664,9 @@ mod tests {
         // yarn's portal: a directory, installed as `file:` has one.
         let portal = parse_dep("x", "portal:./tools/x").unwrap();
         assert_eq!((portal.kind, portal.fetch_spec.as_str()), (Kind::Directory, "file:tools/x"));
+        // pnpm's `workspace:<path>`: the directory, linked.
+        let at = parse_dep("x", "workspace:../x/dist").unwrap();
+        assert_eq!((at.kind, at.fetch_spec.as_str()), (Kind::Directory, "link:../x/dist"));
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
             assert!(parse_dep("x", spec).is_ok(), "{spec}");
