@@ -530,3 +530,140 @@ fn a_lock_is_the_same_whatever_order_the_registry_answers_in() {
     assert_eq!(lock["packages"]["prompts@1.0.0"]["optionalDependencies"]["types-node"], "1.0.0");
     assert_eq!(keys(&lock, "prompts"), ["prompts@1.0.0", "prompts@1.0.0(types-node@2.0.0)"]);
 }
+
+/// Workspaces `app` (which depends on wrap, whose plugin peers on schema), `tool` (which peers on
+/// schema itself) and `schema` at `version`. Nothing depends on schema, and the registry has none.
+fn schema_peers_repo(env: &Env, version: &str) {
+    monorepo(env, json!({}), &[("app", json!({ "wrap": "1.0.0" }))]);
+    let tool = json!({ "name": "tool", "version": "1.0.0", "peerDependencies": { "schema": "^1" } });
+    env.write("packages/tool/package.json", &tool.to_string());
+    env.write("packages/schema/package.json", &json!({ "name": "schema", "version": version }).to_string());
+    env.write("packages/schema/index.js", &format!("module.exports = 'schema@{version}'"));
+}
+
+#[test]
+fn a_peer_nothing_in_scope_has_links_the_workspace_of_its_name() {
+    // facebook/react's `react-dom@17` peers on react, which only the workspace packages/react is:
+    // yarn 1 and npm link every workspace at the root, where the peer finds it.
+    let r = schema_registry();
+    for store in ["global-store=true", "global-store=false"] {
+        for version in ["1.2.0", "2.0.0"] {
+            let env = Env::new(&r);
+            env.write(".npmrc", &format!("{store}\n"));
+            schema_peers_repo(&env, version);
+            let out = env.ok(&["install"]);
+            for who in ["plugin@1.0.0", "tool@link:packages/tool"] {
+                let unmet = format!("unmet peer schema@^1 of {who}: linked to the workspace schema@{version}");
+                assert_eq!(out.contains(&unmet), version == "2.0.0", "{store} {version}: {out}");
+            }
+            let lock = env.lock();
+            assert_eq!(lock["packages"]["plugin@1.0.0"]["dependencies"]["schema"], "link:packages/schema");
+            let want = format!("schema@{version}");
+            assert_eq!(node_require(&env, "packages/app", "wrap"), want, "{store}");
+            assert_eq!(node_require(&env, "packages/tool", "schema"), want, "{store}");
+            // In the project, not the global store: another project's schema is another package.
+            let entries = real(&env, "node_modules/.jpm");
+            assert!(real(&env, "packages/app/node_modules/wrap").starts_with(&entries), "{store}");
+            assert!(env.ok(&["install"]).contains("up to date"), "{store} {version}");
+            // Resolved again, and installed from the lockfile: the same file and the same tree.
+            let text = env.read("jpm.lock");
+            std::fs::remove_file(env.path("jpm.lock")).unwrap();
+            env.ok(&["lock"]);
+            assert_eq!(env.read("jpm.lock"), text);
+            for dir in ["node_modules", "packages/app/node_modules", "packages/tool/node_modules"] {
+                std::fs::remove_dir_all(env.path(dir)).unwrap();
+            }
+            env.ok(&["install", "--frozen-lockfile"]);
+            assert_eq!(node_require(&env, "packages/app", "wrap"), want, "{store}");
+            assert_eq!(node_require(&env, "packages/tool", "schema"), want, "{store}");
+        }
+    }
+}
+
+#[test]
+fn a_yarn_1_import_links_a_peer_to_the_workspace_of_its_name() {
+    // yarn 1 installs no peers: before, plugin's schema was left unmet, as nothing in the tree had it.
+    let r = schema_registry();
+    for store in ["global-store=true", "global-store=false"] {
+        let env = Env::new(&r);
+        env.write(".npmrc", &format!("{store}\n"));
+        schema_peers_repo(&env, "1.2.0");
+        env.write(
+            "yarn.lock",
+            "# yarn lockfile v1\n\n\nplugin@1.0.0:\n  version \"1.0.0\"\n\nwrap@1.0.0:\n  version \"1.0.0\"\n  dependencies:\n    plugin \"1.0.0\"\n",
+        );
+        let out = env.ok(&["install"]);
+        assert!(!out.contains("unmet peer"), "{store}: {out}");
+        assert_eq!(env.lock()["packages"]["plugin@1.0.0"]["dependencies"]["schema"], "link:packages/schema");
+        assert_eq!(node_require(&env, "packages/app", "wrap"), "schema@1.2.0", "{store}");
+        assert_eq!(node_require(&env, "packages/tool", "schema"), "schema@1.2.0", "{store}");
+        assert!(env.ok(&["install"]).contains("up to date"), "{store}");
+    }
+}
+
+#[test]
+fn a_yarn_1_import_takes_the_workspace_over_an_alias_it_cannot_fetch() {
+    // facebook/react's scopes hold `react-15: npm:react@15.6.2`: yarn 1 installs no peer, so the
+    // alias's package is not there as itself, and `require('react')` finds the root's workspace.
+    let mut pkgs = vec![pkg("schema", "1.0.0", json!({}))];
+    pkgs.push(requiring("plugin", "1.0.0", "schema", json!({ "peerDependencies": { "schema": "^1" } })));
+    pkgs.push(requiring("wrap", "1.0.0", "plugin", json!({ "dependencies": { "plugin": "1.0.0" } })));
+    let r = Registry::start(pkgs);
+    let env = Env::new(&r);
+    schema_peers_repo(&env, "2.0.0");
+    let app = json!({ "name": "app", "version": "1.0.0", "dependencies": { "wrap": "1.0.0", "schema-1": "npm:schema@1.0.0" } });
+    env.write("packages/app/package.json", &app.to_string());
+    env.write(
+        "yarn.lock",
+        "# yarn lockfile v1
+
+
+plugin@1.0.0:
+  version \"1.0.0\"
+
+\"schema-1@npm:schema@1.0.0\":
+  version \"1.0.0\"
+
+wrap@1.0.0:
+  version \"1.0.0\"
+  dependencies:
+    plugin \"1.0.0\"
+",
+    );
+    let out = env.ok(&["install"]);
+    assert!(out.contains("unmet peer schema@^1 of plugin@1.0.0: linked to the workspace schema@2.0.0"), "{out}");
+    assert!(!out.contains("nothing in the tree provides it"), "{out}");
+    assert_eq!(node_require(&env, "packages/app", "wrap"), "schema@2.0.0");
+}
+
+#[test]
+fn a_peer_nothing_in_scope_has_links_the_root_of_its_name() {
+    // The root is what `workspace:` finds by its name, listed as a workspace or not: a peer too.
+    let r = schema_registry();
+    for store in ["global-store=true", "global-store=false"] {
+        let env = Env::new(&r);
+        env.write(
+            ".npmrc",
+            &format!(
+                "{store}
+"
+            ),
+        );
+        let root = json!({ "name": "schema", "version": "1.2.0", "private": true, "workspaces": ["packages/*"] });
+        env.manifest(root);
+        env.write("index.js", "module.exports = 'the root'");
+        let app = json!({ "name": "app", "version": "1.0.0", "dependencies": { "wrap": "1.0.0" } });
+        env.write("packages/app/package.json", &app.to_string());
+        let out = env.ok(&["install"]);
+        assert!(!out.contains("unmet peer"), "{store}: {out}");
+        assert_eq!(env.lock()["packages"]["plugin@1.0.0"]["dependencies"]["schema"], "link:.");
+        assert_eq!(node_require(&env, "packages/app", "wrap"), "the root", "{store}");
+        let text = env.read("jpm.lock");
+        std::fs::remove_file(env.path("jpm.lock")).unwrap();
+        env.ok(&["lock"]);
+        assert_eq!(env.read("jpm.lock"), text);
+        std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+        env.ok(&["install", "--frozen-lockfile"]);
+        assert_eq!(node_require(&env, "packages/app", "wrap"), "the root", "{store}");
+    }
+}

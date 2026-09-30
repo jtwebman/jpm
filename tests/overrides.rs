@@ -112,7 +112,8 @@ fn an_override_to_a_workspace_leaves_registry_packages_their_range() {
     // As vite and nuxt have it: a workspace overrides the registry package of its name. The
     // root and the workspaces link to it; a registry package keeps what it asked for.
     let r = registry();
-    // A peer too: vitest's peer vite, in vite's own repository.
+    // A peer too: vitest's peer vite, in vite's own repository. Nothing in its scope has one, so
+    // it takes the workspace of its name, as any such peer does: not by the override.
     let (env, lock, out) = installed(
         &r,
         json!({ "name": "root", "workspaces": ["b", "host"], "dependencies": { "a": "1.1.0", "b": "^1.0.0", "plugin": "1" } }),
@@ -126,7 +127,7 @@ fn an_override_to_a_workspace_leaves_registry_packages_their_range() {
     assert!(env.read("node_modules/b/package.json").contains("1.5.0"), "the root links the workspace");
     assert!(out.contains("overrides send b to workspace:*"), "{out}");
     assert!(out.contains("overrides send host to workspace:*"), "{out}");
-    assert!(dep(&lock, "plugin@1.0.0", "host").as_str().is_some_and(|v| v.starts_with("2.")), "{lock}");
+    assert_eq!(dep(&lock, "plugin@1.0.0", "host"), "link:host", "{lock}");
 
     // A directory the same way, as nitro sends oxc-parser to a shim of its own.
     let (env, lock, out) = installed(
