@@ -496,6 +496,32 @@ fn a_workspace_peer_takes_the_roots_alias() {
 }
 
 #[test]
+fn a_workspace_peer_takes_another_workspaces_alias() {
+    // gutenberg: three workspaces have prettier as an alias of wp-prettier, and eslint-plugin
+    // has a prettier peer; npm's tree meets it with that copy, and so does jpm.lock.
+    let r = registry();
+    r.publish(pkg("ts6", "6.0.2", json!({})));
+    r.publish(pkg("other", "6.0.2", json!({})));
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["a", "w"] }));
+    env.write("a/package.json", r#"{ "name": "a", "dependencies": { "ts": "npm:ts6@^6" } }"#);
+    env.write("w/package.json", r#"{ "name": "w", "peerDependencies": { "ts": "^5 || ^6" } }"#);
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["workspaces"]["w"]["dependencies"]["ts"], "npm:ts6@6.0.2");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    // An alias no top declares is still refused for the peer.
+    let text = env.read("jpm.lock");
+    let edited =
+        text.replace("npm:ts6@6.0.2", "npm:other@6.0.2").replace("package ts@npm:ts6@", "package ts@npm:other@");
+    assert_ne!(edited, text);
+    env.write("jpm.lock", &edited);
+    let out = env.jpm(&["ci"]);
+    assert!(!out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn links_the_root_listed_as_a_workspace() {
     let r = registry();
     let env = Env::new(&r);

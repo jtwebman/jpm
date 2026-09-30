@@ -1124,7 +1124,7 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
         } else if let Some((real, _)) = crate::graph::split_alias(version)
             && !asked.iter().any(|s| s.fetch_name == real)
-            && !(top.peers.contains_key(name) && root_aliases(lock, name, real))
+            && !(top.peers.contains_key(name) && a_top_aliases(lock, name, real))
         {
             // An edit cannot put another package under a name a spec gave to one it names.
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
@@ -1133,10 +1133,12 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
     Ok(())
 }
 
-/// Whether the root declares `name` as an alias of `real`: a workspace's peer by that name settles
-/// on the root's copy (hono's typescript, an alias of @typescript/typescript6).
-fn root_aliases(lock: &Lockfile, name: &str, real: &str) -> bool {
-    let ranges = lock.root.specs.iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
+/// Whether the root or a workspace declares `name` as an alias of `real`: a workspace's peer by
+/// that name settles on that copy, as pnpm has it and as npm hoists it (hono's root has typescript
+/// as an alias of @typescript/typescript6; gutenberg's workspaces have prettier as wp-prettier).
+fn a_top_aliases(lock: &Lockfile, name: &str, real: &str) -> bool {
+    let specs = std::iter::once(&lock.root.specs).chain(lock.workspaces.values().map(|w| &w.specs));
+    let ranges = specs.flat_map(|s| s.iter().flat_map(Specs::groups)).filter_map(|(_, g)| g?.get(name));
     ranges.filter_map(|r| spec::parse_dep(name, r).ok()).any(|s| s.fetch_name == real)
 }
 
