@@ -261,9 +261,12 @@ impl Ctx {
         std::fs::read_to_string(path).ok()
     }
 
-    fn settings(&self) -> String {
+    /// What the tree depends on besides the lockfile and manifests, the store's salt among it:
+    /// `None` without one, when no state can vouch for the tree.
+    fn settings(&self) -> Option<String> {
         let c = self.config();
         let store = store_dir(self.opts.store.as_deref());
+        let salt = crate::store::salt(&store)?;
         let scopes = json::str_map(&c.scopes);
         let hosts = Value::Array(vec![c.registry.as_str().into(), scopes]);
         let platform = Platform::current().to_value();
@@ -283,7 +286,9 @@ impl Ctx {
             platform,
             crate::util::short_hash(&beside).into(),
             self.patched.as_str().into(),
+            salt.into(),
         ]))
+        .into()
     }
 
     fn ignore_scripts(&self) -> bool {
@@ -322,12 +327,12 @@ impl Ctx {
         if !workspaces.is_empty() {
             workspaces = crate::util::short_hash(&workspaces);
         }
-        Some((Stamps { lock, manifest, workspaces, settings: self.settings() }, newest))
+        Some((Stamps { lock, manifest, workspaces, settings: self.settings()? }, newest))
     }
 
-    fn inputs_hash(&self, project: &Project, lock_text: &str) -> String {
+    fn inputs_hash(&self, project: &Project, lock_text: &str) -> Option<String> {
         let workspaces = project.workspaces.iter().map(|w| (w.path.as_str(), &w.manifest.doc));
-        state::inputs_hash(lock_text, &project.manifest.doc, workspaces, &self.settings())
+        Some(state::inputs_hash(lock_text, &project.manifest.doc, workspaces, &self.settings()?))
     }
 }
 
@@ -402,7 +407,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         let (stamps, newest) = ctx.stamps(&project).unzip();
         let stamped = stamps.as_ref().zip(st.stamps.as_ref()).is_some_and(|(a, b)| a == b)
             && newest.is_some_and(|n| state::settled(n, &state::path(&dir)));
-        let matched = stamped || ctx.lock_text(&dir).is_some_and(|t| Some(ctx.inputs_hash(&project, &t)) == st.inputs);
+        let matched = stamped
+            || ctx.lock_text(&dir).and_then(|t| ctx.inputs_hash(&project, &t)).is_some_and(|h| st.inputs == Some(h));
         let files_same = st.tarballs.as_ref().is_some_and(|files| same_files(&dir, files));
         if matched && files_same && link::tree_standing(&dir, st) {
             if !stamped && stamps.is_some() {
@@ -504,7 +510,9 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     let wanted: Vec<&Package> =
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
-    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, global.is_some(), &platform);
+    // No salt (a store that cannot be written): a hash no state holds, so none vouches for the tree.
+    let salt = crate::store::salt(&store.dir).unwrap_or_else(crate::util::temp_suffix);
+    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, &salt, global.is_some(), &platform);
     let settled = previous.as_ref().is_some_and(|s| s.hash == hash);
     // With downloads under way, nothing is waited for here but, with the global store, the
     // optional packages: whether they arrived decides which entries may be shared. The rest,
@@ -546,8 +554,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             other => other.map(|_| ()),
         }
     };
-    let inputs = ctx.lock_text(&dir).map(|text| link::Inputs {
-        hash: ctx.inputs_hash(&project, &text),
+    let inputs = ctx.lock_text(&dir).and_then(|text| ctx.inputs_hash(&project, &text)).map(|hash| link::Inputs {
+        hash,
         summary: state::Summary {
             packages: wanted.len(),
             workspaces,

@@ -57,6 +57,43 @@ fn installs_an_isolated_tree() {
     assert!(again.contains("up to date"), "{again}");
 }
 
+/// A repository that ships node_modules with the state file of an install made against another
+/// store (its author's machine) does not make `jpm ci` a no-op: the store's salt is among the
+/// inputs, so code the lockfile does not describe is replaced, not kept.
+#[cfg(unix)]
+#[test]
+fn a_shipped_install_state_does_not_vouch_for_node_modules() {
+    use std::process::Command;
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "global-store=false\n");
+    env.manifest(json!({ "name": "app", "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    // The author's clone, payload planted; every file new, as a checkout makes them.
+    let clone = env.root.join("clone");
+    assert!(Command::new("cp").arg("-a").arg(env.project()).arg(&clone).status().unwrap().success());
+    let planted = std::fs::canonicalize(clone.join("node_modules/b/index.js")).unwrap();
+    assert!(planted.starts_with(std::fs::canonicalize(&clone).unwrap()));
+    Command::new("chmod").arg("u+w").arg(&planted).status().unwrap();
+    std::fs::write(&planted, "payload").unwrap();
+    // The same state against this machine's store, whose salt is its own.
+    let store_salt = env.store().join("v1/salt");
+    assert_eq!(std::fs::read_to_string(&store_salt).unwrap().len(), 22);
+    std::fs::write(&store_salt, "another-machines-salt!").unwrap();
+    let ci = || {
+        let out = env.command_in(&clone, &["ci"]).output().unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{text}");
+        text
+    };
+    let text = ci();
+    assert!(!text.contains("up to date"), "{text}");
+    let now = std::fs::read_to_string(clone.join("node_modules/b/index.js")).unwrap();
+    assert!(now.contains("b@1.0.0") && !now.contains("payload"), "{now}");
+    // The state written against this store stands from then on.
+    assert!(ci().contains("up to date"));
+}
+
 #[test]
 fn no_command_installs() {
     let r = registry();

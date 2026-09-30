@@ -12,6 +12,7 @@
 //! - `v1/links/`: the global virtual store's entries (see `link`).
 //! - `v1/projects/`: one file per project installed from this store, holding its path.
 //! - `v1/lock`: held shared by installs and exclusively by a prune.
+//! - `v1/salt`: this store's random salt (see `salt`).
 //! - `metadata/`: registry documents kept between runs.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -173,6 +174,24 @@ pub fn store_dir(dir: Option<&Path>) -> PathBuf {
         return std::path::absolute(&p).unwrap_or(p);
     }
     crate::config::home().join(".jpm").join("store")
+}
+
+/// The store's salt, `v1/salt`: random, made the first time it is asked for. An install state
+/// records it among its inputs, so a state written against another store (on another machine,
+/// or shipped in a repository) never passes for one of this store's. `None` when the store
+/// cannot be written.
+pub fn salt(store: &Path) -> Option<String> {
+    let file = store.join("v1").join("salt");
+    let read = || fs::read_to_string(&file).ok().filter(|s| s.len() == 22);
+    if let Some(s) = read() {
+        return Some(s);
+    }
+    let mut bytes = [0u8; 16];
+    jpm_crypto::rand::fill(&mut bytes);
+    fs::create_dir_all(file.parent()?).ok()?;
+    write_atomic(&file, to_base64_url(&bytes).as_bytes()).ok()?;
+    // Two installs making it at once: whichever rename came last is the salt.
+    read()
 }
 
 /// `sha512-a+b/c=` -> shard `ab`, name `sha512-c`: base64url, so both are safe path segments.
