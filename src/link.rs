@@ -537,11 +537,22 @@ impl Linker<'_> {
         }
         self.ready(pkg)?;
         let Some(staged) = self.opts.store.claim(&pkg.integrity) else { return Ok(None) };
-        let pkg_dir = temp.join("node_modules").join(pkg.dir_name());
-        let moved = pkg_dir.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::rename(&staged, &pkg_dir));
+        let nm = temp.join("node_modules");
+        let pkg_dir = nm.join(pkg.dir_name());
+        // From the top, each once: `temp` is a new name.
+        let scope = pkg_dir.parent().filter(|p| *p != nm);
+        let moved = [temp, &nm]
+            .into_iter()
+            .chain(scope)
+            .try_for_each(fs::create_dir)
+            .and_then(|()| fs::rename(&staged, &pkg_dir));
         match moved {
             Ok(()) => Ok(Some(pkg_dir)),
-            Err(_) => self.opts.store.unclaim(&pkg.integrity, &staged).map(|()| None),
+            Err(_) => {
+                // Built as any other entry, from nothing.
+                remove_tree(temp);
+                self.opts.store.unclaim(&pkg.integrity, &staged).map(|()| None)
+            }
         }
     }
 
