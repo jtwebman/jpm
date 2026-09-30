@@ -330,7 +330,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             dropped.push(id.clone());
             continue;
         }
-        let home = sep(&format!("{key}/node_modules/{}", pkg.name));
+        let home = sep(&format!("{key}/node_modules/{}", pkg.dir_name()));
         wanted.insert(
             id.clone(),
             Entry { pkg, key: key.clone(), home, shared: opts.global.is_some(), build: opts.built.contains(id) },
@@ -385,7 +385,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
     // In the graph's order, which is the order an install queues their downloads in.
-    let ids: Vec<&String> = res.packages.keys().filter(|id| linker.wanted.contains_key(*id)).collect();
+    // One build per entry: an alias and its real package can be one.
+    let mut keys_seen = HashSet::new();
+    let ids: Vec<&String> =
+        res.packages.keys().filter(|id| linker.wanted.get(*id).is_some_and(|e| keys_seen.insert(&e.key))).collect();
     crate::ui::count(&crate::ui::TO_LINK, ids.len());
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
@@ -516,7 +519,8 @@ impl Linker<'_> {
         format!("{up}{up}{}{}", if name.contains('/') { up.as_str() } else { "" }, dep.home)
     }
 
-    /// An entry's deps that are linked. A self-dep would collide with its own directory.
+    /// An entry's deps that are linked. A self-dep would collide with its own directory: pnpm
+    /// leaves it out too, and the package requires itself.
     fn deps_of(&self, pkg: &Package) -> Result<Vec<(String, &Entry<'_>)>> {
         let mut out = Vec::new();
         for (name, version) in pkg.all_deps() {
@@ -525,7 +529,7 @@ impl Linker<'_> {
             if self.res.packages.get(&id).is_some_and(|p| p.local.is_some()) {
                 return Err(fail(format!("{}@{} depends on the workspace {name}", pkg.name, pkg.version)));
             }
-            if let Some(dep) = self.wanted.get(&id).filter(|d| name != pkg.name && self.present(d)) {
+            if let Some(dep) = self.wanted.get(&id).filter(|d| name != pkg.dir_name() && self.present(d)) {
                 out.push((name, dep));
             }
         }
@@ -623,7 +627,7 @@ impl Linker<'_> {
     /// Every file at its recorded size, every dep link and bin pointing where it should.
     fn intact(&self, entry: &Entry) -> Result<bool> {
         let nm = self.root_of(entry).join(&entry.key).join("node_modules");
-        let pkg_dir = nm.join(&entry.pkg.name);
+        let pkg_dir = nm.join(entry.pkg.dir_name());
         let index = self.index(entry)?;
         // A built package's files are its scripts' to change, a patched one's are not the store's.
         if !entry.build
@@ -657,7 +661,7 @@ impl Linker<'_> {
         // Before the directory clone (macOS) as well as the file links.
         self.ready(pkg)?;
         let nm = temp.join("node_modules");
-        let pkg_dir = nm.join(&pkg.name);
+        let pkg_dir = nm.join(pkg.dir_name());
         let parent = pkg_dir.parent().unwrap_or(&nm);
         fs::create_dir_all(parent)
             .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
@@ -684,7 +688,7 @@ impl Linker<'_> {
             })?;
         }
         let deps = self.deps_of(pkg)?;
-        let own_scope = pkg.name.split_once('/').map(|(s, _)| s);
+        let own_scope = pkg.dir_name().split_once('/').map(|(s, _)| s);
         let mut scopes = HashSet::new();
         for (name, dep) in &deps {
             if let Some((scope, _)) = name.split_once('/')

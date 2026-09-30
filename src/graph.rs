@@ -171,6 +171,12 @@ impl Package {
         format!("{}@{}", self.name, self.edge_version())
     }
 
+    /// The directory its files are in within its entry: an alias's real name, as pnpm has it,
+    /// so it requires itself by that name and can link a dependency named like the alias.
+    pub fn dir_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
+
     /// Both edge maps as one: to the linker and the store key an installed dep is a dep.
     pub fn all_deps(&self) -> Deps {
         let mut all = self.dependencies.clone();

@@ -295,7 +295,8 @@ impl Walk<'_> {
             }
         };
         if spec.kind == Kind::Tarball {
-            let source = self.source_of(&spec.fetch_spec, from)?;
+            // An override's path is the root's, whoever's edge it replaces.
+            let source = self.source_of(&spec.fetch_spec, if over.is_some() { ROOT } else { from })?;
             let key = format!("{}@{source}", spec.name);
             let pinned = self.opts.locked.and_then(|l| l.packages.get(&key)).map(|p| p.integrity.clone());
             if pinned.is_some() && !fresh && !self.opts.dedupe {
@@ -849,8 +850,7 @@ impl Walk<'_> {
     ) -> Option<String> {
         let found: Vec<&Package> = pool.get(name).into_iter().flatten().filter_map(|k| s.records.get(k)).collect();
         if self.tops.contains_key(from)
-            && let Some(ws) = found.iter().find(|p| p.local.is_some())
-            && fits(&ws.version, range)
+            && let Some(ws) = found.iter().find(|p| p.local.is_some() && fits(&p.version, range))
         {
             return Some(ws.edge_version());
         }
@@ -871,7 +871,8 @@ impl Walk<'_> {
     }
 
     /// As pnpm: what the consumer's parents have by that name comes first, dev or not, so tsup
-    /// under a root with typescript 5 gets 5, not a playground's 6.
+    /// under a root with typescript 5 gets 5, not a playground's 6. Then a parent that is itself
+    /// the peer: a plugin its host depends on gets that host, not the root's other version.
     // ponytail: a scan of every edge per peer; an index of parents if big trees slow down.
     fn parents_peer(
         &self,
@@ -883,24 +884,19 @@ impl Walk<'_> {
     ) -> Option<String> {
         let is_from =
             |e: &Edge| from.strip_prefix(e.name.as_str()).and_then(|r| r.strip_prefix('@')) == Some(&e.version);
-        let parents: HashSet<&str> = s
-            .edges
-            .values()
-            .filter(|l| l.iter().any(is_from))
-            .filter_map(|l| l.iter().find(|e| e.name == name))
+        let parents: Vec<&String> = s.edges.iter().filter(|(_, l)| l.iter().any(is_from)).map(|(k, _)| k).collect();
+        let theirs: HashSet<&str> = parents
+            .iter()
+            .filter_map(|k| s.edges[*k].iter().find(|e| e.name == name))
             .map(|e| e.version.as_str())
             .collect();
-        let near: HashMap<String, Vec<String>> = have
-            .get(name)
-            .map(|keys| {
-                keys.iter()
-                    .filter(|k| s.records.get(*k).is_some_and(|p| parents.contains(p.edge_version().as_str())))
-                    .cloned()
-                    .collect()
-            })
-            .map(|keys| HashMap::from([(name.to_string(), keys)]))
-            .unwrap_or_default();
+        let pool = |keep: &dyn Fn(&String) -> bool| -> HashMap<String, Vec<String>> {
+            let keys = have.get(name).into_iter().flatten().filter(|k| keep(k)).cloned().collect();
+            HashMap::from([(name.to_string(), keys)])
+        };
+        let near = pool(&|k| s.records.get(k).is_some_and(|p| theirs.contains(p.edge_version().as_str())));
         self.settle_on(s, from, name, range, &near)
+            .or_else(|| self.settle_on(s, from, name, range, &pool(&|k| parents.contains(&k))))
     }
 
     /// An optional peer never installs anything, but a consumer sees a version already here.

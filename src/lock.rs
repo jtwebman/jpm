@@ -824,9 +824,11 @@ pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String
         .filter(|(key, _)| !is_link(key))
         .map(|(key, e)| {
             let (name, tail) = split_key(key)?;
-            // An alias's `npm:<real>@<version>`: its version, as `keys::store_keys` names it.
-            let alias = crate::graph::split_alias(tail).map(|(_, v)| v);
-            let version = e.version.as_deref().or(alias).unwrap_or(tail);
+            // An alias's `npm:<real>@<version>`: its real name and version, as `keys::store_keys`
+            // names it.
+            let alias = crate::graph::split_alias(tail);
+            let name = alias.map_or(name, |(real, _)| real);
+            let version = e.version.as_deref().or(alias.map(|(_, v)| v)).unwrap_or(tail);
             Some((key.clone(), format!("{}@{version}-{}", name.replace('/', "+"), e.subgraph.as_ref()?)))
         })
         .collect()
@@ -1105,7 +1107,15 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
                         && lock.workspaces.values().filter(|w| w.name == s.fetch_name).count() == 1
                 })
             };
-            if !named && !aliased() {
+            // A peer settled on a directory of its name the tree has (a host that depends on its
+            // plugin by path): any that fits, as the walk could have picked it.
+            let peer = || {
+                let ws = lock.workspaces.get(path);
+                top.peers.get(name).is_some_and(|range| {
+                    ws.is_some_and(|w| w.name == *name && (range == "*" || crate::semver::satisfies(&w.version, range)))
+                })
+            };
+            if !named && !aliased() && !peer() {
                 return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
             }
         } else if (spec::is_git(version) || version.contains("://") || version.starts_with("file:"))
