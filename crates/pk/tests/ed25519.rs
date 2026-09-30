@@ -105,3 +105,50 @@ fn bench_ed25519() {
     let ring = time(2000, || UnparsedPublicKey::new(&ED25519, &public).verify(b"message", &sig).unwrap());
     println!("ed25519 verify: ours {ours:.1} µs, ring {ring:.1} µs");
 }
+
+/// Where RFC 8032's strict reading and ZIP-215 part, this is strict: `s` at or past the order
+/// and a key or R not canonically encoded are refused, as ring refuses them, and the key -0 as
+/// RFC 8032 section 5.1.3 says (ring reads it as 0). A small-order key is not refused: with the
+/// identity as key, R the identity and s = 0 check for any message, in ring too. That forges
+/// nothing here, where every key checked is pinned by its fingerprint.
+#[test]
+fn edge_encodings() {
+    let (public, sig) = (
+        hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"),
+        hex(
+            "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+        ),
+    );
+    assert!(verify(&public, b"", &sig));
+    let l = hex("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+    // s + L: the same signature, malleated.
+    let mut plus_l = sig.clone();
+    let mut carry = 0u16;
+    for i in 0..32 {
+        let v = plus_l[32 + i] as u16 + l[i] as u16 + carry;
+        plus_l[32 + i] = v as u8;
+        carry = v >> 8;
+    }
+    assert_eq!(carry, 0);
+    assert!(!verify(&public, b"", &plus_l), "s + L");
+    let mut s_is_l = sig.clone();
+    s_is_l[32..].copy_from_slice(&l);
+    assert!(!verify(&public, b"", &s_is_l), "s = L");
+    let identity = hex("0100000000000000000000000000000000000000000000000000000000000000");
+    // The identity with y = p + 1, and with its sign bit set (-0).
+    let y_past_p = hex("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+    let minus_zero = hex("0100000000000000000000000000000000000000000000000000000000000080");
+    let zero = [0u8; 32];
+    let trivial = [identity.as_slice(), &zero].concat();
+    // (key, signature, our answer, ring's).
+    for (key, sig, want, ring_says, what) in [
+        (&identity, trivial.clone(), true, true, "identity key, R and s = 0"),
+        (&y_past_p, [y_past_p.as_slice(), &zero].concat(), false, false, "a key with y past p"),
+        (&identity, [y_past_p.as_slice(), &zero].concat(), false, false, "an R with y past p"),
+        (&minus_zero, trivial.clone(), false, true, "the key -0"),
+    ] {
+        assert_eq!(verify(key, b"any message", &sig), want, "{what}");
+        let ring = UnparsedPublicKey::new(&ED25519, key).verify(b"any message", &sig).is_ok();
+        assert_eq!(ring, ring_says, "ring: {what}");
+    }
+}
