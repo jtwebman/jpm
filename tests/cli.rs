@@ -961,6 +961,31 @@ fn scripted() -> Registry {
 }
 
 #[test]
+fn names_that_differ_only_in_case() {
+    let r = Registry::start(vec![
+        pkg("JSONStream", "1.0.0", json!({})),
+        pkg("jsonstream", "1.0.0", json!({})),
+        pkg("up", "1.0.0", json!({ "dependencies": { "JSONStream": "1.0.0" } })),
+        pkg("low", "1.0.0", json!({ "dependencies": { "jsonstream": "1.0.0" } })),
+    ]);
+    let env = Env::new(&r);
+    // Two of the root's own: refused where one directory entry would hold both.
+    env.manifest(json!({ "dependencies": { "JSONStream": "1.0.0", "jsonstream": "1.0.0" } }));
+    let out = env.jpm(&["install"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.success(), !cfg!(any(target_os = "macos", windows)), "{text}");
+    // Only in the hoist: one of them there, the same one on every install.
+    let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+    let _ = std::fs::remove_file(env.project().join("jpm.lock"));
+    env.manifest(json!({ "dependencies": { "up": "1.0.0", "low": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.ok(&["install"]).contains("up to date"));
+    let hoisted = std::fs::canonicalize(env.path("node_modules/.jpm/node_modules/jsonstream")).unwrap();
+    let want = if cfg!(any(target_os = "macos", windows)) { "JSONStream@" } else { "jsonstream@" };
+    assert!(hoisted.to_string_lossy().contains(want), "{}", hoisted.display());
+}
+
+#[test]
 fn believes_the_tarball_over_the_registry_on_install_scripts() {
     // fsevents 2: the registry says hasInstallScript, the tarball has no script or binding.gyp.
     let r = Registry::start(vec![

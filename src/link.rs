@@ -229,6 +229,21 @@ fn fail(message: impl Into<String>) -> Error {
     Error::new("ELINK", message)
 }
 
+/// Where the disk folds case, `JSONStream` and `jsonstream` are one directory entry: the one
+/// linked last would stand for both.
+fn no_case_twins<'a>(names: impl Iterator<Item = &'a String>, at: &Path) -> Result<()> {
+    let mut seen = HashMap::new();
+    for name in names.filter(|_| sys::FOLDS_CASE) {
+        if let Some(other) = seen.insert(name.to_lowercase(), name) {
+            return Err(fail(format!(
+                "{other} and {name} differ only in case, and {} can hold only one of them",
+                at.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn sep(path: &str) -> String {
     if WIN { path.replace('/', "\\") } else { path.to_string() }
 }
@@ -780,6 +795,7 @@ impl Linker<'_> {
     /// links to the workspace's own directory. What it linked, for the state.
     fn link_top(&self, top: &Top) -> Result<RootLinks> {
         let nm = &top.nm;
+        no_case_twins(top.dependencies.keys(), nm)?;
         fs::create_dir_all(nm)
             .map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())).with_code("ELINK"))?;
         let real_root = &self.real_root;
@@ -903,6 +919,11 @@ impl Linker<'_> {
             if better {
                 pick.insert(&e.pkg.name, e);
             }
+        }
+        // Undeclared imports only: of names that differ in case alone, the first in order.
+        if sys::FOLDS_CASE {
+            let mut seen = HashSet::new();
+            pick.retain(|name, _| seen.insert(name.to_lowercase()));
         }
         // A checkout can ship it, or a scope in it, as a symlink out of the project: the links
         // would be made, and others swept, there.
