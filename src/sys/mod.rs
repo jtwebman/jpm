@@ -18,6 +18,8 @@
 //! - `leave_interrupts_to_children()`: while the value it returns lives (around a child's wait),
 //!   Ctrl+C is the children's to act on (Windows; unix delivers it to the whole process group).
 //! - `vt()`: whether stderr takes escape sequences (turned on for a Windows console that can).
+//! - `FOLDS_CASE`: whether `Foo.js` and `foo.js` are one file, as on a Mac's or Windows's
+//!   disk by default.
 //! - `on_interrupt(undo)`: Ctrl+C writes `undo` to stderr before ending the process as before;
 //!   `None` stops that.
 
@@ -66,6 +68,9 @@ pub fn libc() -> Option<&'static str> {
 pub fn system_roots() -> Vec<Vec<u8>> {
     Vec::new()
 }
+
+// ponytail: by OS, not by volume; a case-sensitive APFS volume keeps one of two case twins too.
+pub const FOLDS_CASE: bool = cfg!(any(target_os = "macos", windows));
 
 /// What a package's `os`, `cpu` and `libc` fields are matched against, in Node's spelling.
 #[derive(Debug, Clone, PartialEq, Eq)]
