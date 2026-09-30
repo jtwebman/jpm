@@ -93,7 +93,9 @@ none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-work
 `.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
 
 `pnpm-workspace.yaml` settings that change what pnpm installs and jpm does not read, such as
-`packageExtensions` or `minimumReleaseAge`, are named in a warning; the rest are left alone.
+`packageExtensions` or `publicHoistPattern`, are named in a warning; the rest are left alone.
+Its `minimumReleaseAge` (in minutes) and `minimumReleaseAgeExclude` are read as the project's
+`min-release-age` and `min-release-age-exclude`, under its `.npmrc` and held to the same rule.
 
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
