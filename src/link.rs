@@ -419,24 +419,31 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let ids: Vec<&String> =
         res.packages.keys().filter(|id| linker.wanted.get(*id).is_some_and(|e| keys_seen.insert(&e.key))).collect();
     crate::ui::count(&crate::ui::TO_LINK, ids.len());
-    pool::run(pool::disk_threads() * 2, ids, |id, _| {
-        let entry = &linker.wanted[id];
-        let placed = match linker.global_of(entry) {
-            _ if !linker.present(entry) => Ok(()),
-            Some(global) => linker.materialize_global(entry, global),
-            None => linker.materialize(entry, present.contains(&entry.key)),
-        };
-        crate::ui::count(&crate::ui::LINKED, 1);
-        if let Err(e) = placed {
-            failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
-        }
+    let hoisted = std::thread::scope(|s| {
+        // The hoist names each entry by its key alone, so it is made while the entries are built,
+        // on a thread of its own: its links are nearly all in one directory, which takes one
+        // writer at a time.
+        let hoist = s.spawn(|| linker.hoist(&entries_dir.join(HOIST)));
+        pool::run(pool::disk_threads() * 2, ids, |id, _| {
+            let entry = &linker.wanted[id];
+            let placed = match linker.global_of(entry) {
+                _ if !linker.present(entry) => Ok(()),
+                Some(global) => linker.materialize_global(entry, global),
+                None => linker.materialize(entry, present.contains(&entry.key)),
+            };
+            crate::ui::count(&crate::ui::LINKED, 1);
+            if let Err(e) = placed {
+                failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
+            }
+        });
+        hoist.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
     if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
         return Err(e);
     }
+    hoisted?;
     // Downloads no entry took whole, into the store as they are.
     opts.store.flush()?;
-    linker.hoist(&entries_dir.join(HOIST))?;
     let hook = entries_dir.join(HOOK);
     if linker.wanted.values().any(|e| e.shared) {
         crate::util::write_atomic(&hook, include_bytes!("hoist.cjs"))?;
@@ -1054,32 +1061,39 @@ impl Linker<'_> {
             pick.retain(|name, _| seen.insert(name.to_lowercase()));
         }
         // A checkout can ship it, or a scope in it, as a symlink out of the project: the links
-        // would be made, and others swept, there.
+        // would be made, and others swept, there. One made here just now holds nothing yet.
         inside(dir, real_root)?;
-        fs::create_dir_all(dir)
-            .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
+        let fresh = match fs::create_dir(dir) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => false,
+            Err(_) => fs::create_dir_all(dir)
+                .map(|()| false)
+                .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?,
+        };
         let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
         // Each scope directory once, before the links that go in it.
         let scopes: BTreeSet<&str> = pick.keys().filter_map(|n| n.split_once('/').map(|(s, _)| s)).collect();
         for scope in scopes {
             let at = dir.join(scope);
-            inside(&at, real_root)?;
-            fs::create_dir(&at)
-                .or_else(|e| if at.is_dir() { Ok(()) } else { Err(e) })
-                .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
+            if fresh {
+                fs::create_dir(&at)
+            } else {
+                inside(&at, real_root)?;
+                fs::create_dir(&at).or_else(|e| if at.is_dir() { Ok(()) } else { Err(e) })
+            }
+            .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
         }
-        let failures: Mutex<Vec<Error>> = Mutex::default();
-        pool::run(pool::disk_threads(), pick, |(name, e), _| {
+        for (name, e) in pick {
             let at = dir.join(name);
             let parent = at.parent().unwrap_or(dir);
             let real = self.root_of(e).join(&e.home);
             let target = if e.shared { real } else { relative(parent, &real) };
-            if let Err(err) = replace_link(&at, &target.to_string_lossy(), dir, true) {
-                failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(err);
+            let target = target.to_string_lossy();
+            // Nothing to replace in a new directory: made straight away.
+            let made = fresh && within(&at, dir).is_ok() && sys::symlink_dir(&target, &at).is_ok();
+            if !made {
+                replace_link(&at, &target, dir, true)?;
             }
-        });
-        if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
-            return Err(e);
         }
         self.sweep(dir, &keep, "");
         Ok(())
@@ -1219,10 +1233,8 @@ fn remove_link(at: &Path) -> io::Result<()> {
 }
 
 /// Leaves a link that is already right alone; anything else there is replaced.
-fn replace_link(at: &Path, target: &str, within: &Path, dir: bool) -> Result<()> {
-    if !at.starts_with(within) || at.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-        return Err(fail(format!("refusing to link outside {}: {}", within.display(), at.display())));
-    }
+fn replace_link(at: &Path, target: &str, within_dir: &Path, dir: bool) -> Result<()> {
+    within(at, within_dir)?;
     for attempt in 0..4 {
         if sys::links_to(at, target) {
             return Ok(());
@@ -1237,6 +1249,14 @@ fn replace_link(at: &Path, target: &str, within: &Path, dir: bool) -> Result<()>
                 return Err(Error::io(&e, format!("cannot symlink {} -> {target}", at.display())).with_code("ELINK"));
             }
         }
+    }
+    Ok(())
+}
+
+/// `at` names a place under `dir`: no `..` climbs out of it.
+fn within(at: &Path, dir: &Path) -> Result<()> {
+    if !at.starts_with(dir) || at.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(fail(format!("refusing to link outside {}: {}", dir.display(), at.display())));
     }
     Ok(())
 }

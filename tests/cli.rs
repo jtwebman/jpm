@@ -2126,6 +2126,41 @@ fn packages_in_the_global_store_find_undeclared_imports_under_run_and_exec() {
 }
 
 #[test]
+fn hoists_scopes_into_a_new_hoist_and_repairs_a_standing_one() {
+    let r = Registry::start(vec![
+        pkg("a", "1.1.0", json!({ "dependencies": { "b": "^1.1.0" } })),
+        pkg("b", "1.1.0", json!({})),
+        pkg("b", "2.0.0", json!({})),
+        pkg("@scope/lib", "1.0.0", json!({ "dependencies": { "b": "2.0.0" } })),
+        pkg("wrap", "1.0.0", json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1.0.0" } })),
+        pkg("c", "1.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "wrap": "1.0.0" } }));
+    // Made new, while the entries are built: every package but the root's own, scopes and all.
+    env.ok(&["install", "--no-global-store"]);
+    let hoist = "node_modules/.jpm/node_modules";
+    assert!(env.read(&format!("{hoist}/@scope/lib/index.js")).contains("@scope/lib@1.0.0"));
+    assert!(env.read(&format!("{hoist}/a/index.js")).contains("a@1.1.0"));
+    assert!(env.read(&format!("{hoist}/b/index.js")).contains("b@2.0.0"), "the highest");
+    assert!(!env.exists(&format!("{hoist}/wrap")), "the root links its own");
+    // Standing, with a link gone and another replaced by a directory: both put right when the
+    // tree changes.
+    let lib = env.path(&format!("{hoist}/@scope/lib"));
+    std::fs::remove_dir(&lib).or_else(|_| std::fs::remove_file(&lib)).unwrap();
+    let a = env.path(&format!("{hoist}/a"));
+    std::fs::remove_dir(&a).or_else(|_| std::fs::remove_file(&a)).unwrap();
+    std::fs::create_dir(&a).unwrap();
+    std::fs::write(a.join("index.js"), "stale").unwrap();
+    env.manifest(json!({ "dependencies": { "wrap": "1.0.0", "c": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read(&format!("{hoist}/@scope/lib/index.js")).contains("@scope/lib@1.0.0"));
+    assert!(env.read(&format!("{hoist}/a/index.js")).contains("a@1.1.0"));
+    assert!(env.read(&format!("{hoist}/b/index.js")).contains("b@2.0.0"));
+    assert!(!env.exists(&format!("{hoist}/c")));
+}
+
+#[test]
 fn the_hoist_never_hides_what_the_root_links() {
     // Node looks in the hoist before the root's node_modules, so a registry `b` there would
     // stand in for the root's workspace `b` in every undeclared import.
