@@ -215,6 +215,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
             fields.entry(key[..c].to_string()).or_default().insert(key[c + 1..].to_string(), value.clone());
         }
     }
+    // jsr's npm registry, as pnpm has it by default.
+    scopes.entry("@jsr".to_string()).or_insert_with(|| registry_base(Some("https://npm.jsr.io")));
     let mut auth = BTreeMap::new();
     for (dart, found) in &fields {
         if let Some(header) = authorization(found) {

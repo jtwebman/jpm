@@ -128,6 +128,18 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     if s.starts_with("patch:") {
         return Err(invalid(format!("not a patch: range jpm reads, one inside another (in package \"{name}\")")));
     }
+    // jsr's packages from its npm registry, as pnpm reads them: `jsr:@s/n@r` (or `jsr:r` under
+    // the jsr name) is `npm:@jsr/s__n@r`, from npm.jsr.io unless `@jsr:registry` says otherwise.
+    if let Some(rest) = s.strip_prefix("jsr:") {
+        let (jsr, range) = if rest.starts_with('@') { split_at(rest) } else { (name, rest) };
+        let npm = jsr
+            .strip_prefix('@')
+            .and_then(|b| b.split_once('/'))
+            .map(|(scope, n)| format!("@jsr/{scope}__{n}"))
+            .ok_or_else(|| invalid(format!("\"{raw}\" names no jsr package (@scope/name)")))?;
+        let range = if range.trim().is_empty() { "*" } else { range.trim() };
+        return build(name, &format!("npm:{npm}@{range}"), raw);
+    }
     unsupported(&s, raw)?;
     if let Some(range) = s.strip_prefix(crate::runtime::PROTOCOL) {
         if !crate::runtime::NAMES.contains(&name) {
@@ -197,7 +209,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 4] = ["catalog:", "jsr:", "exec:", "gist:"];
+    const PROTOCOLS: [&str; 3] = ["catalog:", "exec:", "gist:"];
     let lower = s.to_ascii_lowercase();
     if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
         return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
@@ -654,10 +666,16 @@ mod tests {
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in ["catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"] {
+        for spec in ["catalog:react18", "exec:./gen.js", "gist:11081aaa"] {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }
+        // jsr's npm registry, as pnpm maps it.
+        let jsr = |name: &str, spec: &str| parse_dep(name, spec).map(|s| (s.fetch_name, s.fetch_spec));
+        assert_eq!(jsr("fs", "jsr:@std/fs@^1").unwrap(), ("@jsr/std__fs".into(), "^1".into()));
+        assert_eq!(jsr("@deno/doc", "jsr:^0.181.0").unwrap(), ("@jsr/deno__doc".into(), "^0.181.0".into()));
+        assert_eq!(jsr("@std/fs", "jsr:").unwrap(), ("@jsr/std__fs".into(), "*".into()));
+        assert!(jsr("fs", "jsr:^1").is_err());
         // A published package's patch lives in its own repository: the version, unpatched.
         assert_eq!(parse_dep("x", "patch:x@npm%3A1.2.3#~/.yarn/patches/x.patch").unwrap().fetch_spec, "1.2.3");
         assert_eq!(parse_dep("x", "patch:x@npm%3A^1#optional!builtin<compat/x>").unwrap().fetch_spec, "^1");
