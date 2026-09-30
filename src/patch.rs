@@ -8,10 +8,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::semver;
+
+/// The most a patch file may hold.
+const MAX_PATCH: u64 = 16 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Patch {
@@ -22,6 +26,8 @@ pub struct Patch {
     pub path: String,
     /// sha256 of the file, in hex.
     pub hash: String,
+    /// The diff itself: what is hashed is what is applied.
+    pub text: Vec<u8>,
 }
 
 impl Patch {
@@ -33,38 +39,43 @@ impl Patch {
         }
     }
 
-    /// Read the diff `path` names in `dir`, for its hash.
+    /// Read the diff `path` names in `dir`: a file of the project's own, through no link.
     pub fn read(dir: &Path, name: String, range: Option<String>, path: &str) -> Result<Self> {
-        let text = read_inside(dir, path)?;
-        Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text) })
+        let fail = |why: String| Error::new("EPATCH", format!("cannot read the patch {path}: {why}"));
+        let file = project_path(dir, path).map_err(fail)?;
+        let meta = fs::symlink_metadata(&file).map_err(|e| fail(e.to_string()))?;
+        if !meta.is_file() {
+            return Err(fail("not a file".into()));
+        }
+        let mut text = Vec::new();
+        fs::File::open(&file)
+            .and_then(|f| f.take(MAX_PATCH + 1).read_to_end(&mut text))
+            .map_err(|e| fail(e.to_string()))?;
+        if text.len() as u64 > MAX_PATCH {
+            return Err(fail(format!("larger than {} MiB", MAX_PATCH >> 20)));
+        }
+        Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text), text })
     }
 }
 
-/// A patch is at most this big.
-const MAX_PATCH: u64 = 16 * 1024 * 1024;
-
-/// The bytes of `path` under `dir`: a regular file inside it, links followed, at most
-/// `MAX_PATCH`. The path comes from the repository's own settings, so `/dev/zero` or a link out
-/// of the project is refused, not read.
-fn read_inside(dir: &Path, path: &str) -> Result<Vec<u8>> {
-    use std::io::Read;
-    let refuse = |why: String| Error::new("EPATCH", format!("the patch {path} {why}"));
-    let cannot = |e: std::io::Error| Error::io(&e, format!("cannot read the patch {path}")).with_code("EPATCH");
-    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
-    let root = fs::canonicalize(dir).map_err(cannot)?;
-    let file = fs::canonicalize(dir.join(path)).map_err(cannot)?;
-    if !file.starts_with(&root) {
-        return Err(refuse(format!("is outside the project ({})", file.display())));
+/// `rel`, a path the project names (a patch, where `jpm patch` works), under `dir`: relative,
+/// inside it (`./` in front is allowed), and through no link that is there now.
+pub fn project_path(dir: &Path, rel: &str) -> std::result::Result<PathBuf, String> {
+    let mut plain = rel;
+    while let Some(r) = plain.strip_prefix("./") {
+        plain = r;
     }
-    if !fs::metadata(&file).map_err(cannot)?.is_file() {
-        return Err(refuse("is not a file".into()));
+    if !crate::tar::plain(plain) {
+        return Err(format!("{rel} is not a path inside the project"));
     }
-    let mut text = Vec::new();
-    fs::File::open(&file).and_then(|f| f.take(MAX_PATCH + 1).read_to_end(&mut text)).map_err(cannot)?;
-    if text.len() as u64 > MAX_PATCH {
-        return Err(refuse(format!("is over {} MiB", MAX_PATCH >> 20)));
+    let mut at = dir.to_path_buf();
+    for part in plain.split('/') {
+        at.push(part);
+        if fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!("{} is a link", at.display()));
+        }
     }
-    Ok(text)
+    Ok(at)
 }
 
 /// yarn's `patch:<source>#<path>[::<params>]` in place of `dep`'s range, its source url-encoded
@@ -85,6 +96,10 @@ pub fn yarn(dep: &str, value: &str) -> Option<(String, Option<(String, String)>)
     let source = String::from_utf8(bytes).ok()?;
     let at = source.get(1..)?.find('@')? + 1;
     let (name, range) = (&source[..at], &source[at + 1..]);
+    // One layer: a `patch:` inside another is none that yarn writes.
+    if range.contains("patch:") {
+        return None;
+    }
     let range = range.strip_prefix("npm:").filter(|r| semver::valid_range(r)).unwrap_or(range);
     let own = if name == dep { range.to_string() } else { format!("npm:{name}@{range}") };
     let path = path.split("::").next().unwrap_or(path);
@@ -162,10 +177,19 @@ fn strip(raw: &[u8], prefixed: bool) -> std::result::Result<Option<String>, Stri
         return Ok(None);
     }
     let rest = if prefixed { path.split_once('/').map_or("", |(_, r)| r) } else { path.as_str() };
-    if path.starts_with('/') || path.contains(':') || !crate::tar::plain(rest) {
+    if path.starts_with('/') || path.contains(':') || !crate::tar::plain(rest) || rest.split('/').any(device) {
         return Err(format!("{path} is not a path inside the package"));
     }
     Ok(Some(rest.to_string()))
+}
+
+/// A name Windows reads as a device whatever its extension: `con`, `nul.js`, `COM1.txt`.
+fn device(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
 /// A path as git writes it: plain up to a tab, or quoted with C escapes.
@@ -354,24 +378,48 @@ fn patch_file(data: &[u8], hunks: &[Hunk], file: &str, crlf: bool) -> std::resul
     let lines = split_lines(data);
     let mut out = Vec::with_capacity(data.len());
     let mut cursor = 0;
+    // How far the hunks so far sat from where they said: the next one is looked for there.
+    let mut offset = 0isize;
+    // Line comparisons in proportion to the file and the patch: a hunk that nearly fits at every
+    // line (a file of one line repeated) is refused, not searched for minutes.
+    let mut budget = 64 * (lines.len() + hunks.iter().map(|h| h.lines.len()).sum::<usize>()) + (1 << 20);
     for (n, h) in hunks.iter().enumerate() {
         let old: Vec<&(u8, Vec<u8>, bool)> = h.lines.iter().filter(|l| l.0 != b'+').collect();
-        let want = if old.is_empty() { h.old_start } else { h.old_start.saturating_sub(1) };
-        let fits =
-            |at: usize| at + old.len() <= lines.len() && old.iter().enumerate().all(|(k, l)| same(lines[at + k], l));
-        let found = if old.is_empty() {
+        let stated = if old.is_empty() { h.old_start } else { h.old_start.saturating_sub(1) };
+        let want = stated.saturating_add_signed(offset);
+        let found = if stated > lines.len() {
+            None
+        } else if old.is_empty() {
             (cursor..=lines.len()).contains(&want).then_some(want)
+        } else if cursor + old.len() > lines.len() {
+            None
         } else {
-            let last = lines.len().saturating_sub(old.len());
-            let span = want.abs_diff(cursor).max(want.abs_diff(last));
-            (0..=span)
-                .flat_map(|d| [want.checked_sub(d), want.checked_add(d).filter(|_| d > 0)])
-                .flatten()
-                .find(|&at| at >= cursor && fits(at))
+            // The nearest start to `want` first, the lower of two, from `cursor` to the last.
+            let last = lines.len() - old.len();
+            let want = want.clamp(cursor, last);
+            let mut found = None;
+            for d in 0..=last - cursor {
+                let below = want.checked_sub(d).filter(|&at| at >= cursor);
+                let above = want.checked_add(d).filter(|&at| d > 0 && at <= last);
+                if below.is_none() && above.is_none() {
+                    break;
+                }
+                found = [below, above].into_iter().flatten().find(|&at| {
+                    old.iter().enumerate().all(|(k, l)| {
+                        budget = budget.saturating_sub(1);
+                        budget > 0 && same(lines[at + k], l)
+                    })
+                });
+                if found.is_some() || budget == 0 {
+                    break;
+                }
+            }
+            found
         };
         let Some(at) = found else {
             return Err(format!("{file}: hunk #{} ({}) does not apply", n + 1, h.header));
         };
+        offset = at as isize - stated as isize;
         for l in &lines[cursor..at] {
             out.extend_from_slice(l);
         }
@@ -622,7 +670,7 @@ mod tests {
     fn picks_a_patch_per_version() {
         let p = |sel: &str| {
             let (name, range) = sel.split_once('@').map_or((sel, None), |(n, r)| (n, Some(r.to_string())));
-            Patch { name: name.into(), range, path: format!("{sel}.patch"), hash: sel.into() }
+            Patch { name: name.into(), range, path: format!("{sel}.patch"), hash: sel.into(), text: Vec::new() }
         };
         let tree = [
             ("a@1.0.0", "a", "1.0.0"),
@@ -690,5 +738,194 @@ mod tests {
             assert_eq!(fs::read_to_string(a.join("f")).unwrap(), after, "case {case}:\n{text}");
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_hunks_that_name_lines_past_the_end() {
+        let dir = tree(&[("f", "a\nb\n")]);
+        for start in ["18446744073709551615", "4611686018427387904", "4"] {
+            let text = format!("--- a/f\n+++ b/f\n@@ -{start},2 +1,2 @@\n a\n-b\n+c\n");
+            assert!(apply(&dir, text.as_bytes(), false).unwrap_err().contains("does not apply"), "{start}");
+        }
+        assert_eq!(read(&dir, "f"), "a\nb\n");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A hunk that nearly fits at every line of a large file is refused, not searched for hours.
+    #[test]
+    fn bounds_the_search_for_a_hunk() {
+        let dir = tree(&[("f", &"a\n".repeat(512 * 1024))]);
+        let k = 20_000;
+        let text = format!("--- a/f\n+++ b/f\n@@ -1,{k} +1,{k} @@\n{} zzz\n", " a\n".repeat(k - 1));
+        let t = std::time::Instant::now();
+        assert!(apply(&dir, text.as_bytes(), false).unwrap_err().contains("does not apply"));
+        assert!(t.elapsed() < std::time::Duration::from_secs(30), "{:?}", t.elapsed());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Lines added above every hunk: each is found where the one before it was.
+    #[test]
+    fn carries_a_hunks_offset_to_the_next() {
+        let body: String = (0..60).map(|i| format!("l{i}\n")).collect();
+        let dir = tree(&[("f", &format!("{}{body}", "new\n".repeat(40)))]);
+        let text = "--- a/f\n+++ b/f\n@@ -2,3 +2,3 @@\n l1\n-l2\n+L2\n l3\n@@ -50,3 +50,3 @@\n l49\n-l50\n+L50\n l51\n";
+        apply(&dir, text.as_bytes(), false).unwrap();
+        let want = body.replace("l2\n", "L2\n").replace("l50\n", "L50\n");
+        assert_eq!(read(&dir, "f"), format!("{}{want}", "new\n".repeat(40)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_windows_device_names() {
+        for path in ["b/con", "b/lib/NUL.js", "b/aux.d.ts", "b/com1", "b/x/LPT9.txt", "b/Prn"] {
+            assert!(strip(path.as_bytes(), true).is_err(), "{path}");
+        }
+        for path in ["b/console.js", "b/com10", "b/lpt0", "b/auxiliary", "b/nul_js"] {
+            assert!(strip(path.as_bytes(), true).is_ok(), "{path}");
+        }
+    }
+
+    #[test]
+    fn reads_a_patch_from_the_project_only() {
+        let dir = tree(&[("patches/a.patch", EDIT), ("big.patch", "")]);
+        let read = |path: &str| Patch::read(&dir, "x".into(), None, path);
+        let p = read("./patches/a.patch").unwrap();
+        assert_eq!((p.text.as_slice(), p.hash.as_str()), (EDIT.as_bytes(), crate::util::sha256_hex(EDIT).as_str()));
+        for path in ["../x.patch", "/etc/passwd", "patches/../patches/a.patch", "C:/x", "patches\\a.patch", "", "a//b"]
+        {
+            assert!(read(path).unwrap_err().message.contains("not a path inside the project"), "{path}");
+        }
+        assert!(read("patches").unwrap_err().message.contains("not a file"));
+        fs::write(dir.join("big.patch"), vec![b' '; (MAX_PATCH + 1) as usize]).unwrap();
+        assert!(read("big.patch").unwrap_err().message.contains("larger than 16 MiB"));
+        #[cfg(unix)]
+        {
+            // A checkout's links, to a directory or a file (or a device) anywhere.
+            std::os::unix::fs::symlink(dir.join("patches"), dir.join("linked")).unwrap();
+            std::os::unix::fs::symlink(dir.join("patches/a.patch"), dir.join("a.patch")).unwrap();
+            for path in ["linked/a.patch", "a.patch"] {
+                assert!(read(path).unwrap_err().message.contains("is a link"), "{path}");
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// yarn writes one layer; a `patch:` inside one would have the spec reader recurse per layer.
+    #[test]
+    fn refuses_a_patch_inside_a_patch() {
+        let mut v = "patch:b@npm%3A1.0.0#builtin<x>".to_string();
+        assert_eq!(yarn("b", &v), Some(("1.0.0".into(), None)));
+        for _ in 0..50 {
+            v = format!("patch:b@{}#builtin<x>", v.replace('%', "%25").replace('#', "%23"));
+        }
+        assert_eq!(yarn("b", &v), None);
+        assert!(crate::spec::parse_dep("b", &v).unwrap_err().message.contains("not a patch: range jpm reads"));
+    }
+
+    /// Hostile diffs: well-formed hunks and lines from a grammar of headers, counts and paths,
+    /// applied to a small package. No panic, and nothing written beside it. `PATCH_FUZZ` sets
+    /// how many.
+    #[test]
+    fn survives_hostile_diffs() {
+        let iters: u64 = std::env::var("PATCH_FUZZ").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
+        let root = crate::store::tests::scratch("patch-fuzz-hostile");
+        let mut seed = 0xDEAD_BEEF_1234_5678_u64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n.max(1)
+        };
+        let paths = [
+            "a/f",
+            "b/f",
+            "a/g",
+            "b/g",
+            "a/d/h",
+            "/dev/null",
+            "a/../x",
+            "a/",
+            "a",
+            "\"a/f\"",
+            "\"a/\\146\"",
+            "\"a/..\\057x\"",
+            "\"a/\\0\"",
+            "\"a/f",
+            "a/f\tjunk",
+            "b/new",
+            "b/d",
+            "b/f/x",
+            "b/F",
+            "a/d",
+        ];
+        let nums = ["0", "1", "2", "3", "", "x", "-1", "99", "70000", "4611686018427387904", "18446744073709551615"];
+        let mut applied = 0;
+        for case in 0..iters {
+            let pkg = root.join(format!("p{case}"));
+            fs::create_dir_all(pkg.join("d")).unwrap();
+            fs::write(pkg.join("f"), "one\ntwo\r\nthree\n\nfour").unwrap();
+            fs::write(pkg.join("g"), "").unwrap();
+            fs::write(pkg.join("d/h"), "h\n").unwrap();
+            let mut text = Vec::new();
+            // Well-formed hunks most of the time, so the applier's search and writes run.
+            for _ in 0..next(4) {
+                let (a, b) = (paths[next(paths.len() as u64) as usize], paths[next(paths.len() as u64) as usize]);
+                let (a, b) = if next(2) == 0 { ("a/f", "b/f") } else { (a, b) };
+                text.extend_from_slice(format!("diff --git {a} {b}\n--- {a}\n+++ {b}\n").as_bytes());
+                for _ in 0..next(3) {
+                    let body: Vec<&str> = (0..next(6))
+                        .map(|_| {
+                            [" one", "-two\r", " three", "", "-four", "+x", "+y", " two\r", "-one"][next(9) as usize]
+                        })
+                        .collect();
+                    let old = body.iter().filter(|l| !l.starts_with('+')).count();
+                    let new = body.iter().filter(|l| !l.starts_with('-')).count();
+                    let at = next(6);
+                    text.extend_from_slice(format!("@@ -{at},{old} +{at},{new} @@\n").as_bytes());
+                    for l in body {
+                        text.extend_from_slice(l.as_bytes());
+                        text.push(b'\n');
+                        if next(8) == 0 {
+                            text.extend_from_slice(b"\\ No newline at end of file\n");
+                        }
+                    }
+                }
+            }
+            for _ in 0..next(10) {
+                let p = |next: &mut dyn FnMut(u64) -> u64| paths[next(paths.len() as u64) as usize];
+                let n = |next: &mut dyn FnMut(u64) -> u64| nums[next(nums.len() as u64) as usize];
+                let line = match next(16) {
+                    0 => format!("diff --git {} {}", p(&mut next), p(&mut next)),
+                    1 => format!("--- {}", p(&mut next)),
+                    2 => format!("+++ {}", p(&mut next)),
+                    3 => format!("@@ -{},{} +{},{} @@", n(&mut next), n(&mut next), n(&mut next), n(&mut next)),
+                    4 => format!("@@ -{} +{} @@", n(&mut next), n(&mut next)),
+                    5 => " one".into(),
+                    6 => "-two\r".into(),
+                    7 => "+new".into(),
+                    8 => "\\ No newline at end of file".into(),
+                    9 => String::new(),
+                    10 => format!("new file mode 100{}", ["644", "755", "x", "777777"][next(4) as usize]),
+                    11 => "deleted file mode 100644".into(),
+                    12 => format!("rename from {}", p(&mut next)),
+                    13 => format!("rename to {}", p(&mut next)),
+                    14 => "new mode 100755".into(),
+                    _ => ["-one", " two", "-four", " three", "+", "-", " "][next(7) as usize].into(),
+                };
+                text.extend_from_slice(line.as_bytes());
+                text.extend_from_slice(if next(5) == 0 { b"\r\n" } else { b"\n" });
+            }
+            let sealed = next(2) == 0;
+            let r = std::panic::catch_unwind(|| apply(&pkg, &text, sealed));
+            assert!(r.is_ok(), "case {case} panicked:\n{}", String::from_utf8_lossy(&text));
+            if matches!(r, Ok(Ok(()))) {
+                applied += 1;
+            }
+            let _ = fs::remove_dir_all(&pkg);
+            let outside: Vec<_> = fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name()).collect();
+            assert!(outside.is_empty(), "case {case} wrote {outside:?}:\n{}", String::from_utf8_lossy(&text));
+        }
+        assert!(applied > iters / 50, "{applied} of {iters} applied: the grammar no longer reaches the writes");
+        fs::remove_dir_all(&root).unwrap();
     }
 }

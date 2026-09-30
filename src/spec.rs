@@ -117,6 +117,9 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         }
         return build(name, &range, raw);
     }
+    if s.starts_with("patch:") {
+        return Err(invalid(format!("not a patch: range jpm reads, one inside another (in package \"{name}\")")));
+    }
     unsupported(&s, raw)?;
     if let Some(range) = s.strip_prefix(crate::runtime::PROTOCOL) {
         if !crate::runtime::NAMES.contains(&name) {

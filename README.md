@@ -131,9 +131,10 @@ patchedDependencies:
 
 A key is `name@version`, `name@range`, or `name` for every version. A version's own patch goes
 before a range's, and a range's before the name's. The value is a path, from the project root,
-to a diff as `git diff` writes it, with paths relative to the package. A hunk whose lines do not
-match, a path that leaves the package, or a patch that no package in the tree takes stops the
-install, as in pnpm.
+to a diff as `git diff` writes it, with paths relative to the package. The path stays in the
+project: no `..`, no absolute path, no symlink on the way, and a file of at most 16 MiB. A hunk
+whose lines do not match, a path that leaves the package, or a patch that no package in the
+tree takes stops the install, as in pnpm.
 
 yarn's `patch:` protocol is read too, in the root package.json's `resolutions` and dependencies:
 
