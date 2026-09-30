@@ -228,6 +228,21 @@ pub fn clear(dir: &Path) {
     let _ = std::fs::remove_file(path(dir));
 }
 
+/// A stamp's mtime, in nanoseconds.
+pub fn mtime_of(stamp: &Stamp) -> i128 {
+    stamp[1].parse().unwrap_or(i128::MAX)
+}
+
+/// Whether stamps whose newest mtime is `newest` can vouch for their files, as saved in `record`:
+/// only when taken strictly before `record` was last written. A file written again within the
+/// same clock tick keeps its size and times, so a stamp no older than the record holding it
+/// proves nothing and the contents are checked instead (git's racy files).
+pub fn settled(newest: i128, record: &Path) -> bool {
+    let written = std::fs::metadata(record).and_then(|m| m.modified()).ok();
+    let written = written.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+    written.is_some_and(|d| newest < d.as_nanos() as i128)
+}
+
 pub fn stamp_of(file: &Path) -> Option<Stamp> {
     let m = std::fs::metadata(file).ok()?;
     let ns = |t: std::io::Result<std::time::SystemTime>| {
@@ -292,17 +307,40 @@ mod tests {
         std::fs::write(&f, "a").unwrap();
         let a = stamp_of(&f).unwrap();
         assert_eq!(stamp_of(&f).unwrap(), a);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Past a coarse clock's tick (up to 10 ms), so the times move.
+        std::thread::sleep(std::time::Duration::from_millis(30));
         std::fs::write(&f, "bb").unwrap();
         assert_ne!(stamp_of(&f).unwrap(), a);
         assert!(stamp_of(&dir.join("missing")).is_none());
         // The same size, the mtime set back: only the change time tells.
         let b = stamp_of(&f).unwrap();
         let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(30));
         std::fs::write(&f, "cc").unwrap();
         std::fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
         assert_ne!(stamp_of(&f).unwrap(), b);
+    }
+
+    #[test]
+    fn trusts_only_stamps_older_than_their_record() {
+        let dir = crate::store::tests::scratch("settled");
+        let (f, record) = (dir.join("f"), dir.join("record"));
+        std::fs::write(&f, "a").unwrap();
+        std::fs::write(&record, "r").unwrap();
+        let at = |p: &Path, s: u64| {
+            let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+        };
+        at(&f, 1_000);
+        at(&record, 2_000);
+        let newest = mtime_of(&stamp_of(&f).unwrap());
+        assert!(settled(newest, &record));
+        // Written in the record's tick, or after: the stamp cannot tell a later same-size write.
+        at(&f, 2_000);
+        assert!(!settled(mtime_of(&stamp_of(&f).unwrap()), &record));
+        at(&f, 3_000);
+        assert!(!settled(mtime_of(&stamp_of(&f).unwrap()), &record));
+        assert!(!settled(newest, &dir.join("missing")));
     }
 
     #[test]

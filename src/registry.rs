@@ -291,9 +291,10 @@ impl Registry {
         let file = cache.file(&format!("full {}", self.path(name)?));
         let side = file.with_file_name("_full.times");
         let stamp = || crate::state::stamp_of(&file).map(|s| s.join(" "));
-        if let (Some(now), Ok(text)) = (stamp(), std::fs::read_to_string(&side))
+        if let (Some(now), Ok(text)) = (crate::state::stamp_of(&file), std::fs::read_to_string(&side))
+            && crate::state::settled(crate::state::mtime_of(&now), &side)
             && let Some((kept, body)) = text.split_once('\n')
-            && kept == now
+            && kept == now.join(" ")
             && let Ok(doc) = Packument::parse(body.as_bytes().to_vec())
             && !doc.time.is_empty()
         {
@@ -702,6 +703,10 @@ mod tests {
         };
         let side = dir.join("r.test/a/_full.times");
         keep("2020-01-01");
+        // Older than any sidecar written from it: a stamp from the same clock tick proves nothing.
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let full = std::fs::File::options().write(true).open(cache.file("full https://r.test/a")).unwrap();
+        full.set_modified(hour_ago).unwrap();
         assert_eq!(times().unwrap(), "2020-01-01");
         let text = std::fs::read_to_string(&side).unwrap();
         // Read from beside the document while its stamp is the document's.
