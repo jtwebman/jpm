@@ -614,6 +614,22 @@ fn prunes_what_no_project_uses() {
 
 #[cfg(unix)]
 #[test]
+fn prunes_nothing_in_use_through_another_spelling_of_the_store() {
+    // As /tmp and /var are links on a Mac: the store named through a link is the same store.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    let link = env.root.join("store-link");
+    std::os::unix::fs::symlink(env.store(), &link).unwrap();
+    let out = env.command(&["prune", "--json", "--store"]).arg(&link).output().unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!((v["shared"]["removed"].as_u64(), v["store"]["removed"].as_u64()), (Some(0), Some(0)), "{v}");
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+}
+
+#[cfg(unix)]
+#[test]
 fn never_builds_or_prunes_through_a_committed_symlink() {
     let r = registry();
     let env = Env::new(&r);

@@ -93,9 +93,12 @@ fn entry_name(name: &str) -> bool {
 /// dropped from the register.
 pub fn mark(store: &Store) -> (HashSet<String>, HashSet<PathBuf>) {
     let (mut shared, mut used) = (HashSet::new(), HashSet::new());
+    // The same store by any spelling: macOS's /tmp and /var are links.
+    let real = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let here = real(&store.dir);
     for e in fs::read_dir(store.projects_dir()).into_iter().flatten().flatten() {
         let dir = PathBuf::from(fs::read_to_string(e.path()).unwrap_or_default());
-        let Some(st) = state::read(&dir).filter(|st| Path::new(&st.store) == store.dir) else {
+        let Some(st) = state::read(&dir).filter(|st| real(Path::new(&st.store)) == here) else {
             let _ = fs::remove_file(e.path());
             continue;
         };
