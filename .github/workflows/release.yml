@@ -1,7 +1,7 @@
 name: release
 
 # A v* tag builds every platform and publishes the release. A pull request that changes this
-# file or install.sh, or a manual run, builds and checks the same binaries without publishing.
+# file or install.sh, or a manual run, builds, checks and sums the same binaries without publishing.
 on:
   push:
     tags: ["v*"]
@@ -88,8 +88,8 @@ jobs:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
+  # Without a tag it only gathers the builds and sums them: the release itself needs a v* tag.
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -100,7 +100,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: cd dist && sha256sum jpm-* > SHA256SUMS
-      - run: gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md --generate-notes
+      - run: cd dist && sha256sum jpm-* > SHA256SUMS && cat SHA256SUMS
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
