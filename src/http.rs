@@ -99,7 +99,7 @@ fn retry<T: Status>(url: &str, mut once: impl FnMut(&str) -> Result<T>) -> Resul
         let got = crate::pool::blocking(|| once(url));
         if std::env::var_os("JPM_HTTP_LOG").is_some() {
             let status = got.as_ref().map_or_else(|e| e.code.to_string(), |r| r.status().to_string());
-            eprintln!("http {status} {}ms {url}", t.elapsed().as_millis());
+            eprintln!("http {status} {}ms {}", t.elapsed().as_millis(), crate::ui::clean(url));
         }
         match got {
             Ok(r) if r.status() == 429 || r.status() >= 500 => {
@@ -522,7 +522,7 @@ impl Client {
 
     fn connect(&self, url: &Url, proxy: Option<&Proxy>) -> io::Result<Conn> {
         if std::env::var_os("JPM_HTTP_LOG").is_some() {
-            eprintln!("connect {}", url.host);
+            eprintln!("connect {}", crate::ui::clean(&url.host));
         }
         let tcp = match proxy {
             Some(p) => {
