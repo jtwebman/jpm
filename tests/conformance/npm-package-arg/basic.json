@@ -1,0 +1,1266 @@
+[
+  {
+    "test": "basic > foo@1.2",
+    "arg": "foo@1.2",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "range",
+      "saveSpec": null,
+      "fetchSpec": "1.2",
+      "raw": "foo@1.2",
+      "rawSpec": "1.2"
+    }
+  },
+  {
+    "test": "basic > foo@~1.2",
+    "arg": "foo@~1.2",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "range",
+      "saveSpec": null,
+      "fetchSpec": "~1.2",
+      "raw": "foo@~1.2",
+      "rawSpec": "~1.2"
+    }
+  },
+  {
+    "test": "basic > @foo/bar",
+    "arg": "@foo/bar",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "raw": "@foo/bar",
+      "name": "@foo/bar",
+      "escapedName": "@foo%2fbar",
+      "scope": "@foo",
+      "rawSpec": "*",
+      "saveSpec": null,
+      "fetchSpec": "*",
+      "type": "range"
+    }
+  },
+  {
+    "test": "basic > @foo/bar@",
+    "arg": "@foo/bar@",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "raw": "@foo/bar@",
+      "name": "@foo/bar",
+      "escapedName": "@foo%2fbar",
+      "scope": "@foo",
+      "rawSpec": "*",
+      "saveSpec": null,
+      "fetchSpec": "*",
+      "type": "range"
+    }
+  },
+  {
+    "test": "basic > @foo/bar@baz",
+    "arg": "@foo/bar@baz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "raw": "@foo/bar@baz",
+      "name": "@foo/bar",
+      "escapedName": "@foo%2fbar",
+      "scope": "@foo",
+      "rawSpec": "baz",
+      "saveSpec": null,
+      "fetchSpec": "baz",
+      "type": "tag"
+    }
+  },
+  {
+    "test": "basic > @f fo o al/ a d s ;f",
+    "arg": "@f fo o al/ a d s ;f",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "raw": "@f fo o al/ a d s ;f",
+      "name": null,
+      "escapedName": null,
+      "rawSpec": "@f fo o al/ a d s ;f",
+      "saveSpec": "file:@f fo o al/ a d s ;f",
+      "fetchSpec": "/test/a/b/@f fo o al/ a d s ;f",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "basic > foo@1.2.3",
+    "arg": "foo@1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "version",
+      "saveSpec": null,
+      "fetchSpec": "1.2.3",
+      "raw": "foo@1.2.3"
+    }
+  },
+  {
+    "test": "basic > foo@=v1.2.3",
+    "arg": "foo@=v1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "version",
+      "saveSpec": null,
+      "fetchSpec": "=v1.2.3",
+      "raw": "foo@=v1.2.3",
+      "rawSpec": "=v1.2.3"
+    }
+  },
+  {
+    "test": "basic > foo@npm:bar",
+    "arg": "foo@npm:bar",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "alias",
+      "saveSpec": null,
+      "fetchSpec": null,
+      "raw": "foo@npm:bar",
+      "rawSpec": "npm:bar",
+      "subSpec": {
+        "registry": true,
+        "name": "bar",
+        "escapedName": "bar",
+        "type": "range",
+        "raw": "bar",
+        "rawSpec": "*",
+        "saveSpec": null,
+        "fetchSpec": "*"
+      }
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com/user/foo#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+    "arg": "git+ssh://git@notgithub.com/user/foo#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com/user/foo#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+      "fetchSpec": "ssh://git@notgithub.com/user/foo",
+      "gitCommittish": "0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+      "raw": "git+ssh://git@notgithub.com/user/foo#0d7bd85a85fa2571fa532d2fc842ed099b236ad2"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com/user/foo#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+    "arg": "git+ssh://git@notgithub.com/user/foo#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com/user/foo#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+      "fetchSpec": "ssh://git@notgithub.com/user/foo",
+      "gitCommittish": "8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+      "raw": "git+ssh://git@notgithub.com/user/foo#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com/user/foo#1.2.3",
+    "arg": "git+ssh://git@notgithub.com/user/foo#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com/user/foo#1.2.3",
+      "fetchSpec": "ssh://git@notgithub.com/user/foo",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://git@notgithub.com/user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com/user/foo",
+    "arg": "git+ssh://git@notgithub.com/user/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com/user/foo",
+      "fetchSpec": "ssh://git@notgithub.com/user/foo",
+      "gitCommittish": null,
+      "raw": "git+ssh://git@notgithub.com/user/foo"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com:user/foo",
+    "arg": "git+ssh://git@notgithub.com:user/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com:user/foo",
+      "fetchSpec": "git@notgithub.com:user/foo",
+      "gitCommittish": null,
+      "raw": "git+ssh://git@notgithub.com:user/foo"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:foo",
+    "arg": "git+ssh://mydomain.com:foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:foo",
+      "fetchSpec": "mydomain.com:foo",
+      "gitCommittish": null,
+      "raw": "git+ssh://mydomain.com:foo"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com:user/foo#1.2.3",
+    "arg": "git+ssh://git@notgithub.com:user/foo#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@notgithub.com:user/foo#1.2.3",
+      "fetchSpec": "git@notgithub.com:user/foo",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://git@notgithub.com:user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:foo#1.2.3",
+    "arg": "git+ssh://mydomain.com:foo#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:foo#1.2.3",
+      "fetchSpec": "mydomain.com:foo",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://mydomain.com:foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:foo/bar#1.2.3",
+    "arg": "git+ssh://mydomain.com:foo/bar#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:foo/bar#1.2.3",
+      "fetchSpec": "mydomain.com:foo/bar",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://mydomain.com:foo/bar#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:1234#1.2.3",
+    "arg": "git+ssh://mydomain.com:1234#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:1234#1.2.3",
+      "fetchSpec": "ssh://mydomain.com:1234",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://mydomain.com:1234#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:1234/hey#1.2.3",
+    "arg": "git+ssh://mydomain.com:1234/hey#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:1234/hey#1.2.3",
+      "fetchSpec": "ssh://mydomain.com:1234/hey",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://mydomain.com:1234/hey#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://mydomain.com:1234/hey",
+    "arg": "git+ssh://mydomain.com:1234/hey",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://mydomain.com:1234/hey",
+      "fetchSpec": "ssh://mydomain.com:1234/hey",
+      "gitCommittish": null,
+      "raw": "git+ssh://mydomain.com:1234/hey"
+    }
+  },
+  {
+    "test": "basic > git+ssh://username:password@mydomain.com:1234/hey#1.2.3",
+    "arg": "git+ssh://username:password@mydomain.com:1234/hey#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://username:password@mydomain.com:1234/hey#1.2.3",
+      "fetchSpec": "ssh://username:password@mydomain.com:1234/hey",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://username:password@mydomain.com:1234/hey#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@github.com/user/foo#1.2.3",
+    "arg": "git+ssh://git@github.com/user/foo#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git#1.2.3",
+      "fetchSpec": "ssh://git@github.com/user/foo.git",
+      "gitCommittish": "1.2.3",
+      "raw": "git+ssh://git@github.com/user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com/user/foo#semver:^1.2.3",
+    "arg": "git+ssh://git@notgithub.com/user/foo#semver:^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "hosted": null,
+      "saveSpec": "git+ssh://git@notgithub.com/user/foo#semver:^1.2.3",
+      "fetchSpec": "ssh://git@notgithub.com/user/foo",
+      "gitCommittish": null,
+      "gitRange": "^1.2.3",
+      "raw": "git+ssh://git@notgithub.com/user/foo#semver:^1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@notgithub.com:user/foo#semver:^1.2.3",
+    "arg": "git+ssh://git@notgithub.com:user/foo#semver:^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "hosted": null,
+      "saveSpec": "git+ssh://git@notgithub.com:user/foo#semver:^1.2.3",
+      "fetchSpec": "git@notgithub.com:user/foo",
+      "gitCommittish": null,
+      "gitRange": "^1.2.3",
+      "raw": "git+ssh://git@notgithub.com:user/foo#semver:^1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@github.com/user/foo#semver:^1.2.3",
+    "arg": "git+ssh://git@github.com/user/foo#semver:^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git#semver:^1.2.3",
+      "fetchSpec": "ssh://git@github.com/user/foo.git",
+      "gitCommittish": null,
+      "gitRange": "^1.2.3",
+      "raw": "git+ssh://git@github.com/user/foo#semver:^1.2.3"
+    }
+  },
+  {
+    "test": "basic > git+ssh://git@github.com:user/foo#semver:^1.2.3",
+    "arg": "git+ssh://git@github.com:user/foo#semver:^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git#semver:^1.2.3",
+      "fetchSpec": "ssh://git@github.com/user/foo.git",
+      "gitCommittish": null,
+      "gitRange": "^1.2.3",
+      "raw": "git+ssh://git@github.com:user/foo#semver:^1.2.3"
+    }
+  },
+  {
+    "test": "basic > user/foo#semver:^1.2.3",
+    "arg": "user/foo#semver:^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "github:user/foo#semver:^1.2.3",
+      "fetchSpec": null,
+      "gitCommittish": null,
+      "gitRange": "^1.2.3",
+      "raw": "user/foo#semver:^1.2.3"
+    }
+  },
+  {
+    "test": "basic > user/foo#path:dist",
+    "arg": "user/foo#path:dist",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "github:user/foo#path:dist",
+      "fetchSpec": null,
+      "gitCommittish": null,
+      "gitSubdir": "/dist",
+      "raw": "user/foo#path:dist"
+    }
+  },
+  {
+    "test": "basic > user/foo#1234::path:dist",
+    "arg": "user/foo#1234::path:dist",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "github:user/foo#1234::path:dist",
+      "fetchSpec": null,
+      "gitCommittish": "1234",
+      "gitRange": null,
+      "gitSubdir": "/dist",
+      "raw": "user/foo#1234::path:dist"
+    }
+  },
+  {
+    "test": "basic > user/foo#notimplemented:value",
+    "arg": "user/foo#notimplemented:value",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "github:user/foo#notimplemented:value",
+      "fetchSpec": null,
+      "gitCommittish": null,
+      "gitRange": null,
+      "gitSubdir": null,
+      "raw": "user/foo#notimplemented:value"
+    }
+  },
+  {
+    "test": "basic > git+file://path/to/repo#1.2.3",
+    "arg": "git+file://path/to/repo#1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git+file://path/to/repo#1.2.3",
+      "fetchSpec": "file://path/to/repo",
+      "gitCommittish": "1.2.3",
+      "raw": "git+file://path/to/repo#1.2.3"
+    }
+  },
+  {
+    "test": "basic > git://notgithub.com/user/foo",
+    "arg": "git://notgithub.com/user/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "git",
+      "saveSpec": "git://notgithub.com/user/foo",
+      "fetchSpec": "git://notgithub.com/user/foo",
+      "raw": "git://notgithub.com/user/foo"
+    }
+  },
+  {
+    "test": "basic > @foo/bar@git+ssh://notgithub.com/user/foo",
+    "arg": "@foo/bar@git+ssh://notgithub.com/user/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "@foo/bar",
+      "escapedName": "@foo%2fbar",
+      "scope": "@foo",
+      "saveSpec": "git+ssh://notgithub.com/user/foo",
+      "fetchSpec": "ssh://notgithub.com/user/foo",
+      "rawSpec": "git+ssh://notgithub.com/user/foo",
+      "raw": "@foo/bar@git+ssh://notgithub.com/user/foo"
+    }
+  },
+  {
+    "test": "basic > git@npm:not-git",
+    "arg": "git@npm:not-git",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "git",
+      "type": "alias",
+      "subSpec": {
+        "type": "range",
+        "registry": true,
+        "name": "not-git",
+        "fetchSpec": "*"
+      },
+      "raw": "git@npm:not-git"
+    }
+  },
+  {
+    "test": "basic > not-git@hostname.com:some/repo",
+    "arg": "not-git@hostname.com:some/repo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+ssh://not-git@hostname.com:some/repo",
+      "fetchSpec": "not-git@hostname.com:some/repo",
+      "raw": "not-git@hostname.com:some/repo"
+    }
+  },
+  {
+    "test": "basic > /path/to/foo",
+    "arg": "/path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/path/to/foo",
+      "fetchSpec": "/path/to/foo",
+      "raw": "/path/to/foo"
+    }
+  },
+  {
+    "test": "basic > /path/to/foo.tar",
+    "arg": "/path/to/foo.tar",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "file",
+      "saveSpec": "file:/path/to/foo.tar",
+      "fetchSpec": "/path/to/foo.tar",
+      "raw": "/path/to/foo.tar"
+    }
+  },
+  {
+    "test": "basic > /path/to/foo.tgz",
+    "arg": "/path/to/foo.tgz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "file",
+      "saveSpec": "file:/path/to/foo.tgz",
+      "fetchSpec": "/path/to/foo.tgz",
+      "raw": "/path/to/foo.tgz"
+    }
+  },
+  {
+    "test": "basic > file:path/to/foo",
+    "arg": "file:path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:path/to/foo",
+      "fetchSpec": "/test/a/b/path/to/foo",
+      "raw": "file:path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:path/to/foo.tar.gz",
+    "arg": "file:path/to/foo.tar.gz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "file",
+      "saveSpec": "file:path/to/foo",
+      "fetchSpec": "/test/a/b/path/to/foo.tar.gz",
+      "raw": "file:path/to/foo.tar.gz"
+    }
+  },
+  {
+    "test": "basic > file:~/path/to/foo",
+    "arg": "file:~/path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:~/path/to/foo",
+      "fetchSpec": "/home/user/path/to/foo",
+      "raw": "file:~/path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/~/path/to/foo",
+    "arg": "file:/~/path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:~/path/to/foo",
+      "fetchSpec": "/home/user/path/to/foo",
+      "raw": "file:/~/path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/~path/to/foo",
+    "arg": "file:/~path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/~path/to/foo",
+      "fetchSpec": "/~path/to/foo",
+      "raw": "file:/~path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/.path/to/foo",
+    "arg": "file:/.path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/.path/to/foo",
+      "fetchSpec": "/.path/to/foo",
+      "raw": "file:/.path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:./path/to/foo",
+    "arg": "file:./path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:path/to/foo",
+      "fetchSpec": "/test/a/b/path/to/foo",
+      "raw": "file:./path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/./path/to/foo",
+    "arg": "file:/./path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:path/to/foo",
+      "fetchSpec": "/test/a/b/path/to/foo",
+      "raw": "file:/./path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file://./path/to/foo",
+    "arg": "file://./path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:path/to/foo",
+      "fetchSpec": "/test/a/b/path/to/foo",
+      "raw": "file://./path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:../path/to/foo",
+    "arg": "file:../path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:../path/to/foo",
+      "fetchSpec": "/test/a/path/to/foo",
+      "raw": "file:../path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/../path/to/foo",
+    "arg": "file:/../path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:../path/to/foo",
+      "fetchSpec": "/test/a/path/to/foo",
+      "raw": "file:/../path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file://../path/to/foo",
+    "arg": "file://../path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:../path/to/foo",
+      "fetchSpec": "/test/a/path/to/foo",
+      "raw": "file://../path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:///path/to/foo",
+    "arg": "file:///path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/path/to/foo",
+      "fetchSpec": "/path/to/foo",
+      "raw": "file:///path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:/path/to/foo",
+    "arg": "file:/path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/path/to/foo",
+      "fetchSpec": "/path/to/foo",
+      "raw": "file:/path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file://path/to/foo",
+    "arg": "file://path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/path/to/foo",
+      "fetchSpec": "/path/to/foo",
+      "raw": "file://path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file:////path/to/foo",
+    "arg": "file:////path/to/foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:/path/to/foo",
+      "fetchSpec": "/path/to/foo",
+      "raw": "file:////path/to/foo"
+    }
+  },
+  {
+    "test": "basic > file://.",
+    "arg": "file://.",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "directory",
+      "saveSpec": "file:",
+      "fetchSpec": "/test/a/b",
+      "raw": "file://."
+    }
+  },
+  {
+    "test": "basic > http://insecure.com/foo.tgz",
+    "arg": "http://insecure.com/foo.tgz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "remote",
+      "saveSpec": "http://insecure.com/foo.tgz",
+      "fetchSpec": "http://insecure.com/foo.tgz",
+      "raw": "http://insecure.com/foo.tgz"
+    }
+  },
+  {
+    "test": "basic > https://server.com/foo.tgz",
+    "arg": "https://server.com/foo.tgz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "escapedName": null,
+      "type": "remote",
+      "saveSpec": "https://server.com/foo.tgz",
+      "fetchSpec": "https://server.com/foo.tgz",
+      "raw": "https://server.com/foo.tgz"
+    }
+  },
+  {
+    "test": "basic > foo@latest",
+    "arg": "foo@latest",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "tag",
+      "saveSpec": null,
+      "fetchSpec": "latest",
+      "raw": "foo@latest"
+    }
+  },
+  {
+    "test": "basic > foo",
+    "arg": "foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "range",
+      "saveSpec": null,
+      "fetchSpec": "*",
+      "raw": "foo"
+    }
+  },
+  {
+    "test": "basic > foo@ 1.2 ",
+    "arg": "foo@ 1.2 ",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "range",
+      "saveSpec": null,
+      "fetchSpec": "1.2",
+      "raw": "foo@ 1.2 ",
+      "rawSpec": " 1.2 "
+    }
+  },
+  {
+    "test": "basic > foo@ 1.2.3 ",
+    "arg": "foo@ 1.2.3 ",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "version",
+      "saveSpec": null,
+      "fetchSpec": "1.2.3",
+      "raw": "foo@ 1.2.3 ",
+      "rawSpec": " 1.2.3 "
+    }
+  },
+  {
+    "test": "basic > foo@1.2.3 ",
+    "arg": "foo@1.2.3 ",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "version",
+      "saveSpec": null,
+      "fetchSpec": "1.2.3",
+      "raw": "foo@1.2.3 ",
+      "rawSpec": "1.2.3 "
+    }
+  },
+  {
+    "test": "basic > foo@ 1.2.3",
+    "arg": "foo@ 1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "escapedName": "foo",
+      "type": "version",
+      "saveSpec": null,
+      "fetchSpec": "1.2.3",
+      "raw": "foo@ 1.2.3",
+      "rawSpec": " 1.2.3"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git+http://foo.com/bar",
+    "where": null,
+    "platform": "any",
+    "expect": {}
+  },
+  {
+    "test": "basic",
+    "arg": "this is not a \u0000 valid package name or url",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "arg": "gopher://yea right",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "name": "invalid/name",
+    "spec": "1.0.0",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "arg": "foo@npm:bar@npm:baz",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "arg": "foo@npm:",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "arg": "foo@npm:foo/bar",
+    "where": null,
+    "platform": "any",
+    "throws": {}
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "^1.2.3",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "range"
+    }
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "file:foo",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "fetchSpec": "/test/a/b/foo"
+    }
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "../foo/bar",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "file:../foo/bar",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "file:../foo/bar.tgz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "file"
+    }
+  },
+  {
+    "test": "basic",
+    "name": null,
+    "spec": "4.0.0",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "version",
+      "name": null
+    }
+  },
+  {
+    "test": "basic",
+    "name": "foo",
+    "spec": "file:abc",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "raw": "foo@file:abc"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "./path/to/thing/package@1.2.3/",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "directory"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "path/to/thing/package@1.2.3",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "directory"
+    }
+  },
+  {
+    "test": "directory with non URI compatible components",
+    "arg": "/test%dir",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "name": null,
+      "rawSpec": "/test%dir",
+      "fetchSpec": "/test%dir",
+      "saveSpec": "file:/test%dir"
+    }
+  },
+  {
+    "test": "file: spec with non URI compatible components",
+    "arg": "file:/test%dir",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "name": null,
+      "rawSpec": "file:/test%dir",
+      "fetchSpec": "/test%dir",
+      "saveSpec": "file:/test%dir"
+    }
+  },
+  {
+    "test": "directory cwd has non URI compatible components",
+    "arg": "./",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "where": "/tmp/ !\"$%&'()*+,-.0123456789:;<=>@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
+      "name": null,
+      "rawSpec": "./",
+      "fetchSpec": "/tmp/ !\"$%&'()*+,-.0123456789:;<=>@ABCDEFGHIJKLMNOPQRSTUVWXYZ[/]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "lodash.has@>=^4",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "Invalid tag name \">=^4\" of package \"lodash.has@>=^4\": Tags may not have any characters that encodeURIComponent encodes."
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "lodash.has @^4",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "Invalid package name \"lodash.has \" of package \"lodash.has @^4\": name cannot contain leading or trailing spaces; name can only contain URL-friendly characters."
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "user/foo#1234::semver:^1.2.3",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "cannot override existing committish with a semver range"
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "user/foo#semver:^1.2.3::1234",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "cannot override existing semver range with a committish"
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "user/foo#path:skipped::path:dist",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "cannot override existing path with a second path"
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "user/foo#1234::5678",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "cannot override existing committish with a second committish"
+    }
+  },
+  {
+    "test": "error message",
+    "arg": "user/foo#semver:^1.0.0::semver:^2.0.0",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "message": "cannot override existing semver range with a second semver range"
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "/path/to/package.tar.gz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "file",
+      "name": null
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "/path/to/package.tgz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "file",
+      "name": null
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "/path/to/package.tar",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "file",
+      "name": null
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "/path/to/package.tarXgz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "name": null
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "/path/to/package.tar_gz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "name": null
+    }
+  },
+  {
+    "test": "tarball regex should only match literal dots",
+    "arg": "./package.tar gz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "directory",
+      "name": null
+    }
+  }
+]

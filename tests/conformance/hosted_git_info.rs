@@ -19,11 +19,15 @@ const DOMAINS: [(&str, &str); 5] = [
 
 /// The differences jpm keeps, each with why. A rule excuses a case it matches only when jpm
 /// reads that case as described, and every rule must excuse at least one case.
-const DELIBERATE: [(&str, &str); 4] = [
+const DELIBERATE: [(&str, &str); 5] = [
     ("credentials", "a user or token in an https or git:// url would be written to jpm.lock; jpm refuses it"),
     ("gist", "`gist:` is refused as unsupported, and a gist's url is read as any git url or tarball url"),
     ("space", "git refuses a ref with whitespace, so jpm refuses it when package.json is read"),
     ("bitbucket git://", "a hosted repository is fetched over https however it is written"),
+    (
+        "colon",
+        "no git ref holds a `:`: npm-package-arg reads `key:value` after `#` as an option and skips one it does not know, so npm and jpm take the default branch",
+    ),
 ];
 
 /// Host, repository path (no `.git`) and ref of a git `fetch_spec`. Over ssh the host is
@@ -87,6 +91,11 @@ fn reads_hosted_git_urls_as_hosted_git_info_does() {
                 _ if file == "gist" => Some(1),
                 Some((_, _, c, _)) if refused && c.contains(char::is_whitespace) => Some(2),
                 None if input.starts_with("git://bitbucket.org/") => Some(3),
+                Some((d, p, c, _))
+                    if c.contains(':') && read.as_ref().is_some_and(|r| (&r.0, &r.1, r.2.as_str()) == (d, p, "")) =>
+                {
+                    Some(4)
+                }
                 _ => None,
             };
             match rule {

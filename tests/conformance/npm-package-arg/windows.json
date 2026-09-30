@@ -1,0 +1,128 @@
+[
+  {
+    "test": "parse a windows path > C:\\x\\y\\z",
+    "arg": "C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "C:\\x\\y\\z",
+      "scope": null,
+      "name": null,
+      "escapedName": null,
+      "rawSpec": "C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > foo@C:\\x\\y\\z",
+    "arg": "foo@C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "foo@C:\\x\\y\\z",
+      "scope": null,
+      "name": "foo",
+      "escapedName": "foo",
+      "rawSpec": "C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > foo@file:///C:\\x\\y\\z",
+    "arg": "foo@file:///C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "foo@file:///C:\\x\\y\\z",
+      "scope": null,
+      "name": "foo",
+      "escapedName": "foo",
+      "rawSpec": "file:///C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > foo@file://C:\\x\\y\\z",
+    "arg": "foo@file://C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "foo@file://C:\\x\\y\\z",
+      "scope": null,
+      "name": "foo",
+      "escapedName": "foo",
+      "rawSpec": "file://C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > file:///C:\\x\\y\\z",
+    "arg": "file:///C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "file:///C:\\x\\y\\z",
+      "scope": null,
+      "name": null,
+      "escapedName": null,
+      "rawSpec": "file:///C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > file://C:\\x\\y\\z",
+    "arg": "file://C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "file://C:\\x\\y\\z",
+      "scope": null,
+      "name": null,
+      "escapedName": null,
+      "rawSpec": "file://C:\\x\\y\\z",
+      "fetchSpec": "C:\\x\\y\\z",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > foo@/foo/bar/baz",
+    "arg": "foo@/foo/bar/baz",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "raw": "foo@/foo/bar/baz",
+      "scope": null,
+      "name": "foo",
+      "escapedName": "foo",
+      "rawSpec": "/foo/bar/baz",
+      "fetchSpec": "C:\\foo\\bar\\baz",
+      "type": "directory"
+    }
+  },
+  {
+    "test": "parse a windows path > foo@git+file://C:\\x\\y\\z",
+    "arg": "foo@git+file://C:\\x\\y\\z",
+    "where": "C:\\test\\path",
+    "platform": "win32",
+    "expect": {
+      "type": "git",
+      "registry": null,
+      "where": null,
+      "raw": "foo@git+file://C:\\x\\y\\z",
+      "name": "foo",
+      "escapedName": "foo",
+      "scope": null,
+      "rawSpec": "git+file://C:\\x\\y\\z",
+      "saveSpec": "git+file://C:\\x\\y\\z",
+      "fetchSpec": "file://c:/x/y/z",
+      "gitRange": null,
+      "gitCommittish": null,
+      "hosted": null
+    }
+  }
+]

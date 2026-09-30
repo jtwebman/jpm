@@ -1,0 +1,100 @@
+[
+  {
+    "test": "basic",
+    "arg": "bitbucket:user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "bitbucket:user/foo-js",
+      "raw": "bitbucket:user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "bitbucket:user/foo-js#bar/baz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "bitbucket:user/foo-js#bar/baz",
+      "raw": "bitbucket:user/foo-js#bar/baz"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "bitbucket:user..blerg--/..foo-js# . . . . . some . tags / / /",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "bitbucket:user..blerg--/..foo-js# . . . . . some . tags / / /",
+      "raw": "bitbucket:user..blerg--/..foo-js# . . . . . some . tags / / /"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "bitbucket:user/foo-js#bar/baz/bin",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "bitbucket:user/foo-js#bar/baz/bin",
+      "raw": "bitbucket:user/foo-js#bar/baz/bin"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "foo@bitbucket:user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "type": "git",
+      "saveSpec": "bitbucket:user/foo-js",
+      "raw": "foo@bitbucket:user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git+ssh://git@bitbucket.org/user/foo#1.2.3",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@bitbucket.org/user/foo.git#1.2.3",
+      "raw": "git+ssh://git@bitbucket.org/user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "https://bitbucket.org/user/foo.git",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+https://bitbucket.org/user/foo.git",
+      "raw": "https://bitbucket.org/user/foo.git"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "@foo/bar@git+ssh://bitbucket.org/user/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "@foo/bar",
+      "scope": "@foo",
+      "type": "git",
+      "saveSpec": "git+ssh://git@bitbucket.org/user/foo.git",
+      "rawSpec": "git+ssh://bitbucket.org/user/foo",
+      "raw": "@foo/bar@git+ssh://bitbucket.org/user/foo"
+    }
+  }
+]

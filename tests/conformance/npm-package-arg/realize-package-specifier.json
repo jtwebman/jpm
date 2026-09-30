@@ -1,0 +1,140 @@
+[
+  {
+    "test": "realize-package-specifier",
+    "arg": "a.tar.gz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "file"
+    }
+  },
+  {
+    "test": "realize-package-specifier",
+    "arg": "d",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "range"
+    }
+  },
+  {
+    "test": "realize-package-specifier",
+    "arg": "file:./a.tar.gz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "file"
+    }
+  },
+  {
+    "test": "realize-package-specifier",
+    "arg": "file:./b",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "realize-package-specifier",
+    "arg": "file:./c",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "realize-package-specifier",
+    "arg": "file:./d",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "a@a.tar.gz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "file"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "d@d",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "tag"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "a@file:./a.tar.gz",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "file"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "b@file:./b",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "c@file:./c",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "d@file:./d",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "directory"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "e@e/2",
+    "where": "test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "git",
+      "hosted": {
+        "type": "github"
+      }
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "e@1",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "range"
+    }
+  },
+  {
+    "test": "named realize-package-specifier",
+    "arg": "e@1.0.0",
+    "where": "/test/a/b",
+    "platform": "any",
+    "expect": {
+      "type": "version"
+    }
+  }
+]
