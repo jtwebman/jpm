@@ -942,7 +942,8 @@ impl Walk<'_> {
                     let found = self
                         .parents_peer(&s, &up, &from, &name, &range, &have)
                         .map(Scoped::Link)
-                        .or_else(|| self.scoped(&mut s, &up, &from, &name, &range))
+                        .or_else(|| self.scoped(&mut s, &up, &from, &name, &range, !self.opts.legacy_peers))
+                        .or_else(|| self.workspace_peer(&mut s, &up, &from, &name, &range).map(Scoped::Link))
                         .or_else(|| self.settle_on(&s, &from, &name, &range, pool).map(Scoped::Link))
                         .or_else(|| self.settle_on(&s, &from, &name, &range, &have).map(Scoped::Link));
                     match found {
@@ -1197,9 +1198,13 @@ impl Walk<'_> {
     }
 
     /// `scope_peer` for a peer the tree settles, out of its range with a warning. Not a top's own
-    /// peer: that is installed in its range, as pnpm installs an importer's.
-    fn scoped(&self, s: &mut State, up: &Parents, from: &str, name: &str, range: &str) -> Option<Scoped> {
+    /// peer: that is installed in its range, as pnpm installs an importer's. An alias's package is
+    /// only fetched as itself where peers are fetched at all (`fetch`): else the scope has none.
+    fn scoped(&self, s: &mut State, up: &Parents, from: &str, name: &str, range: &str, fetch: bool) -> Option<Scoped> {
         let (found, fits) = self.scope_peer(s, up, from, name, range)?;
+        if matches!(found, Scoped::Fetch(_)) && !fetch {
+            return None;
+        }
         if !fits {
             if self.tops.contains_key(from) {
                 return None;
@@ -1213,6 +1218,42 @@ impl Walk<'_> {
             s.warnings.insert(line);
         }
         Some(found)
+    }
+
+    /// A peer nothing in its consumer's scope has, when a workspace (or the named root) goes by
+    /// its name: that workspace, before a copy elsewhere in the tree or a fetch, and out of the
+    /// peer's range too, with a warning. yarn 1 and npm link every workspace at the root, where
+    /// any package finds it: facebook/react's `react-dom@17` gets its `react` from packages/react.
+    fn workspace_peer(&self, s: &mut State, up: &Parents, from: &str, name: &str, range: &str) -> Option<String> {
+        let root = self.root_local.as_ref().filter(|r| r.name == name);
+        let ws = self.local.get(name).or(root).filter(|ws| ws.key() != from)?;
+        // A scope that has another out of a top's range: installed in range, as `scoped` leaves
+        // it. Not when it is this workspace (another top linked it first), nor an alias of the
+        // package where nothing is fetched.
+        if self.tops.contains_key(from) {
+            match self.scope_peer(s, up, from, name, range).map(|(found, _)| found) {
+                Some(Scoped::Link(v)) if v != ws.edge_version() => return None,
+                Some(Scoped::Fetch(_)) if !self.opts.legacy_peers => return None,
+                _ => {}
+            }
+        }
+        // A `workspace:` range takes the workspace as its fetch does (nuxt's builders peer on
+        // `nuxt: workspace:*`); one naming another workspace is left to that fetch.
+        let inside = match spec::parse_dep(name, range) {
+            Ok(own) if own.kind == Kind::Workspace && own.fetch_name != name => return None,
+            Ok(own) if own.kind == Kind::Workspace => fits(&ws.version, &own.fetch_spec),
+            _ => semver::satisfies_peer(&ws.version, range),
+        };
+        if !inside {
+            let who = if from.is_empty() { "root" } else { from };
+            s.warnings
+                .insert(format!("unmet peer {name}@{range} of {who}: linked to the workspace {name}@{}", ws.version));
+        }
+        if root.is_some() && s.started.insert(ws.key()) {
+            // Recorded once something links it, as `local_for` records it.
+            s.records.insert(ws.key(), ws.clone());
+        }
+        Some(ws.edge_version())
     }
 
     /// An optional peer never installs anything, but a consumer sees a version already here.
@@ -1233,12 +1274,13 @@ impl Walk<'_> {
                 if list.iter().any(|e| e.name == *name) {
                     continue;
                 }
-                let best = self.parents_peer(&s, &up, key, name, range, &all).or_else(|| {
-                    match self.scoped(&mut s, &up, key, name, range) {
+                let best = self
+                    .parents_peer(&s, &up, key, name, range, &all)
+                    .or_else(|| match self.scoped(&mut s, &up, key, name, range, false) {
                         Some(Scoped::Link(v)) => Some(v),
                         _ => None,
-                    }
-                });
+                    })
+                    .or_else(|| self.workspace_peer(&mut s, &up, key, name, range));
                 if let Some(best) = best.or_else(|| self.settle_on(&s, key, name, range, pool)) {
                     wired.push((key, Edge { name: name.clone(), version: best, optional: true }));
                 }
@@ -1410,12 +1452,12 @@ fn to_workspace(name: &str, value: &str) -> bool {
     spec::parse_dep(name, value).is_ok_and(|s| matches!(s.kind, Kind::Workspace | Kind::Directory))
 }
 
-/// An override into the project holds for the root and the workspaces only. No registry package
-/// links into a project, as its entry may be shared by every project: there the override gives
-/// way to the range the package asked for, as a dependency or a peer.
+/// An override into the project holds for the root and the workspaces only: a registry
+/// package's edge keeps the range it asked for, as a dependency or a peer (a peer may still
+/// settle on a workspace of its name, as any peer does: see `workspace_peer`).
 fn workspace_override(name: &str, value: &str) -> String {
     format!(
-        "overrides send {name} to {value}: jpm links only the root and workspaces to it, and packages from the registry get {name} from the registry"
+        "overrides send {name} to {value}: jpm applies that to the root and workspaces only, not to packages from the registry"
     )
 }
 

@@ -1169,12 +1169,10 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
                 })
             };
             // A peer settled on a directory of its name the tree has (a host that depends on its
-            // plugin by path): any that fits, as the walk could have picked it.
+            // plugin by path), in its range or out of it, as the walk links a workspace so named.
             let peer = || {
                 let ws = lock.workspaces.get(path);
-                top.peers.get(name).is_some_and(|range| {
-                    ws.is_some_and(|w| w.name == *name && crate::semver::satisfies_peer(&w.version, range))
-                })
+                top.peers.contains_key(name) && ws.is_some_and(|w| w.name == *name)
             };
             if !named && !aliased() && !peer() {
                 return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
