@@ -28,6 +28,9 @@ pub struct Patch {
     pub hash: String,
     /// The diff itself: what is hashed is what is applied.
     pub text: Vec<u8>,
+    /// Named by yarn (`patch:`, `resolutions`), which leaves one nothing takes alone: cal.com's
+    /// and eui's resolutions patch versions their trees no longer have. pnpm's is an error.
+    pub yarn: bool,
 }
 
 impl Patch {
@@ -54,7 +57,7 @@ impl Patch {
         if text.len() as u64 > MAX_PATCH {
             return Err(fail(format!("larger than {} MiB", MAX_PATCH >> 20)));
         }
-        Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text), text })
+        Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text), text, yarn: false })
     }
 }
 
@@ -136,14 +139,16 @@ pub fn select<'a>(
         used[picked[0]] = true;
         out.insert(key.to_string(), patches[picked[0]].hash.clone());
     }
-    let unused: Vec<String> = patches
-        .iter()
-        .zip(&used)
-        .filter(|(_, u)| !**u)
-        .map(|(p, _)| format!("{} ({})", p.selector(), p.path))
-        .collect();
-    if !unused.is_empty() {
-        return Err(Error::new("EPATCH", format!("no package in the tree is patched by {}", unused.join(", "))));
+    let unused = |yarn: bool| -> Vec<String> {
+        let idle = patches.iter().zip(&used).filter(|(p, u)| !**u && p.yarn == yarn);
+        idle.map(|(p, _)| format!("{} ({})", p.selector(), p.path)).collect()
+    };
+    let (strict, lenient) = (unused(false), unused(true));
+    if !strict.is_empty() {
+        return Err(Error::new("EPATCH", format!("no package in the tree is patched by {}", strict.join(", "))));
+    }
+    if !lenient.is_empty() {
+        crate::ui::warn(&format!("no package in the tree is patched by {}; yarn leaves it unused", lenient.join(", ")));
     }
     Ok(out)
 }
@@ -726,7 +731,14 @@ mod tests {
     fn picks_a_patch_per_version() {
         let p = |sel: &str| {
             let (name, range) = sel.split_once('@').map_or((sel, None), |(n, r)| (n, Some(r.to_string())));
-            Patch { name: name.into(), range, path: format!("{sel}.patch"), hash: sel.into(), text: Vec::new() }
+            Patch {
+                name: name.into(),
+                range,
+                path: format!("{sel}.patch"),
+                hash: sel.into(),
+                text: Vec::new(),
+                yarn: false,
+            }
         };
         let tree = [
             ("a@1.0.0", "a", "1.0.0"),

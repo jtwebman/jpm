@@ -1721,6 +1721,7 @@ snapshots:
             path: path.into(),
             hash: "f".repeat(64),
             text: Vec::new(),
+            yarn: false,
         };
         let load_with = |file: &str, text: &str, m: &RootManifest| load(file, text, m, false, &npmjs).map(|_| ());
         let pnpm =
