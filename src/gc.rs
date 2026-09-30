@@ -111,19 +111,60 @@ pub fn mark(store: &Store) -> (HashSet<String>, HashSet<PathBuf>) {
             used.extend(all.filter_map(|i| store.pkg_dir(i).ok()));
         }
     }
-    // Content kept in a global entry (a link `../../links/<key>/...`) keeps that entry.
-    shared.extend(used.iter().filter_map(|p| home_of(p)));
     (shared, used)
 }
 
-/// The global entry a store entry's files live in, when it is a link to one.
-fn home_of(pkg_dir: &Path) -> Option<String> {
+/// The global entry a store entry's files live in, and their path under it, when the store
+/// entry is a link `../../links/<key>/node_modules/<name>` (see `Store::claim`).
+fn home_of(pkg_dir: &Path) -> Option<(String, PathBuf)> {
     let target = fs::read_link(pkg_dir).ok()?;
-    let mut parts = target.components().map(|c| c.as_os_str().to_str());
-    match (parts.next()?, parts.next()?, parts.next()?, parts.next()?) {
-        (Some(".."), Some(".."), Some("links"), Some(key)) => Some(key.to_string()),
-        _ => None,
+    let mut parts = target.components();
+    let mut next = || parts.next().and_then(|c| c.as_os_str().to_str().map(str::to_string));
+    let (up, up2, links, key) = (next()?, next()?, next()?, next()?);
+    let rest: PathBuf = parts.collect();
+    let plain = rest.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+    (up == ".."
+        && up2 == ".."
+        && links == "links"
+        && !key.starts_with('.')
+        && plain
+        && rest.starts_with("node_modules"))
+    .then_some((key, rest))
+}
+
+/// Content a registered project uses that lives in a global entry no project wants any more:
+/// moved back under `pkg/` before the sweep removes the entry, where any other download is kept.
+/// Links to its files elsewhere are untouched: they share the files, not the path. The store's
+/// lock is held exclusively, so no install reads the entry meanwhile.
+pub fn unhome(links: &Path, keep: &HashSet<String>, used: &HashSet<PathBuf>) {
+    for pkg_dir in used {
+        let Some((key, rest)) = home_of(pkg_dir).filter(|(key, _)| !keep.contains(key)) else { continue };
+        let files = links.join(key).join(rest);
+        if !files.is_dir() {
+            continue;
+        }
+        // Moving a directory takes write access to it and to where it is: the entry was sealed.
+        open_up(&files);
+        if let Some(parent) = files.parent() {
+            open_up(parent);
+        }
+        // Gone for good if the rename fails: the index is swept with it, and the next install
+        // that needs the package downloads it again.
+        if fs::remove_file(pkg_dir).is_ok() {
+            let _ = fs::rename(&files, pkg_dir);
+        }
     }
+}
+
+/// A directory `seal` made read-only, writable by its owner again.
+fn open_up(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 /// Global entries no registered project uses, and temp entries of dead processes.
