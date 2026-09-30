@@ -1464,6 +1464,21 @@ fn reads_pnpm_workspaces_and_catalogs() {
 }
 
 #[test]
+fn takes_the_workspaces_of_package_json_and_pnpm_workspace_yaml_both() {
+    // As element-plus and astro keep them: package.json lists some for the other tools, and
+    // pnpm-workspace.yaml, all pnpm reads, lists more.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"] }));
+    env.write("pnpm-workspace.yaml", "packages:\n  - packages/*\n  - internal/*\n");
+    env.write("packages/one/package.json", r#"{ "name": "one", "dependencies": { "build": "workspace:*" } }"#);
+    env.write("internal/build/package.json", r#"{ "name": "build", "version": "1.0.0" }"#);
+    env.ok(&["install"]);
+    let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+    assert_eq!(real(env.project().join("packages/one/node_modules/build")), real(env.project().join("internal/build")));
+}
+
+#[test]
 fn reads_catalogs_from_yarnrc_after_plugins() {
     let r = registry();
     let env = Env::new(&r);
