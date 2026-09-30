@@ -76,8 +76,21 @@ impl RootManifest {
                 })
                 .collect::<Result<Vec<_>>>()
         })
-        .transpose()?
-        .or_else(|| pnpm_workspace(file.parent()?)?.get("packages")?.as_array().map(|l| strings(l)));
+        .transpose()?;
+        // pnpm reads pnpm-workspace.yaml alone, the others package.json alone: a project keeping
+        // both (element-plus, astro) may list a workspace in one only, so jpm takes both lists.
+        let pnpm = file.parent().and_then(pnpm_workspace).and_then(|o| Some(strings(o.get("packages")?.as_array()?)));
+        let workspaces = match (workspaces, pnpm) {
+            (Some(mut listed), Some(more)) => {
+                for p in more {
+                    if !listed.contains(&p) {
+                        listed.push(p);
+                    }
+                }
+                Some(listed)
+            }
+            (listed, more) => listed.or(more),
+        };
         let peer_optional = doc
             .get("peerDependenciesMeta")
             .and_then(Value::as_object)
@@ -238,8 +251,8 @@ pub struct Workspace {
 
 // --- pnpm-workspace.yaml and catalogs --------------------------------------------------------
 
-/// `pnpm-workspace.yaml` in `dir`, when there is one: pnpm's list of workspaces (taken when
-/// package.json lists none) and its catalogs.
+/// `pnpm-workspace.yaml` in `dir`, when there is one: pnpm's list of workspaces (added to
+/// package.json's) and its catalogs.
 fn pnpm_workspace(dir: &Path) -> Option<Object> {
     let text = std::fs::read_to_string(dir.join("pnpm-workspace.yaml")).ok()?;
     match crate::foreign::read_yaml(&text) {
