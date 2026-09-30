@@ -36,6 +36,9 @@ const FIRST_STREAMS: usize = 100;
 const LAST_ID: u32 = (1 << 31) - 1;
 /// A connection's window before WINDOW_UPDATE (section 6.9.2).
 const DEFAULT_WINDOW: u32 = 65_535;
+/// The bytes a stream is taken to have coming until its head says: about a registry document
+/// or a tarball of the middling kind.
+const GUESS: u64 = 64 * 1024;
 
 /// A GET: the host and port as the url has them, and the path with its query. The headers go
 /// as given, names lowercased; `authorization` is sent never-indexed.
@@ -261,6 +264,14 @@ impl Conn {
     pub fn active(&self) -> usize {
         let st = lock(&self.0.state);
         st.streams.len() + st.reserved
+    }
+
+    /// The bytes its streams have still to come, `GUESS` for each whose length is not known
+    /// yet, and the streams open and promised: how loaded it is.
+    fn load(&self) -> (u64, usize) {
+        let st = lock(&self.0.state);
+        let open = st.streams.0.iter().map(|(_, s)| s.length.map_or(GUESS, |n| n.saturating_sub(s.got)));
+        (open.sum::<u64>() + GUESS * st.reserved as u64, st.streams.len() + st.reserved)
     }
 
     /// Promise a stream to a request, when one is free.
@@ -870,8 +881,9 @@ impl Pool {
         lock(&self.hub.hosts).iter().any(|h| h.0 == key && h.1.h1)
     }
 
-    /// A connection with a stream promised: the least busy one, or a new one while the host
-    /// has fewer than `per_host` and every one has a stream open. `Err` is HTTP/1.1.
+    /// A connection with a stream promised: the one with the fewest bytes still to come that has
+    /// a stream free, or a new one while the host has fewer than `per_host` and every one has a
+    /// stream open. `Err` is HTTP/1.1.
     fn pick<T>(
         &self,
         key: &str,
@@ -893,10 +905,11 @@ impl Pool {
             }
             host.conns.retain(|c| !c.is_closed());
             let may_open = host.conns.len() + host.connecting < self.per_host;
-            let best = host.conns.iter().map(|c| (c.active(), c)).min_by_key(|(n, _)| *n);
-            if let Some((n, c)) = best
-                && (n == 0 || !may_open)
-                && c.reserve()
+            let mut conns: Vec<_> = host.conns.iter().map(|c| (c.load(), c)).collect();
+            conns.sort_by_key(|(load, _)| *load);
+            let idle = conns.first().is_some_and(|((_, n), _)| *n == 0);
+            if (idle || !may_open)
+                && let Some((_, c)) = conns.into_iter().find(|(_, c)| c.reserve())
             {
                 return Ok(Ok(c.clone()));
             }

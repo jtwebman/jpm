@@ -689,6 +689,41 @@ fn opens_up_to_its_connections_per_host() {
     assert_eq!(conns.load(Ordering::SeqCst), 3);
 }
 
+/// A request goes to the connection with the fewest bytes still to come, not the one with the
+/// fewest streams: a large body arriving on one leaves the other to carry the small ones.
+#[test]
+fn places_a_stream_where_the_fewest_bytes_are_to_come() {
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let h = heard.clone();
+    let addr = listen(move |s, i| {
+        let mut p = Peer::new(s, &[]);
+        while let Some((id, fields)) = p.request() {
+            let path = get(&fields, ":path").unwrap().to_string();
+            h.lock().unwrap().push((i, path.clone()));
+            // A head whose body never comes: its bytes stay to come until the client resets it.
+            match path.as_str() {
+                "/big" => p.head(id, 200, &[("content-length", "10000000")], false),
+                "/small" => p.head(id, 200, &[("content-length", "1000")], false),
+                _ => p.respond(id, 200, b"x"),
+            }
+        }
+    });
+    let pool = Pool::new(2, MAX_STREAMS, TIMEOUT);
+    let get = |path| {
+        let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req(path)).unwrap() else { panic!() };
+        r
+    };
+    // One stream open on each connection: 10 MB to come on the first, 1 KB on the second.
+    let (big, small) = (get("/big"), get("/small"));
+    for _ in 0..3 {
+        assert_eq!(body(get("/next")).unwrap(), b"x");
+    }
+    drop((big, small));
+    let heard = heard.lock().unwrap().clone();
+    let next: Vec<usize> = heard.iter().filter(|(_, p)| p == "/next").map(|(i, _)| *i).collect();
+    assert_eq!((heard[0].0, heard[1].0, next), (0, 1, vec![1, 1, 1]), "{heard:?}");
+}
+
 /// Each case: what the server sends after the request's HEADERS, and what the client's error
 /// says. The server must hear GOAWAY with `code`.
 #[test]
