@@ -114,6 +114,8 @@ struct Walk<'a> {
     tops: HashMap<String, Top>,
     /// Workspace name -> its record.
     local: HashMap<String, Package>,
+    /// The root, named and not listed as a workspace: what `workspace:` finds for its name.
+    root_local: Option<Package>,
     /// Registry packages of the lock, tarballs left out, by name.
     locked_versions: HashMap<String, Vec<String>>,
     picks: Memo<Arc<Manifest>>,
@@ -166,6 +168,14 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         state.records.insert(found.key(), found.clone());
         local.insert(found.name.clone(), found);
     }
+    // Not listed, a named root is still what `workspace:` finds for its name, as pnpm and yarn
+    // berry have it (hono's and nitro's examples link the root so); a range never links to it.
+    let root_local = manifest
+        .name
+        .as_ref()
+        .filter(|n| !n.is_empty() && !local.contains_key(*n))
+        .and_then(|_| local_record(project::ROOT_PATH, manifest).ok())
+        .map(|found| Package { specs: None, peer_dependencies: None, peers: None, ..found });
     // A `file:` directory inside the project is a top, as a workspace is, never linked by name.
     for dir in opts.dirs.iter().filter(|d| d.top) {
         let m = dir.manifest.clone().unwrap_or_default();
@@ -186,6 +196,7 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         state: Mutex::new(state),
         tops,
         local,
+        root_local,
         locked_versions,
         picks: Mutex::default(),
         libcs: Mutex::default(),
@@ -560,9 +571,19 @@ impl Walk<'_> {
         let own = found.is_some_and(|f| f.key() == from);
         let fail = |m: String| Err(Error::new("EWORKSPACE", m));
         if spec.kind == Kind::Workspace {
-            let Some(found) = found else { return fail(format!("no workspace package named {}", spec.fetch_name)) };
-            if own {
+            let root = self.root_local.as_ref().filter(|r| found.is_none() && r.name == spec.fetch_name);
+            let Some(found) = found.or(root) else {
+                return fail(format!("no workspace package named {}", spec.fetch_name));
+            };
+            if own || root.is_some() && from == ROOT {
                 return fail(format!("workspace {} cannot depend on itself", spec.name));
+            }
+            if root.is_some() {
+                // Recorded once a workspace links it, as a root listed among its workspaces is.
+                let mut s = lock(&self.state);
+                if s.started.insert(found.key()) {
+                    s.records.insert(found.key(), found.clone());
+                }
             }
             if spec.fetch_name != spec.name {
                 return fail(format!("workspace {} cannot be installed as {}", spec.fetch_name, spec.name));

@@ -396,6 +396,36 @@ fn links_the_root_listed_as_a_workspace() {
 }
 
 #[test]
+fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
+    // Not listed, as in hono, nitro and nuxt/ui: `workspace:` still finds the named root, as
+    // in pnpm and yarn berry. A range does not.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(
+        json!({ "name": "root", "version": "1.0.0", "workspaces": ["a", "c"], "bin": { "root-cli": "cli.js" } }),
+    );
+    env.write("cli.js", "#!/bin/sh\necho root\n");
+    env.write("a/package.json", r#"{ "name": "a", "dependencies": { "root": "workspace:*" } }"#);
+    env.write("c/package.json", r#"{ "name": "c", "dependencies": { "b": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+    assert_eq!(real(env.project().join("a/node_modules/root")), real(env.project()));
+    assert!(env.exists("a/node_modules/.bin/root-cli"));
+    assert!(!env.exists("node_modules/root"), "installed once, as the root");
+    assert_eq!(env.lock()["workspaces"]["a"]["dependencies"]["root"], "link:.");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(real(env.project().join("a/node_modules/root")), real(env.project()));
+    // The root asking for itself is still refused.
+    env.manifest(
+        json!({ "name": "root", "version": "1.0.0", "workspaces": ["a"], "dependencies": { "root": "workspace:*" } }),
+    );
+    let out = env.jpm(&["install"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot depend on itself"), "{out:?}");
+}
+
+#[test]
 fn names_the_dependency_forms_it_does_not_read() {
     let r = registry();
     let env = Env::new(&r);
