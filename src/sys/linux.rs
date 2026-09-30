@@ -1,7 +1,7 @@
 //! Linux: hardlinks file by file, and the C library read off the loader that is installed.
 
 pub use super::unix::{
-    alive, clone_dir, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
+    Dir, alive, clone_dir, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
 };
 
 /// `SSL_CERT_FILE`, else the distribution's bundle: Debian and Alpine, then Fedora, then SUSE.

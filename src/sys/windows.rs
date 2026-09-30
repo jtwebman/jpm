@@ -245,6 +245,29 @@ pub fn on_interrupt(undo: Option<&'static str>) {
     unsafe { SetConsoleCtrlHandler(Some(undo_then_exit), i32::from(undo.is_some())) };
 }
 
+/// A directory that what is made, created or linked is named relative to (see the unix `Dir`,
+/// which holds it open). Here each call joins the path whole: Windows has no `*at` calls.
+pub struct Dir {
+    path: PathBuf,
+}
+
+impl Dir {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        if !path.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("{} is not a directory", path.display())));
+        }
+        Ok(Self { path: path.to_path_buf() })
+    }
+
+    pub fn mkdir(&self, rel: &str) -> io::Result<()> {
+        std::fs::create_dir(self.path.join(rel))
+    }
+
+    pub fn link(&self, from: &Dir, from_rel: &str, rel: &str) -> io::Result<()> {
+        std::fs::hard_link(from.path.join(from_rel), self.path.join(rel))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

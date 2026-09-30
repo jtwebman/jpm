@@ -20,7 +20,7 @@
 //! finds it, as under pnpm's `.pnpm/node_modules`. Entries in the global store resolve from the
 //! store and cannot see it: for them, `.jpm/hoist.cjs` beside it lets `jpm run` and `jpm exec`
 //! point Node at it (see `run::hoist_env`).
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -756,8 +756,11 @@ impl Linker<'_> {
             // Before the directory clone (macOS) as well as the file links.
             self.ready(pkg)?;
             let parent = pkg_dir.parent().unwrap_or(&nm);
-            fs::create_dir_all(parent)
-                .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
+            // From the top, each once: `temp` is a new name.
+            for dir in [temp, &nm].into_iter().chain(Some(parent).filter(|p| *p != nm)) {
+                fs::create_dir(dir)
+                    .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
+            }
             let src = self.opts.store.pkg_dir(&pkg.integrity)?;
             // A runtime's entry is less than its store directory (see `index`): never a clone.
             let cloned = !entry.build
@@ -825,23 +828,26 @@ impl Linker<'_> {
     /// Directories first, then one hardlink per file; a filesystem that cannot share inodes with
     /// the store gets copies from the first refusal on.
     /// `copy`: writable copies, for install scripts to change freely.
+    /// `dest` is made here; its parent is there.
     fn place_files(&self, index: &Index, src: &Path, dest: &Path, copy: bool) -> Result<()> {
-        fs::create_dir_all(dest)
-            .map_err(|e| Error::io(&e, format!("cannot create {}", dest.display())).with_code("ELINK"))?;
+        let cannot_create = |e: io::Error, at: &Path| Error::io(&e, format!("cannot create {}", at.display()));
+        fs::create_dir(dest)
+            .or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
+            .map_err(|e| cannot_create(e, dest))?;
+        // Both held open: each file is linked by its path in the package alone.
+        let from_dir = sys::Dir::open(src).map_err(|e| Error::io(&e, format!("cannot read {}", src.display())))?;
+        let to_dir = sys::Dir::open(dest).map_err(|e| cannot_create(e, dest))?;
         let mut made: HashSet<&str> = HashSet::new();
         for f in &index.files {
-            if let Some((dir, _)) = f.path.rsplit_once('/')
-                && made.insert(dir)
-            {
-                let at = dest.join(dir);
-                fs::create_dir_all(&at)
-                    .map_err(|e| Error::io(&e, format!("cannot create {}", at.display())).with_code("ELINK"))?;
+            if let Some((dir, _)) = f.path.rsplit_once('/') {
+                make_dirs(&to_dir, dir, &mut made).map_err(|e| cannot_create(e, &dest.join(dir)).with_code("ELINK"))?;
             }
         }
         let place = |f: &FileEntry| -> Result<()> {
-            let (from, to) = (src.join(index.stored(&f.path)), dest.join(&f.path));
+            let stored: std::borrow::Cow<str> =
+                if index.suffixed { index.stored(&f.path).into() } else { f.path.as_str().into() };
             if !copy && !self.copy_only.load(Ordering::Relaxed) {
-                match fs::hard_link(&from, &to) {
+                match to_dir.link(&from_dir, &stored, &f.path) {
                     Ok(()) => {
                         Counts::add(&self.counts.linked, 1);
                         return Ok(());
@@ -850,9 +856,13 @@ impl Linker<'_> {
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
                     Err(e) if e.kind() == io::ErrorKind::TooManyLinks => {}
                     Err(e) if cannot_link(&e) => self.copy_only.store(true, Ordering::Relaxed),
-                    Err(e) => return Err(Error::io(&e, format!("cannot link {}", to.display())).with_code("ELINK")),
+                    Err(e) => {
+                        let to = dest.join(&f.path);
+                        return Err(Error::io(&e, format!("cannot link {}", to.display())).with_code("ELINK"));
+                    }
                 }
             }
+            let (from, to) = (src.join(&*stored), dest.join(&f.path));
             match fs::copy(&from, &to) {
                 Ok(_) => Counts::add(&self.counts.copied, 1),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -1037,22 +1047,22 @@ impl Linker<'_> {
         fs::create_dir_all(dir)
             .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
         let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
+        // Each scope directory once, before the links that go in it.
+        let scopes: BTreeSet<&str> = pick.keys().filter_map(|n| n.split_once('/').map(|(s, _)| s)).collect();
+        for scope in scopes {
+            let at = dir.join(scope);
+            inside(&at, real_root)?;
+            fs::create_dir(&at)
+                .or_else(|e| if at.is_dir() { Ok(()) } else { Err(e) })
+                .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
+        }
         let failures: Mutex<Vec<Error>> = Mutex::default();
         pool::run(pool::disk_threads(), pick, |(name, e), _| {
             let at = dir.join(name);
             let parent = at.parent().unwrap_or(dir);
             let real = self.root_of(e).join(&e.home);
             let target = if e.shared { real } else { relative(parent, &real) };
-            let made = if name.contains('/') {
-                inside(parent, real_root).and_then(|()| {
-                    fs::create_dir_all(parent)
-                        .map_err(|err| Error::io(&err, "cannot create a scope directory").with_code("ELINK"))
-                })
-            } else {
-                Ok(())
-            }
-            .and_then(|()| replace_link(&at, &target.to_string_lossy(), dir, true));
-            if let Err(err) = made {
+            if let Err(err) = replace_link(&at, &target.to_string_lossy(), dir, true) {
                 failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(err);
             }
         });
@@ -1085,6 +1095,24 @@ impl Linker<'_> {
             }
         }
     }
+}
+
+/// `dir` under `root` and each directory between them, made top down, each once: `made` holds
+/// every one made, so no mkdir is asked for twice or fails for want of its parent. Where the disk
+/// folds case, `Lib/` and `lib/` are one directory.
+fn make_dirs<'a>(root: &sys::Dir, dir: &'a str, made: &mut HashSet<&'a str>) -> io::Result<()> {
+    if made.contains(dir) {
+        return Ok(());
+    }
+    if let Some((parent, _)) = dir.rsplit_once('/') {
+        make_dirs(root, parent, made)?;
+    }
+    match root.mkdir(dir) {
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+        _ => {}
+    }
+    made.insert(dir);
+    Ok(())
 }
 
 fn dep_pkg<'a>(deps: &'a [(String, Dep)], name: &str) -> Option<&'a Package> {

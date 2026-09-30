@@ -59,7 +59,7 @@ pub use windows::*;
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub use unix::{
-    alive, clone_dir, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
+    Dir, alive, clone_dir, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
 };
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn libc() -> Option<&'static str> {
