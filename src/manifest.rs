@@ -41,6 +41,9 @@ pub struct Manifest {
     pub dist: Dist,
     /// Not the registry's: this came from a full document, so a missing `libc` means none.
     pub full: bool,
+    /// Dependencies its tarball ships in its own node_modules (`bundleDependencies`), taken out
+    /// of `dependencies` and `optionalDependencies`: npm, pnpm and bun install none of them.
+    pub bundled: Map,
 }
 
 impl Manifest {
@@ -72,6 +75,7 @@ impl Manifest {
     /// a readme included, is skipped without being built.
     fn read(s: &mut Scan) -> Result<Self> {
         let mut m = Self::default();
+        let mut bundle = Value::Null;
         s.members(|s, key| {
             match key.as_ref() {
                 "name" => m.name = opt_string(s)?.unwrap_or_default(),
@@ -91,6 +95,7 @@ impl Manifest {
                         .unwrap_or_default();
                 }
                 "bin" => m.bin = Some(s.value()?),
+                "bundleDependencies" | "bundledDependencies" => bundle = s.value()?,
                 "os" => m.os = string_list(s)?,
                 "cpu" => m.cpu = string_list(s)?,
                 "libc" => m.libc = string_list(s)?,
@@ -114,6 +119,17 @@ impl Manifest {
             }
             Ok(())
         })?;
+        // `true` bundles every dependency; a list, those it names.
+        let bundled = |name: &String| match &bundle {
+            Value::Bool(all) => *all,
+            Value::Array(names) => names.iter().any(|n| n.as_str() == Some(name)),
+            _ => false,
+        };
+        for group in [&mut m.dependencies, &mut m.optional_dependencies] {
+            let (inside, rest) = std::mem::take(group).into_iter().partition(|(n, _)| bundled(n));
+            *group = rest;
+            m.bundled.extend::<Map>(inside);
+        }
         // An optional peer named in peerDependenciesMeta alone takes any version, as pnpm and yarn
         // read it (mobx-react-lite's react-dom).
         for name in &m.peer_optional {
