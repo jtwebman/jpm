@@ -18,7 +18,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: rustup show active-toolchain || rustup toolchain install
       - run: nproc; cat /proc/cpuinfo | grep -m1 "model name"; grep -o -w "avx2\|sha_ni\|pclmulqdq\|vaes\|avx512f" /proc/cpuinfo | sort -u | tr "\n" " "; bun --version; df -h $RUNNER_TEMP; mount | grep -E " / | /mnt"
-      - run: bash bench/probe4.sh 2>&1 | tee probe.log
+      - run: bash bench/probe5.sh 2>&1 | tee probe.log
       - run: echo done
       - uses: actions/upload-artifact@v4
         if: always()

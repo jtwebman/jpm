@@ -504,8 +504,11 @@ impl Client {
                 Err(_) => {}
             }
         }
+        let t0 = crate::ui::us();
         let mut conn = self.connect(url, proxy.as_ref())?;
+        let t1 = crate::ui::us();
         let (status, headers) = exchange(&mut conn, &head)?;
+        crate::ui::trace(|| format!("conn {t0} {t1} {} {}", crate::ui::us(), url.target));
         Ok(self.body(conn, key, status, headers))
     }
 
@@ -568,6 +571,7 @@ impl Client {
             }
             None => self.tcp(&url.host, url.port)?,
         };
+        crate::ui::trace(|| "tcp".into());
         let stream = if url.tls {
             Stream::Tls(Box::new(jpm_tls::Stream::connect(tcp, &url.host, &self.tls)?))
         } else {
@@ -708,6 +712,18 @@ fn cut_short() -> io::Error {
 
 impl Read for Body {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let t0 = crate::ui::us();
+        let r = self.read_inner(buf);
+        let t1 = crate::ui::us();
+        if t1 - t0 > 150_000 {
+            crate::ui::trace(|| format!("gap {t0} {t1} {:?}", self.key));
+        }
+        r
+    }
+}
+
+impl Body {
+    fn read_inner(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let Some(conn) = self.conn.as_mut() else { return Ok(0) };
         if buf.is_empty() {
             return Ok(0);
@@ -753,7 +769,7 @@ impl Read for Body {
                     return Ok(0);
                 }
                 self.frame = Frame::Chunked(size);
-                self.read(buf)
+                self.read_inner(buf)
             }
             Frame::Close => {
                 let n = conn.read(buf)?;
