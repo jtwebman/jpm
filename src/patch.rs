@@ -268,10 +268,13 @@ fn parse(text: &[u8]) -> std::result::Result<(Diffs, bool), String> {
         lines.pop();
     }
     // A patch whose every line ends in CRLF was converted on its way (git's autocrlf): read as LF.
-    let converted = !lines.is_empty() && lines.iter().all(|l| l.ends_with(b"\r"));
+    // A last line with no end at all has nothing to convert (cal.com's libphonenumber-js patch).
+    let open = !text.ends_with(b"\n") && !lines.is_empty();
+    let ended = &lines[..lines.len() - usize::from(open)];
+    let converted = !ended.is_empty() && ended.iter().all(|l| l.ends_with(b"\r"));
     if converted {
         for l in &mut lines {
-            *l = &l[..l.len() - 1];
+            *l = l.strip_suffix(b"\r").unwrap_or(l);
         }
     }
     let mut out: Diffs = Vec::new();
@@ -646,6 +649,12 @@ mod tests {
         let dir2 = tree(&[("lib/x.js", "a\r\nb\r\nc\r\none\r\ntwo\r\nthree\r\n")]);
         apply(&dir2, EDIT.replace('\n', "\r\n").as_bytes(), false).unwrap();
         assert_eq!(read(&dir2, "lib/x.js"), "a\r\nb\r\nc\r\none\r\nTWO\r\nthree\r\n");
+        // The same, its last line with no end at all, as cal.com's patch is checked out.
+        let dir5 = tree(&[("lib/x.js", "a\r\nb\r\nc\r\none\r\ntwo\r\nthree\r\n")]);
+        let open = EDIT.replace('\n', "\r\n");
+        apply(&dir5, open.strip_suffix("\r\n").unwrap().as_bytes(), false).unwrap();
+        assert_eq!(read(&dir5, "lib/x.js"), "a\r\nb\r\nc\r\none\r\nTWO\r\nthree\r\n");
+        fs::remove_dir_all(dir5).unwrap();
         // A context line an editor trimmed to nothing.
         let dir3 = tree(&[("lib/x.js", "one\n\nthree\n")]);
         apply(&dir3, b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,3 +1,3 @@\n one\n\n-three\n+3\n", false).unwrap();
