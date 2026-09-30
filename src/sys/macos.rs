@@ -5,7 +5,9 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-pub use super::unix::{alive, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt};
+pub use super::unix::{
+    Dir, alive, exec, leave_interrupts_to_children, links_to, on_interrupt, read_link, symlink_dir, vt,
+};
 
 /// `<sys/clonefile.h>`: do not follow a symlink at `src`. libc does not export it.
 const CLONE_NOFOLLOW: u32 = 0x0001;

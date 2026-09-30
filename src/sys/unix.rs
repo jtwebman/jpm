@@ -86,3 +86,60 @@ pub fn on_interrupt(undo: Option<&'static str>) {
 pub fn clone_dir(_src: &Path, _dst: &Path) -> io::Result<bool> {
     Ok(false)
 }
+
+/// A directory held open: what is made, created or linked under it is named by a path relative
+/// to it, so each call walks that path alone, not the whole absolute one again. Thousands of
+/// files go into each install's entries, under paths a dozen directories deep.
+pub struct Dir {
+    fd: std::os::fd::OwnedFd,
+}
+
+impl Dir {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let file =
+            std::fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC).open(path)?;
+        Ok(Self { fd: file.into() })
+    }
+
+    /// The directory `rel`, whose parent is there.
+    pub fn mkdir(&self, rel: &str) -> io::Result<()> {
+        // SAFETY: a valid fd and a NUL-terminated path that outlives the call.
+        with_rel(rel, |p| unsafe { libc::mkdirat(self.raw(), p, 0o777) })
+    }
+
+    /// `rel` as a hard link to `from`'s file `from_rel`.
+    pub fn link(&self, from: &Dir, from_rel: &str, rel: &str) -> io::Result<()> {
+        let mut linked = Ok(());
+        with_rel(from_rel, |old| {
+            // SAFETY: valid fds and NUL-terminated paths that outlive the call; no flags, so a
+            // symlink is linked as itself, as `std::fs::hard_link` does.
+            linked = with_rel(rel, |new| unsafe { libc::linkat(from.raw(), old, self.raw(), new, 0) });
+            0
+        })?;
+        linked
+    }
+
+    fn raw(&self) -> libc::c_int {
+        use std::os::fd::AsRawFd;
+        self.fd.as_raw_fd()
+    }
+}
+
+/// `f` over `rel` as a C string, from the stack when it is short; its `-1` as the OS error. An
+/// absolute path would leave the directory, so none is taken.
+fn with_rel(rel: &str, f: impl FnOnce(*const libc::c_char) -> libc::c_int) -> io::Result<()> {
+    if rel.is_empty() || rel.starts_with('/') || rel.contains('\0') {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("not a relative path: {rel:?}")));
+    }
+    let mut stack = [0u8; 256];
+    let owned;
+    let p = if rel.len() < stack.len() {
+        stack[..rel.len()].copy_from_slice(rel.as_bytes());
+        stack.as_ptr()
+    } else {
+        owned = std::ffi::CString::new(rel)?;
+        owned.as_ptr().cast()
+    };
+    if f(p.cast()) == -1 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
