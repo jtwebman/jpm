@@ -285,7 +285,12 @@ impl Walk<'_> {
                 format!("only the root and workspaces link to workspaces, so not {from}"),
             ));
         }
-        if matches!(spec.kind, Kind::Git | Kind::Tarball) && self.opts.block_exotic && !self.tops.contains_key(from) {
+        // A git or tarball source the project's overrides chose is not the package's own.
+        if matches!(spec.kind, Kind::Git | Kind::Tarball)
+            && self.opts.block_exotic
+            && !self.tops.contains_key(from)
+            && over.is_none()
+        {
             return Err(exotic(from, &spec.raw));
         }
         let push = |version: String| {
