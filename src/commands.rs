@@ -296,21 +296,25 @@ impl Ctx {
         self.opts.flags.global_store.or(env).or(self.config().global_store)
     }
 
-    fn stamps(&mut self, project: &Project) -> Option<Stamps> {
+    /// The stamps a no-op compares, and the newest mtime among them (see `state::settled`).
+    fn stamps(&mut self, project: &Project) -> Option<(Stamps, i128)> {
         let dir = &project.dir;
         let lock = match &self.foreign_read {
             Some((_, stamp)) => stamp.clone(),
             None => stamp_of(&self.lock_source(dir).ok()?.0),
         }?;
         let manifest = stamp_of(&dir.join("package.json"))?;
+        let mut newest = state::mtime_of(&lock).max(state::mtime_of(&manifest));
         let mut workspaces = String::new();
         for w in &project.workspaces {
-            workspaces.push_str(&format!("{}\n{}\n", w.path, stamp_of(&w.dir.join("package.json"))?.join(" ")));
+            let stamp = stamp_of(&w.dir.join("package.json"))?;
+            newest = newest.max(state::mtime_of(&stamp));
+            workspaces.push_str(&format!("{}\n{}\n", w.path, stamp.join(" ")));
         }
         if !workspaces.is_empty() {
             workspaces = crate::util::short_hash(&workspaces);
         }
-        Some(Stamps { lock, manifest, workspaces, settings: self.settings() })
+        Some((Stamps { lock, manifest, workspaces, settings: self.settings() }, newest))
     }
 
     fn inputs_hash(&self, project: &Project, lock_text: &str) -> String {
@@ -387,8 +391,9 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     {
         // A workspace added, removed or edited changes the stamps (a glob matching a new
         // directory too: the project was loaded, globs and all) and the inputs' hash.
-        let stamps = ctx.stamps(&project);
-        let stamped = stamps.as_ref().zip(st.stamps.as_ref()).is_some_and(|(a, b)| a == b);
+        let (stamps, newest) = ctx.stamps(&project).unzip();
+        let stamped = stamps.as_ref().zip(st.stamps.as_ref()).is_some_and(|(a, b)| a == b)
+            && newest.is_some_and(|n| state::settled(n, &state::path(&dir)));
         let matched = stamped || ctx.lock_text(&dir).is_some_and(|t| Some(ctx.inputs_hash(&project, &t)) == st.inputs);
         let files_same = st.tarballs.as_ref().is_some_and(|files| same_files(&dir, files));
         if matched && files_same && link::tree_standing(&dir, st) {
@@ -539,7 +544,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             other_platforms: elsewhere,
             warnings: resolution.warnings.clone(),
         },
-        stamps: ctx.stamps(&project),
+        stamps: ctx.stamps(&project).map(|(s, _)| s),
     });
     let packages = wanted.len();
     let scripts = !ctx.ignore_scripts();
