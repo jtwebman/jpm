@@ -1,11 +1,16 @@
 name: release
 
+# A v* tag builds every platform and publishes the release. A pull request that changes this
+# file or install.sh, or a manual run, builds and checks the same binaries without publishing.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [.github/workflows/release.yml, install.sh]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -13,10 +18,17 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: jpm-linux-x64, musl: true }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: jpm-linux-arm64, musl: true }
+          # Linux: glibc builds under the plain names, linked against glibc 2.17 (as rustup's
+          # own builds are) so they run on CentOS 7, Debian 8 and Ubuntu 14.04 and later.
+          # musl's malloc made the static builds a third slower on a big install.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, asset: jpm-linux-x64, glibc: "2.17", run: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, asset: jpm-linux-arm64, glibc: "2.17", run: true }
           # 32-bit Raspberry Pi OS (Pi 2 and later).
-          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, asset: jpm-linux-armv7, cross: true }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, asset: jpm-linux-armv7, glibc: "2.17" }
+          # Static musl builds, for Alpine and other systems without glibc.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: jpm-linux-x64-musl, musl: true, run: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: jpm-linux-arm64-musl, musl: true, run: true }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, asset: jpm-linux-armv7-musl, cross: true }
           - { os: macos-13, target: x86_64-apple-darwin, asset: jpm-darwin-x64 }
           - { os: macos-latest, target: aarch64-apple-darwin, asset: jpm-darwin-arm64 }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: jpm-windows-x64.exe }
@@ -29,20 +41,58 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - if: matrix.cross
         uses: taiki-e/install-action@cross
-      - run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
+      # zig links against an old glibc's symbols without an old system to build on. It is only
+      # a build tool: nothing of it is in the binary.
+      - if: matrix.glibc
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install ziglang==0.16.0 cargo-zigbuild==0.23.4
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - if: matrix.glibc
+        run: cargo zigbuild --release --target ${{ matrix.target }}.${{ matrix.glibc }}
+      - if: ${{ !matrix.glibc }}
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
       - shell: bash
         run: |
           bin=target/${{ matrix.target }}/release/jpm
           [ -f "$bin.exe" ] && bin="$bin.exe"
           cp "$bin" "${{ matrix.asset }}"
+      # The glibc builds ask for no symbol newer than their glibc and no library past the C
+      # library's own; the musl builds ask for none at all.
+      - if: matrix.glibc
+        run: |
+          newest=$(objdump -T ${{ matrix.asset }} | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "newest glibc symbol: $newest"
+          [ "$(printf '%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -1)" = "${{ matrix.glibc }}" ]
+          needed=$(readelf -d ${{ matrix.asset }} | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+          echo "needs: $needed"
+          for lib in $needed; do
+            case $lib in libc.so.* | libm.so.* | libpthread.so.* | libdl.so.* | librt.so.* | libgcc_s.so.* | ld-linux*) ;;
+            *) echo "unexpected library: $lib"; exit 1 ;;
+            esac
+          done
+      - if: matrix.musl || matrix.cross
+        run: |
+          readelf -d ${{ matrix.asset }} | grep -q NEEDED && { echo "the musl build is not static"; exit 1; }
+          readelf -l ${{ matrix.asset }} | grep -q INTERP && { echo "the musl build names a loader"; exit 1; }
+          true
+      # Run each Linux build on the oldest system it is for: glibc 2.17's CentOS 7, and Alpine.
+      - if: matrix.run
+        run: |
+          chmod +x ${{ matrix.asset }}
+          image=${{ matrix.glibc && 'centos:7' || 'alpine:3' }}
+          docker run --rm -v "$PWD:/w" $image /w/${{ matrix.asset }} --version
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
