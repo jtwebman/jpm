@@ -885,8 +885,19 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         let deps = p.all_deps();
         let sourced: Vec<(&String, &String)> =
             deps.iter().filter(|(n, v)| is_sourced(v) && !taken.contains(&format!("{n}@{v}"))).collect();
-        let Some((name, version)) = sourced.first() else { continue };
-        if block {
+        if sourced.is_empty() {
+            continue;
+        }
+        // A source one of the project's overrides names is the project's own choice.
+        let overridden = |name: &str, version: &str| {
+            res.root.overrides.iter().any(|o| {
+                o.name == name
+                    && o.value
+                        .as_deref()
+                        .is_some_and(|v| spec::parse_dep(name, v).is_ok_and(|s| spec::names_source(&s, "", version)))
+            })
+        };
+        if block && let Some((name, version)) = sourced.iter().find(|(n, v)| !overridden(n, v)) {
             return Err(resolve::exotic(id, &format!("{name}@{version}")));
         }
         // What it ships says, and what the registry says of it: the walk reads the latter.

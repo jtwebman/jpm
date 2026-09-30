@@ -129,6 +129,19 @@ fn an_override_to_a_workspace_leaves_registry_packages_their_range() {
 }
 
 #[test]
+fn a_tarball_an_override_names_is_not_a_packages_own() {
+    // As redwood's resolutions send @storybook/react-dom-shim to a tarball url: block-exotic-subdeps
+    // stops what a package brings in itself, not what the project's overrides chose.
+    let r = registry();
+    r.serve("/tb/b-3.0.0.tgz", pkg("b", "3.0.0", json!({})).tarball());
+    let url = format!("{}/tb/b-3.0.0.tgz", r.url);
+    let (env, lock, _) = installed(&r, json!({ "dependencies": { "a": "1.1.0" }, "resolutions": { "b": url } }), &[]);
+    assert_eq!(dep(&lock, "a@1.1.0", "b"), url.as_str());
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["ci"]);
+}
+
+#[test]
 fn an_override_change_makes_the_lockfile_stale() {
     let r = registry();
     let env = Env::new(&r);
