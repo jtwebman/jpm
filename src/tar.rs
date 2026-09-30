@@ -129,12 +129,19 @@ fn padded(size: u64) -> u64 {
 
 /// Strip the first component, then keep the path only when every part is a plain name.
 pub fn safe_path(raw: &str) -> Option<String> {
-    let normalized = raw.replace('\\', "/");
+    let normalized: std::borrow::Cow<'_, str> =
+        if raw.contains('\\') { raw.replace('\\', "/").into() } else { raw.into() };
     if normalized.starts_with('/') || raw.contains(':') {
         return None;
     }
-    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    let path = parts.get(1..)?.join("/");
+    // One string for the path, not a list of its parts joined into another.
+    let mut path = String::with_capacity(normalized.len());
+    for part in normalized.split('/').filter(|p| !p.is_empty() && *p != ".").skip(1) {
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push_str(part);
+    }
     plain(&path).then_some(path)
 }
 
@@ -160,8 +167,24 @@ fn num(field: &[u8]) -> u64 {
     if field[0] & 0x80 != 0 {
         return field[1..].iter().fold(0u64, |v, b| v.saturating_mul(256).saturating_add(u64::from(*b)));
     }
-    let text: String = field.iter().filter(|b| **b != 0 && **b != b' ').map(|b| *b as char).collect();
-    u64::from_str_radix(&text, 8).unwrap_or(0)
+    // What `u64::from_str_radix` makes of the field with its NULs and spaces taken out, without
+    // building that string for each of every header's three numbers: 0 for anything but octal
+    // digits (one leading `+` aside), for nothing at all, and past u64.
+    let mut digits = field.iter().filter(|b| **b != 0 && **b != b' ').peekable();
+    if digits.peek() == Some(&&b'+') {
+        digits.next();
+    }
+    let mut value = None::<u64>;
+    for &b in digits {
+        if !(b'0'..=b'7').contains(&b) {
+            return 0;
+        }
+        let Some(v) = value.unwrap_or(0).checked_mul(8).and_then(|v| v.checked_add(u64::from(b - b'0'))) else {
+            return 0;
+        };
+        value = Some(v);
+    }
+    value.unwrap_or(0)
 }
 
 fn checksum_ok(header: &[u8; BLOCK]) -> bool {
@@ -332,5 +355,68 @@ pub mod tests {
     fn fails_on_truncation() {
         let a = build(&[("package/a", 0o644, b"hello")]);
         assert!(read_entries(&a[..BLOCK + 2], |_, _, _, _| Ok(())).is_err());
+    }
+
+    #[test]
+    fn reads_numbers_as_from_str_radix_did() {
+        let old = |field: &[u8]| {
+            let text: String = field.iter().filter(|b| **b != 0 && **b != b' ').map(|b| *b as char).collect();
+            u64::from_str_radix(&text, 8).unwrap_or(0)
+        };
+        let fields: [&[u8]; 16] = [
+            b"0000644\0",
+            b"00000001750\0",
+            b" 1750 \0\0\0\0\0",
+            b"\0\0\0\0\0\0\0\0",
+            b"        ",
+            b"1 2 3\0",
+            b"+17\0",
+            b"++17",
+            b"+",
+            b"-17",
+            b"0009",
+            b"12a",
+            b"7777777777777777777777",
+            b"1777777777777777777777",
+            b"2000000000000000000000",
+            b"\x0077",
+        ];
+        for f in fields {
+            assert_eq!(num(f), old(f), "{:?}", String::from_utf8_lossy(f));
+        }
+        // Base-256, for a size past what octal fits.
+        assert_eq!(num(&[0x80, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]), 1 << 32);
+    }
+
+    #[test]
+    fn strips_the_first_part_as_it_did() {
+        let old = |raw: &str| {
+            let normalized = raw.replace('\\', "/");
+            if normalized.starts_with('/') || raw.contains(':') {
+                return None;
+            }
+            let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+            let path = parts.get(1..)?.join("/");
+            plain(&path).then_some(path)
+        };
+        for raw in [
+            "package/a.js",
+            "package//lib/./a.js",
+            "package\\lib\\a.js",
+            "./package/a.js",
+            "package",
+            "package/",
+            "/package/a.js",
+            "package/../a.js",
+            "package/a:b",
+            "a/b/c/d.e",
+            "package/lib/",
+            "package/ x/y",
+            "package/x./y",
+            "",
+            "package/\\/a",
+        ] {
+            assert_eq!(safe_path(raw), old(raw), "{raw:?}");
+        }
     }
 }
