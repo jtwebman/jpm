@@ -310,7 +310,12 @@ pub fn configure(config: &Config) -> Result<()> {
             "strict-ssl=false: certificates are not checked, so anyone on the network can pose as the registry",
         );
     }
-    let _ = CLIENT.set(Arc::new(Client::new(roots, config, &env)));
+    let client = Client::new(roots, config, &env);
+    // A bad proxy fails before anything is asked, not at the first request.
+    for raw in [&client.proxies.https, &client.proxies.http].into_iter().flatten() {
+        parse_proxy(raw).map_err(|e| Error::new("ECONFIG", e.to_string()))?;
+    }
+    let _ = CLIENT.set(Arc::new(client));
     Ok(())
 }
 
@@ -787,17 +792,27 @@ fn proxy_for(url: &Url, proxies: &Proxies) -> io::Result<Option<Proxy>> {
             return Ok(None);
         }
     }
-    let raw = if raw.contains("://") { raw } else { format!("http://{raw}") };
+    parse_proxy(&raw).map(Some)
+}
+
+/// A proxy setting: `host:port` or `http://[user:pass@]host:port`. jpm speaks plain HTTP to the
+/// proxy (https itself goes through it by CONNECT), so an `https://` proxy is refused: its
+/// credentials would cross the network in the clear where TLS was asked for.
+fn parse_proxy(raw: &str) -> io::Result<Proxy> {
+    let raw = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
     let (scheme, rest) = raw.split_once("://").unwrap_or(("http", &raw));
+    let bad = |why: &str| io::Error::new(io::ErrorKind::InvalidInput, format!("the proxy setting {why}"));
+    if !scheme.eq_ignore_ascii_case("http") {
+        return Err(bad(&format!("is {scheme}://, and jpm reaches a proxy over http:// only")));
+    }
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (userinfo, host) = match rest[..end].rsplit_once('@') {
         Some((u, h)) => (Some(u), h),
         None => (None, &rest[..end]),
     };
-    let bad = || io::Error::new(io::ErrorKind::InvalidInput, "the proxy setting is not a url");
-    let url = Url::parse(&format!("{scheme}://{host}")).map_err(|_| bad())?;
+    let url = Url::parse(&format!("http://{host}")).map_err(|_| bad("is not a url"))?;
     let auth = userinfo.map(|u| format!("Basic {}", crate::util::to_base64(&percent_decode(u))));
-    Ok(Some(Proxy { url, auth }))
+    Ok(Proxy { url, auth })
 }
 
 /// `%xx` escapes, as a proxy url's user and password may use for `@` or `:`.
@@ -993,6 +1008,11 @@ mod tests {
         assert_eq!(p.auth.as_deref(), Some(format!("Basic {}", crate::util::to_base64(b"me@corp:p:ss")).as_str()));
         let bad = proxies(&[("HTTPS_PROXY", "http://proxy test:x")], "");
         assert!(proxy_for(&u, &bad).is_err(), "an unreadable proxy is an error, not a way around it");
+        // An https:// proxy is refused: jpm would send its credentials in plain text.
+        let tls = proxies(&[("HTTPS_PROXY", "https://me:secret@proxy.test:443")], "");
+        let e = proxy_for(&u, &tls).err().unwrap();
+        assert!(e.to_string().contains("https://, and jpm reaches a proxy over http:// only"), "{e}");
+        assert!(parse_proxy("HTTP://proxy.test:1").is_ok());
     }
 
     #[test]

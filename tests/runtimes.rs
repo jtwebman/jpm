@@ -58,7 +58,7 @@ fn setup(releases: &[(&str, Option<&str>)]) -> (Registry, Env) {
     let r = Registry::start(Vec::new());
     serve_node(&r, releases);
     let env = Env::new(&r);
-    env.write(".npmrc", &format!("node-mirror:release={}/dist/\nverify-node-signature=false\n", r.url));
+    env.user_npmrc(&format!("node-mirror:release={}/dist/\nverify-node-signature=false\n", r.url));
     (r, env)
 }
 
@@ -262,7 +262,7 @@ fn add_writes_the_runtime_where_pnpm_does() {
 #[test]
 fn the_mirror_can_come_from_the_environment() {
     let (r, env) = setup(&[("22.12.0", Some("Jod"))]);
-    env.write(".npmrc", "verify-node-signature=false\n");
+    env.user_npmrc("verify-node-signature=false\n");
     env.manifest(json!({ "devDependencies": { "node": "runtime:22" }, "scripts": { "v": "node --version" } }));
     let out = env.command(&["install"]).env("NODEJS_ORG_MIRROR", format!("{}/dist", r.url)).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -523,7 +523,11 @@ fn a_mirror_without_signatures_needs_the_check_off() {
     );
     assert!(err.contains("verify-node-signature=false") && err.contains("--no-verify-node-signature"), "{err}");
     locks(&r, &env, "/keys", &["--no-verify-node-signature"]);
+    // Not from the project's own .npmrc: a cloned repository cannot turn the check off.
     env.write(".npmrc", &format!("node-mirror:release={}/dist/\nverify-node-signature=false\n", r.url));
+    assert!(refused(&r, &env, "/keys", &[]).contains("sets verify-node-signature, which only ~/.npmrc"));
+    env.write(".npmrc", &format!("node-mirror:release={}/dist/\n", r.url));
+    env.user_npmrc("verify-node-signature=false\n");
     locks(&r, &env, "/keys", &[]);
     // The flag turns it back on over the file.
     refused(&r, &env, "/keys", &["--verify-node-signature"]);

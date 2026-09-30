@@ -351,7 +351,7 @@ releaser's, from nodejs/release-keys): it fetches the signer's key from that rep
 keeps it under the store's `metadata/`, and uses it only when it has the fingerprint jpm expects.
 This happens when a version is resolved; installs from `jpm.lock` check downloads against the
 lock alone. A mirror that publishes no signatures needs `verify-node-signature=false` in
-`.npmrc` or `--no-verify-node-signature`. unofficial-builds.nodejs.org's musl list is not
+`~/.npmrc` (not the project's) or `--no-verify-node-signature`. unofficial-builds.nodejs.org's musl list is not
 signed; it is trusted as far as its TLS download, as pnpm trusts it.
 
 In `jpm.lock` the runtime is a package holding every platform's build:
@@ -437,6 +437,14 @@ or `ignore-scripts=true` in .npmrc turns every script off.
 `prefer-offline`, `min-release-age`, `before`, `min-release-age-exclude`,
 `block-exotic-subdeps` (see Git dependencies) and the network settings below.
 
+The project's `.npmrc` comes with the repository, so it cannot weaken what the others check:
+`ca`, `cafile`, `proxy`, `https-proxy`, `http-proxy`, `strict-ssl=false`,
+`verify-node-signature=false`, and a `min-release-age` or `before` that lets in newer versions
+than the user's setting (or the default) does, are ignored there with a warning naming them.
+Set them in `~/.npmrc`, the global npmrc, `npm_config_*` or a flag. A cloned repository could
+otherwise send the user's registry token through a proxy of its choosing. `registry`, scoped
+registries, `noproxy` and `node-mirror:release` still work from the project.
+
 jpm has its own TLS and trusts Mozilla's root certificates and the operating system's: the
 Windows certificate store (the current user's `ROOT`, which includes the machine's and group
 policy's), or on Linux the distribution's CA bundle (`SSL_CERT_FILE` names another). A company
@@ -456,7 +464,8 @@ with npm:
 A file that cannot be read, or holds no certificate, is an error that names it.
 
 `https-proxy` (else `proxy`) in `.npmrc` sends requests through a proxy, `http://user:pass@host:port`
-for one that wants credentials, and `noproxy` lists the hosts (and domains under them) that go
+for one that wants credentials (jpm reaches a proxy over plain http, so an `https://` proxy is
+refused rather than sent credentials in the clear), and `noproxy` lists the hosts (and domains under them) that go
 direct. They take the place of `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, which jpm reads when
 `.npmrc` names none. https goes through the proxy by CONNECT, so TLS runs end to end.
 

@@ -119,9 +119,11 @@ Notes
   yarn's patch: ranges in the root package.json. patch copies the locked version (patched, if
   it is) to a directory to edit; patch-commit writes the difference to patches/<name>@<version>.patch
   (git diff), names it in patchedDependencies and installs.
-  Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc.
-  TLS trusts Mozilla's roots plus NODE_EXTRA_CA_CERTS, or only .npmrc's cafile or ca; proxies
-  come from https-proxy, proxy and noproxy in .npmrc, else HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
+  Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc. The project's
+  cannot set ca, cafile, proxies, strict-ssl=false, verify-node-signature=false or a laxer
+  min-release-age. TLS trusts Mozilla's and the system's roots plus NODE_EXTRA_CA_CERTS, or only
+  cafile or ca; proxies (http:// only) come from https-proxy, proxy and noproxy in .npmrc, else
+  HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
 
   run installs the tree first (a no-op when it is current), then runs the script in a shell
