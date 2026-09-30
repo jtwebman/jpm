@@ -77,6 +77,9 @@ Options
   --no-verify-node-signature
                        resolve a Node runtime without checking its SHASUMS256.txt signature
                        (also verify-node-signature=false; for mirrors that publish none)
+  --no-block-exotic-subdeps
+                       let registry packages take git or tarball-url dependencies
+                       (also block-exotic-subdeps=false in ~/.npmrc; on by default)
   -w, --workspace <name|path>
                        add, remove, run: select workspaces (repeatable; parent paths work)
   --workspaces         run: select all workspaces
@@ -120,8 +123,8 @@ Notes
   it is) to a directory to edit; patch-commit writes the difference to patches/<name>@<version>.patch
   (git diff), names it in patchedDependencies and installs.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc. The project's
-  cannot set ca, cafile, proxies, strict-ssl=false, verify-node-signature=false or a laxer
-  min-release-age. TLS trusts Mozilla's and the system's roots plus NODE_EXTRA_CA_CERTS, or only
+  cannot set ca, cafile, proxies, strict-ssl=false, block-exotic-subdeps=false,
+  verify-node-signature=false or a laxer min-release-age. TLS trusts Mozilla's and the system's roots plus NODE_EXTRA_CA_CERTS, or only
   cafile or ca; proxies (http:// only) come from https-proxy, proxy and noproxy in .npmrc, else
   HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).
@@ -177,6 +180,7 @@ struct Cli {
     ignore_scripts: bool,
     legacy_peer_deps: bool,
     verify_node_signature: Option<bool>,
+    block_exotic_subdeps: Option<bool>,
 }
 
 const COMMANDS: [&str; 13] = [
@@ -318,6 +322,8 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--no-global-store" => cli.global_store = Some(false),
             "--verify-node-signature" => cli.verify_node_signature = Some(true),
             "--no-verify-node-signature" => cli.verify_node_signature = Some(false),
+            "--block-exotic-subdeps" => cli.block_exotic_subdeps = Some(true),
+            "--no-block-exotic-subdeps" => cli.block_exotic_subdeps = Some(false),
             "--frozen-lockfile" => cli.frozen = true,
             "--verify" => cli.verify = true,
             "--dev" | "-D" | "--save-dev" => cli.dev = true,
@@ -504,6 +510,7 @@ fn opts(cli: &Cli) -> Opts {
             global_store: cli.global_store,
             legacy_peer_deps: cli.legacy_peer_deps.then_some(true),
             verify_node_signature: cli.verify_node_signature,
+            block_exotic_subdeps: cli.block_exotic_subdeps,
         },
         store: cli.store.as_ref().map(PathBuf::from),
         production: cli.production,

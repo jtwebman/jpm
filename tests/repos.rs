@@ -357,9 +357,9 @@ fn a_lockfile_cannot_move_a_git_dependency_to_another_source() {
     }
 }
 
-/// A registry package's own git dependency installs, as npm installs it, and is locked to the
-/// repository its package.json names. `block-exotic-subdeps` refuses it; the project's own
-/// repositories stay.
+/// A registry package's own git dependency is refused (`block-exotic-subdeps`, on by default);
+/// the user can allow it, the project cannot. Allowed, it installs as npm installs it, locked to
+/// the repository its package.json names. The project's own repositories always install.
 #[test]
 fn locks_a_packages_own_git_dependency_to_what_it_names() {
     let r = registry();
@@ -370,6 +370,21 @@ fn locks_a_packages_own_git_dependency_to_what_it_names() {
     other.commit(&[("package.json", r#"{ "name": "t", "version": "1.0.0" }"#), ("index.js", "other")]);
     r.publish(pkg("reg", "1.0.0", json!({ "dependencies": { "t": good.url() } })));
     env.manifest(json!({ "dependencies": { "reg": "1.0.0" } }));
+    let refused = |out: Output| {
+        let err = stderr(&out);
+        assert!(!out.status.success() && err.contains("block-exotic-subdeps"), "{err}");
+        err
+    };
+    refused(jpm(&env, &["install"]));
+    // Not from the project's own .npmrc; from the environment, a flag, or the user's.
+    env.write(".npmrc", "block-exotic-subdeps=false\n");
+    assert!(refused(jpm(&env, &["install"])).contains("sets block-exotic-subdeps, which only ~/.npmrc"));
+    let mut allowed = env.command(&["install"]);
+    allowed.env("JPM_GIT_ALLOW_FILE", "1").env("npm_config_block_exotic_subdeps", "false");
+    assert!(allowed.output().unwrap().status.success());
+    ok(&env, &["install", "--no-block-exotic-subdeps"]);
+    std::fs::remove_file(env.project().join(".npmrc")).unwrap();
+    env.user_npmrc("block-exotic-subdeps=false\n");
     ok(&env, &["install"]);
     let locked = env.read("jpm.lock");
     assert!(locked.contains(&good.url()), "{locked}");
@@ -380,7 +395,7 @@ fn locks_a_packages_own_git_dependency_to_what_it_names() {
     assert!(!out.status.success() && stderr(&out).contains("which its package.json does not name"), "{}", stderr(&out));
     // None of a package's own with block-exotic-subdeps: from the lockfile, or a fresh walk.
     env.write("jpm.lock", &locked);
-    env.write(".npmrc", "block-exotic-subdeps=true\n");
+    env.user_npmrc("");
     for command in ["ci", "install"] {
         let out = jpm(&env, &[command]);
         assert!(!out.status.success() && stderr(&out).contains("block-exotic-subdeps"), "{}", stderr(&out));
