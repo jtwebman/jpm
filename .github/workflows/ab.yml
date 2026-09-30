@@ -25,6 +25,7 @@ jobs:
             (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release 2>&1 | tail -1)
             echo "$ref $(git rev-parse --short $ref) $(stat -c %s ../target-$dir/release/jpm) bytes"
           done | tee sizes.txt
+          grep -m1 'model name' /proc/cpuinfo | tee -a sizes.txt
       - name: ab
         run: |
           source bench/ab.env
