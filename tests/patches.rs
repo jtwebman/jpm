@@ -201,6 +201,24 @@ fn applies_a_workspaces_yarn_patch_from_its_own_directory() {
 }
 
 #[test]
+fn leaves_a_yarn_patch_nothing_takes_unused() {
+    // cal.com's resolutions patch a version its tree no longer has: yarn leaves it unused.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".yarn/patches/b-npm-2.0.0-abc.patch", &diff("b@2.0.0", "yarn"));
+    let stale = "patch:b@npm%3A2.0.0#./.yarn/patches/b-npm-2.0.0-abc.patch";
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@^2.0.0": stale } }));
+    let out = env.ok(&["install"]);
+    assert!(
+        out.contains("no package in the tree is patched by b@2.0.0") && out.contains("yarn leaves it unused"),
+        "{out}"
+    );
+    // pnpm's is an error, as in pnpm.
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "pnpm": { "patchedDependencies": { "b@2.0.0": ".yarn/patches/b-npm-2.0.0-abc.patch" } } }));
+    assert!(fails(&env, &["install"]).contains("no package in the tree is patched by b@2.0.0"));
+}
+
+#[test]
 fn applies_yarns_patch_protocol() {
     let r = registry();
     let env = Env::new(&r);

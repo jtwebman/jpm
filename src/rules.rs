@@ -143,7 +143,8 @@ pub struct Rules {
     /// pnpm-workspace.yaml's word on which packages may run install scripts.
     pub builds: BTreeMap<String, bool>,
     /// `patchedDependencies`: each key, and the file it names.
-    patches: Vec<(String, String)>,
+    /// Key, path, and whether yarn named it (see `Patch::yarn`).
+    patches: Vec<(String, String, bool)>,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -209,7 +210,7 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     for group in ["dependencies", "devDependencies", "optionalDependencies"] {
         for (name, range) in doc.get(group).and_then(Value::as_object).into_iter().flatten() {
             if let Some((_, Some((key, path)))) = range.as_str().and_then(|r| crate::patch::yarn(name, r)) {
-                rules.add_patch(key, path);
+                rules.add_patch(key, path, true);
             }
         }
     }
@@ -268,7 +269,9 @@ impl Rules {
         for (key, path) in v.and_then(Value::as_object).into_iter().flatten() {
             let (name, _) = name_range(key);
             match path.as_str() {
-                Some(path) if spec::check_name(&name, key).is_ok() => self.add_patch(key.clone(), path.to_string()),
+                Some(path) if spec::check_name(&name, key).is_ok() => {
+                    self.add_patch(key.clone(), path.to_string(), false)
+                }
                 _ => ui::warn(&format!("{file}: patch {key} is not one jpm reads; it is ignored")),
             }
         }
@@ -284,7 +287,7 @@ impl Rules {
                 if let Some((source, patch)) = crate::patch::yarn(name, range) {
                     if let Some((key, path)) = patch {
                         let rooted = range.split_once('#').is_some_and(|(_, p)| p.starts_with("~/"));
-                        self.add_patch(key, if rooted { path } else { under(dir, &path) });
+                        self.add_patch(key, if rooted { path } else { under(dir, &path) }, true);
                     }
                     *range = source;
                 }
@@ -292,9 +295,9 @@ impl Rules {
         }
     }
 
-    fn add_patch(&mut self, key: String, path: String) {
-        if !self.patches.iter().any(|(k, _)| *k == key) {
-            self.patches.push((key, path));
+    fn add_patch(&mut self, key: String, path: String, yarn: bool) {
+        if !self.patches.iter().any(|(k, ..)| *k == key) {
+            self.patches.push((key, path, yarn));
         }
     }
 
@@ -388,7 +391,7 @@ impl Rules {
             let value = match crate::patch::yarn(&name, value) {
                 Some((range, patch)) => {
                     if let Some((key, path)) = patch {
-                        self.add_patch(key, path);
+                        self.add_patch(key, path, true);
                     }
                     range
                 }
@@ -411,9 +414,10 @@ impl Rules {
         }
         let dir = self.file.parent().unwrap_or(Path::new(""));
         root.patches.clear();
-        for (key, path) in &self.patches {
+        for (key, path, yarn) in &self.patches {
             let (name, range) = name_range(key);
-            root.patches.push(Patch::read(dir, name, range.filter(|r| !r.is_empty()), path)?);
+            let patch = Patch::read(dir, name, range.filter(|r| !r.is_empty()), path)?;
+            root.patches.push(Patch { yarn: *yarn, ..patch });
         }
         Ok(())
     }
