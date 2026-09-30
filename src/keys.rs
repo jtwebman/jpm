@@ -5,17 +5,26 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::graph::{Deps, Package};
-use crate::util::short_hash;
+use crate::util::{full_hash, short_hash};
 
 /// Every registry or tarball package's entry directory name, `<name>@<version>-<hash>`, one path
 /// segment: a scope's `/` becomes `+`, which no package name can hold. A workspace has none.
 pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
-    let digests = digests(packages);
+    let digests = digests(packages, false);
     packages
         .iter()
         .filter(|(_, p)| p.local.is_none())
         .map(|(k, p)| (k.clone(), format!("{}@{}-{}", p.dir_name().replace('/', "+"), p.version, digests[k])))
         .collect()
+}
+
+/// Every registry or tarball package's subgraph digest in full, 43 characters of SHA-256 where
+/// `store_keys` keeps 22: a global entry's name shows the start of it, and the entry holds it
+/// whole (see `link`), so no two subgraphs ever pass for one.
+pub fn full_digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
+    let mut digests = digests(packages, true);
+    digests.retain(|k, _| packages[k].local.is_none());
+    digests
 }
 
 /// An entry directory's package name and version, as `store_keys` wrote them.
@@ -53,14 +62,14 @@ fn edges(deps: &Deps) -> String {
     list.join(",")
 }
 
-fn hash(mut lines: Vec<String>) -> String {
+fn hash(mut lines: Vec<String>, full: bool) -> String {
     lines.sort();
-    short_hash(&lines.join("\n"))
+    if full { full_hash(&lines.join("\n")) } else { short_hash(&lines.join("\n")) }
 }
 
 /// A digest per package, Merkle-style over the components. Tarjan yields sinks first, so every
 /// component below is hashed before the one above it; a cycle's members share one digest.
-fn digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
+fn digests(packages: &BTreeMap<String, Package>, full: bool) -> HashMap<String, String> {
     let ids: Vec<&String> = packages.keys().collect();
     let index: HashMap<&str, usize> = ids.iter().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
     // An alias with the content and edges of the real package at its version is that package:
@@ -98,7 +107,7 @@ fn digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
                 }
             }
         }
-        let h = hash(lines);
+        let h = hash(lines, full);
         for &n in &group {
             digest[n] = Some(h.clone());
         }
