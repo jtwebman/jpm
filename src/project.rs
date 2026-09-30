@@ -470,12 +470,13 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
 }
 
 /// The name of a workspace whose package.json has none: its directory's, made a package name
-/// (immich lists `.github`, which pnpm installs unnamed). Nothing links to it by that name.
+/// (immich lists `.github`, which pnpm installs unnamed): leading dots off, what a name cannot
+/// hold as `-`, emoji kept; `workspace` if that is still no name. Nothing links to it by it.
 pub fn unnamed(path: &str) -> String {
-    let base = path.rsplit('/').next().unwrap_or(path).trim_start_matches(['.', '_']).to_ascii_lowercase();
-    let name: String =
-        base.chars().map(|c| if c.is_ascii_alphanumeric() || "-._~".contains(c) { c } else { '-' }).collect();
-    if name.is_empty() { "workspace".into() } else { name }
+    let base = path.rsplit('/').next().unwrap_or(path).trim_start_matches('.');
+    let name: String = base.chars().map(|c| if crate::spec::name_char(c) { c } else { '-' }).collect();
+    let name = name.trim_end_matches('.');
+    if crate::spec::check_name(name, name).is_ok() { name.into() } else { "workspace".into() }
 }
 
 /// The project a directory belongs to, found by npm's walk up.
@@ -769,8 +770,10 @@ mod tests {
     #[test]
     fn names_an_unnamed_workspace_by_its_directory() {
         assert_eq!(unnamed(".github"), "github");
-        assert_eq!(unnamed("packages/My Tool"), "my-tool");
-        assert_eq!(unnamed("x/._"), "workspace");
+        assert_eq!(unnamed("packages/My Tool"), "My-Tool");
+        assert_eq!(unnamed("packages/\u{1F9EA}"), "\u{1F9EA}");
+        assert_eq!(unnamed("x/.."), "workspace");
+        assert_eq!(unnamed("x/CON"), "workspace");
     }
 
     #[test]
