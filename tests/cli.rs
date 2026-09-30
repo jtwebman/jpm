@@ -2365,3 +2365,203 @@ fn a_locked_package_keeps_its_edges_whichever_edge_reaches_it_first() {
     assert!(locks[0] == locks[1], "{}\nnot\n{}", locks[0], locks[1]);
     assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["c"], "1.0.0");
 }
+
+/// The store's entries, `v1/pkg/<shard>/<name>`: a directory, or a link into a global entry.
+fn store_entries(store: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for shard in std::fs::read_dir(store.join("v1/pkg")).unwrap().flatten() {
+        for e in std::fs::read_dir(shard.path()).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".idx") && !name.starts_with('.') {
+                out.push(e.path());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn index_of(entry: &std::path::Path) -> std::path::PathBuf {
+    entry.with_file_name(format!("{}.idx", entry.file_name().unwrap().to_string_lossy()))
+}
+
+/// A project beside the main one, with this package.json.
+fn project_at(env: &Env, name: &str, manifest: serde_json::Value) -> std::path::PathBuf {
+    let dir = env.root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("package.json"), manifest.to_string()).unwrap();
+    dir
+}
+
+fn ok_in(env: &Env, dir: &std::path::Path, args: &[&str]) -> String {
+    let out = env.command_in(dir, args).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "jpm {args:?} in {} failed:\n{text}", dir.display());
+    text
+}
+
+/// `rel` under `dir`, a `..` leaving a link's target as it would on unix (see `Env::path`).
+fn read_in(dir: &std::path::Path, rel: &str) -> String {
+    let mut at = dir.to_path_buf();
+    for part in rel.split('/') {
+        if part == ".." {
+            at = std::fs::canonicalize(&at).unwrap_or(at);
+            at.pop();
+        } else {
+            at.push(part);
+        }
+    }
+    std::fs::read_to_string(at).unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn keeps_a_first_download_in_its_global_entry() {
+    use std::os::unix::fs::MetadataExt;
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    // Moved into its entry whole: the store's entry is a link there, each file one name.
+    let links = std::fs::canonicalize(env.store().join("v1/links")).unwrap();
+    let stored = store_entries(&env.store());
+    assert_eq!(stored.len(), 2, "{stored:?}");
+    for p in &stored {
+        assert!(std::fs::symlink_metadata(p).unwrap().file_type().is_symlink(), "{}", p.display());
+        assert!(std::fs::canonicalize(p).unwrap().starts_with(&links), "{}", p.display());
+        assert!(index_of(p).is_file());
+    }
+    let a = env.path("node_modules/a/index.js");
+    assert_eq!(std::fs::metadata(&a).unwrap().nlink(), 1);
+
+    // `a` under other deps is another entry, linked from those files, and not downloaded again.
+    let fetched = || r.hits.lock().unwrap().iter().filter(|h| h.ends_with("/a-1.1.0.tgz")).count();
+    let before = fetched();
+    let other = project_at(&env, "other", json!({ "dependencies": { "a": "1.1.0" }, "overrides": { "b": "1.0.0" } }));
+    ok_in(&env, &other, &["install"]);
+    assert_eq!(fetched(), before);
+    let a2 = other.join("node_modules/a/index.js");
+    assert_ne!(std::fs::canonicalize(&a2).unwrap(), std::fs::canonicalize(&a).unwrap(), "two entries");
+    assert_eq!(std::fs::metadata(&a2).unwrap().ino(), std::fs::metadata(&a).unwrap().ino());
+    assert!(read_in(&other, "node_modules/a/../b/index.js").contains("b@1.0.0"));
+    // So does a project's own entry.
+    let local = project_at(&env, "local", json!({ "dependencies": { "a": "1.1.0" } }));
+    ok_in(&env, &local, &["install", "--no-global-store"]);
+    let a3 = local.join("node_modules/a/index.js");
+    assert_eq!(std::fs::metadata(&a3).unwrap().ino(), std::fs::metadata(&a).unwrap().ino());
+    assert_eq!(fetched(), before);
+}
+
+#[test]
+fn installs_at_once_into_one_store() {
+    let r = registry();
+    // Downloads outlast the plans, so the installs overlap.
+    r.slow_tarballs(50);
+    let env = Env::new(&r);
+    let deps = json!({ "a": "1.1.0", "@scope/lib": "1", "cli": "1" });
+    let manifests = [
+        json!({ "dependencies": deps }),
+        json!({ "dependencies": deps }),
+        // `a` under other deps: one download, two entries.
+        json!({ "dependencies": deps, "overrides": { "b": "1.0.0" } }),
+    ];
+    let dirs: Vec<_> = manifests.into_iter().enumerate().map(|(i, m)| project_at(&env, &format!("p{i}"), m)).collect();
+    let running: Vec<_> = dirs
+        .iter()
+        .map(|d| {
+            let mut c = env.command_in(d, &["install"]);
+            c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap()
+        })
+        .collect();
+    for (d, child) in dirs.iter().zip(running) {
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}: {}", d.display(), String::from_utf8_lossy(&out.stderr));
+    }
+    for (i, d) in dirs.iter().enumerate() {
+        assert!(read_in(d, "node_modules/a/index.js").contains("a@1.1.0"), "{i}");
+        let b = if i == 2 { "b@1.0.0" } else { "b@1.1.0" };
+        assert!(read_in(d, "node_modules/a/../b/index.js").contains(b), "{i}");
+        assert!(read_in(d, "node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"), "{i}");
+    }
+    // The store holds every package whole: a project builds its own entries from it offline.
+    let copy = project_at(&env, "copy", json!({ "dependencies": deps, "overrides": { "b": "1.0.0" } }));
+    std::fs::copy(dirs[2].join("jpm.lock"), copy.join("jpm.lock")).unwrap();
+    ok_in(&env, &copy, &["install", "--offline", "--no-global-store"]);
+    assert!(read_in(&copy, "node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+    for p in store_entries(&env.store()) {
+        assert!(p.is_dir() && index_of(&p).is_file(), "{}", p.display());
+    }
+}
+
+#[test]
+fn finishes_an_install_stopped_part_way() {
+    let r = registry();
+    let env = Env::new(&r);
+    let deps = json!({ "a": "1.1.0", "@scope/lib": "1", "cli": "1" });
+    env.manifest(json!({ "dependencies": deps }));
+    let whole = |env: &Env| {
+        assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+        assert!(env.read("node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+        assert!(env.exists(if cfg!(windows) { "node_modules/.bin/hello.cmd" } else { "node_modules/.bin/hello" }));
+    };
+    // Killed while it downloads, wherever that leaves it.
+    r.slow_tarballs(300);
+    let mut child = env.command(&["install"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let _ = child.kill();
+    let _ = child.wait();
+    r.slow_tarballs(0);
+    env.ok(&["install"]);
+    whole(&env);
+
+    // Stopped after its entries were placed and before the store recorded their files.
+    for p in store_entries(&env.store()) {
+        std::fs::remove_file(index_of(&p)).unwrap();
+    }
+    let other = project_at(&env, "other", json!({ "dependencies": deps }));
+    ok_in(&env, &other, &["install"]);
+    let copy = project_at(&env, "copy", json!({ "dependencies": deps }));
+    std::fs::copy(other.join("jpm.lock"), copy.join("jpm.lock")).unwrap();
+    ok_in(&env, &copy, &["install", "--offline", "--no-global-store"]);
+    assert!(read_in(&copy, "node_modules/a/index.js").contains("a@1.1.0"));
+
+    // The global store removed by hand: what the store kept in it is downloaded again.
+    let links = env.store().join("v1/links");
+    let _ = std::process::Command::new("chmod").args(["-R", "u+w"]).arg(&links).output();
+    std::fs::remove_dir_all(&links).unwrap();
+    env.ok(&["install"]);
+    whole(&env);
+    for p in store_entries(&env.store()) {
+        assert!(p.is_dir() && index_of(&p).is_file(), "{}", p.display());
+    }
+}
+
+#[test]
+fn prunes_an_entry_that_holds_what_another_project_uses() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    // `a` under other deps: the same files in another entry.
+    let other = project_at(&env, "other", json!({ "dependencies": { "a": "1.1.0" }, "overrides": { "b": "1.0.0" } }));
+    ok_in(&env, &other, &["install"]);
+    assert_eq!(pruned(&env, &other), (0, 0));
+
+    // The first project gone: its entries of a and b@1.1.0 go, and b@1.1.0's files; a's stay.
+    std::fs::remove_dir_all(env.project()).unwrap();
+    assert_eq!(pruned(&env, &other), (2, 1));
+    assert!(read_in(&other, "node_modules/a/index.js").contains("a@1.1.0"));
+    assert!(ok_in(&env, &other, &["install"]).contains("up to date"));
+    let copy = project_at(&env, "copy", json!({ "dependencies": { "a": "1.1.0" }, "overrides": { "b": "1.0.0" } }));
+    std::fs::copy(other.join("jpm.lock"), copy.join("jpm.lock")).unwrap();
+    ok_in(&env, &copy, &["install", "--offline", "--no-global-store"]);
+    assert!(read_in(&copy, "node_modules/a/index.js").contains("a@1.1.0"));
+    for p in store_entries(&env.store()) {
+        assert!(p.is_dir() && index_of(&p).is_file(), "{}", p.display());
+    }
+
+    // A project of the first one's shape builds its entries again, whole.
+    let again = project_at(&env, "again", json!({ "dependencies": { "a": "1.1.0" } }));
+    ok_in(&env, &again, &["install"]);
+    assert!(read_in(&again, "node_modules/a/../b/index.js").contains("b@1.1.0"));
+}

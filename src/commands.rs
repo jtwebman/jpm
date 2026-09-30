@@ -2012,6 +2012,7 @@ pub fn prune(opts: Opts) -> Result<Pruned> {
         return Ok(Pruned { entries, shared: gc::Swept::default(), store: gc::Swept::default() });
     }
     let (shared, used) = gc::mark(&store);
+    gc::unhome(&store.links_dir(), &shared, &used);
     let shared = gc::sweep_shared(&store.links_dir(), &shared);
     Ok(Pruned { entries, shared, store: gc::prune_store(&store.pkg_root(), &store.tmp_dir(), &used) })
 }
