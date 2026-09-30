@@ -1,7 +1,7 @@
 //! Git dependencies: a ref resolved to a commit with `git ls-remote`, and a commit's files
-//! unpacked from the host's archive (github, gitlab, bitbucket and sourcehut over https, through
-//! jpm's own http client and with no registry credentials) or from `git archive` of a shallow
-//! fetch.
+//! unpacked from the host's archive (github, gists, gitlab, bitbucket and sourcehut over https,
+//! through jpm's own http client and with no registry credentials) or from `git archive` of a
+//! shallow fetch.
 //!
 //! git runs with only https, ssh and git:// allowed (no transport helper such as `ext::`, and no
 //! `file://`), with every url after `--`, and with the repository variables of whatever git
@@ -140,8 +140,9 @@ fn clone(url: &str, commit: &str, work: &Path, dest: &Path, source: &str) -> Res
 fn archive_url(url: &str, commit: &str) -> Option<String> {
     let (host, path) = url.strip_prefix("git+https://")?.split_once('/')?;
     match (host, path.strip_suffix(".git")) {
-        ("github.com", Some(path)) => {
+        ("github.com" | "gist.github.com", Some(path)) => {
             let base = std::env::var("JPM_CODELOAD_URL").unwrap_or_else(|_| "https://codeload.github.com".into());
+            let path = if host == "github.com" { path.to_string() } else { format!("gist/{path}") };
             Some(format!("{base}/{path}/tar.gz/{commit}"))
         }
         // The repository's name is the last part: it may sit in a group within a group.
@@ -369,6 +370,11 @@ mod tests {
         assert_eq!(
             archive_url("git+https://git.sr.ht/~u/r", c).unwrap(),
             format!("https://git.sr.ht/~u/r/archive/{c}.tar.gz")
+        );
+        assert_eq!(
+            archive_url("git+https://gist.github.com/0a1b.git", c)
+                .filter(|_| std::env::var_os("JPM_CODELOAD_URL").is_none()),
+            Some(format!("https://codeload.github.com/gist/0a1b/tar.gz/{c}"))
         );
         assert_eq!(archive_url("git+ssh://git@github.com/u/r.git", c), None);
         assert_eq!(archive_url("git+https://example.com/u/r.git", c), None);

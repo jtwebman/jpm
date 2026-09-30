@@ -570,7 +570,7 @@ fn names_the_dependency_forms_it_does_not_read() {
     let env = Env::new(&r);
     for (spec, says) in [
         ("catalog:", "x@catalog:, but no catalogs are defined here or above"),
-        ("gist:11081aaa", r#""gist:" dependencies are not supported yet"#),
+        ("exec:./gen.js", r#""exec:" dependencies are not supported yet"#),
     ] {
         env.manifest(json!({ "dependencies": { "x": spec } }));
         let out = env.jpm(&["install"]);
