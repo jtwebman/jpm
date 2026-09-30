@@ -2221,6 +2221,32 @@ fn hoists_scopes_into_a_new_hoist_and_repairs_a_standing_one() {
 }
 
 #[test]
+fn links_into_a_node_modules_it_made_and_converges_one_it_found() {
+    let r = registry();
+    let env = Env::new(&r);
+    let hello = if cfg!(windows) { "node_modules/.bin/hello.cmd" } else { "node_modules/.bin/hello" };
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1", "cli": "1" } }));
+    for layout in [&["install"][..], &["install", "--no-global-store"]] {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        // Made by this install: every link made straight away, scoped ones and bins too.
+        env.ok(layout);
+        assert!(env.read("node_modules/a/index.js").contains("a@1.1.0"));
+        assert!(env.read("node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+        assert!(env.exists(hello));
+    }
+    // One that was there: what it holds of another tree converges, and a link that is not
+    // jpm's to keep goes.
+    let stale = env.project().join("node_modules").join("stale");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("a", &stale).unwrap();
+    env.manifest(json!({ "dependencies": { "a": "1.1.0", "@scope/lib": "1" } }));
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/@scope/lib/index.js").contains("@scope/lib@1.0.0"));
+    assert!(!env.exists("node_modules/cli") && !env.exists(hello));
+    assert!(std::fs::symlink_metadata(&stale).is_err());
+}
+
+#[test]
 fn the_hoist_never_hides_what_the_root_links() {
     // Node looks in the hoist before the root's node_modules, so a registry `b` there would
     // stand in for the root's workspace `b` in every undeclared import.

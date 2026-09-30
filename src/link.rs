@@ -274,6 +274,8 @@ struct Linker<'a> {
     copy_only: AtomicBool,
     /// Optional packages settled while linking (project layout): whether each arrived.
     settled: Mutex<HashMap<String, bool>>,
+    /// The project's `node_modules` was made by this run.
+    fresh_nm: bool,
 }
 
 pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
@@ -353,6 +355,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             Entry { pkg, key: key.clone(), home, shared: opts.global.is_some(), build: opts.built.contains(id) },
         );
     }
+    // A `node_modules` this run makes holds nothing but what it links: those links are made
+    // without looking for one there first (see `link_top`).
+    let fresh_nm = fs::create_dir(opts.dir.join("node_modules")).is_ok();
     fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
     // An entry that lacks an optional package, or reaches one that does, stays in the project:
     // a global copy would be incomplete for everyone else.
@@ -409,6 +414,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         counts: Counts::default(),
         copy_only: AtomicBool::new(false),
         settled: Mutex::default(),
+        fresh_nm,
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
     // In the graph's order, which is the order an install queues their downloads in.
@@ -931,12 +937,22 @@ impl Linker<'_> {
     }
 
     /// Only direct deps get a top-level name. A registry dep links into `.jpm`; a workspace dep
-    /// links to the workspace's own directory. What it linked, for the state.
+    /// links to the workspace's own directory. What it linked, for the state. In a `node_modules`
+    /// this run made, and the scope and `.bin` directories made in it, the links are made
+    /// straight away: nothing is there to read, replace or sweep, and no symlink can lead out.
     fn link_top(&self, top: &Top) -> Result<RootLinks> {
         let nm = &top.nm;
         no_case_twins(top.dependencies.keys(), nm)?;
-        fs::create_dir_all(nm)
-            .map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())).with_code("ELINK"))?;
+        let fresh = match fs::create_dir(nm) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                self.fresh_nm && *nm == self.opts.dir.join("node_modules")
+            }
+            Err(_) => fs::create_dir_all(nm)
+                .map(|()| false)
+                .map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())).with_code("ELINK"))?,
+        };
+        let mut scopes: HashSet<&str> = HashSet::new();
         let real_root = &self.real_root;
         let mut direct: Vec<(String, &Package)> = Vec::new();
         let mut links = BTreeMap::new();
@@ -950,14 +966,21 @@ impl Linker<'_> {
             };
             let at = nm.join(name);
             let parent = at.parent().unwrap_or(nm);
-            if name.contains('/') {
-                inside(parent, real_root)?;
-                fs::create_dir_all(parent)
-                    .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
+            let mut made = fresh;
+            if let Some((scope, _)) = name.split_once('/') {
+                made = fresh && (scopes.contains(scope) || (fs::create_dir(parent).is_ok() && scopes.insert(scope)));
+                if !made {
+                    inside(parent, real_root)?;
+                    fs::create_dir_all(parent)
+                        .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
+                }
             }
             let target = if shared { real.clone() } else { relative(parent, &real) };
             let target = target.to_string_lossy().into_owned();
-            replace_link(&at, &target, nm, true)?;
+            // Taken all the same: a concurrent install of this tree.
+            if !(made && within(&at, nm).is_ok() && sys::symlink_dir(&target, &at).is_ok()) {
+                replace_link(&at, &target, nm, true)?;
+            }
             links.insert(name.clone(), target);
             direct.push((name.clone(), pkg));
         }
@@ -969,8 +992,11 @@ impl Linker<'_> {
             }
         }
         // Made, written and swept below: never through a symlink out of the project.
-        inside(&bin_dir, real_root)?;
-        if !bins.is_empty() {
+        let fresh_bin = fresh && !bins.is_empty() && fs::create_dir(&bin_dir).is_ok();
+        if !fresh_bin {
+            inside(&bin_dir, real_root)?;
+        }
+        if !bins.is_empty() && !fresh_bin {
             fs::create_dir_all(&bin_dir).map_err(|e| Error::io(&e, "cannot create .bin").with_code("ELINK"))?;
         }
         for (bin, (name, target, pkg)) in &bins {
@@ -978,13 +1004,16 @@ impl Linker<'_> {
             if WIN {
                 for (sfx, text) in self.shims(&bin_dir, &file, Some(pkg), target)? {
                     let at = bin_dir.join(format!("{bin}{sfx}"));
-                    if fs::read_to_string(&at).ok().as_deref() != Some(text.as_str()) {
+                    if fresh_bin || fs::read_to_string(&at).ok().as_deref() != Some(text.as_str()) {
                         crate::util::write_atomic(&at, text.as_bytes())?;
                     }
                 }
             } else {
                 let link = relative(&bin_dir, &file).to_string_lossy().into_owned();
-                replace_link(&bin_dir.join(bin), &link, &bin_dir, false)?;
+                let at = bin_dir.join(bin);
+                if !(fresh_bin && within(&at, &bin_dir).is_ok() && symlink_file(&link, &at).is_ok()) {
+                    replace_link(&at, &link, &bin_dir, false)?;
+                }
                 // A workspace's bin is the project's own file, which a checkout from Windows or
                 // an unset bit leaves unrunnable: made executable, as npm and pnpm do. Never one
                 // outside the project; the store's are made so as they are unpacked.
@@ -994,9 +1023,11 @@ impl Linker<'_> {
             }
             Counts::add(&self.counts.bins, 1);
         }
-        let names: HashSet<String> = direct.into_iter().map(|(n, _)| n).collect();
-        self.sweep(nm, &names, "");
-        self.sweep(&bin_dir, &bins.keys().cloned().collect(), "");
+        if !fresh {
+            let names: HashSet<String> = direct.into_iter().map(|(n, _)| n).collect();
+            self.sweep(nm, &names, "");
+            self.sweep(&bin_dir, &bins.keys().cloned().collect(), "");
+        }
         Ok(RootLinks { links, bins: bins.keys().cloned().collect() })
     }
 
