@@ -7,13 +7,13 @@ on:
 
 jobs:
   test:
-    # Linux x64 and Windows x64 for now. The ARM jobs (a native arm64 runner, and armv7 under
-    # qemu for 32-bit Raspberry Pi OS) come back once Linux, macOS and Windows are stable: the
+    # Linux x64, Windows x64 and macOS arm64. The Linux ARM jobs (a native arm64 runner, and
+    # armv7 under qemu for 32-bit Raspberry Pi OS) come back once all three are stable: the
     # armv7 one took about 45 minutes.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -36,11 +36,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      # No macOS runner yet: at least compile and lint for both Macs, so a release build
-      # there does not break unseen. Tests are left out: their dev-dependencies need a
-      # macOS C toolchain.
-      - if: matrix.os == 'ubuntu-latest'
+      # No Intel Mac runner: at least compile and lint for it.
+      - if: matrix.os == 'macos-latest'
         run: |
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo clippy --workspace --target aarch64-apple-darwin -- -D warnings
+          rustup target add x86_64-apple-darwin
           cargo clippy --workspace --target x86_64-apple-darwin -- -D warnings
