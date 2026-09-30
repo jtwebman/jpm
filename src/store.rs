@@ -128,30 +128,58 @@ const QUEUED_MAX: u64 = 8 * 1024 * 1024;
 /// big or repetitive its files. The reader waits for the writers past it.
 const QUEUED_BYTES: u64 = 32 * 1024 * 1024;
 
-/// A file body for a writer thread: where, whether it runs, the bytes, and what they took of the
-/// budget.
-type Queued = (PathBuf, bool, Vec<u8>, u64);
+/// Buffers the writers hand back for the reader to fill again, at most.
+const SPARE: usize = 2 * WRITERS;
+/// The largest buffer handed back; a bigger one is freed.
+const SPARE_MAX: usize = 256 * 1024;
 
-/// Bytes queued to `extract`'s writers and not yet written.
+/// A file body for a writer thread: where, whether it runs, the buffer holding it, how much of
+/// the buffer is the body, and what it took of the budget.
+type Queued = (PathBuf, bool, Vec<u8>, usize, u64);
+
+/// Bytes queued to `extract`'s writers and not yet written, and the buffers they are done with.
 #[derive(Default)]
 struct Budget {
-    used: Mutex<u64>,
+    held: Mutex<Held>,
     freed: std::sync::Condvar,
 }
 
+#[derive(Default)]
+struct Held {
+    used: u64,
+    /// The reader is waiting for room: only then does a writer wake it.
+    waiting: bool,
+    /// Written buffers, filled again rather than made anew: a fresh one per file was zeroed and
+    /// faulted in page by page, and was most of what the hand-off cost.
+    spare: Vec<Vec<u8>>,
+}
+
 impl Budget {
-    /// Room for `n` more bytes, waiting for the writers while the queue holds too much.
-    fn take(&self, n: u64) {
-        let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
-        while *used > 0 && *used + n > QUEUED_BYTES {
-            used = self.freed.wait(used).unwrap_or_else(PoisonError::into_inner);
+    /// Room for `n` more bytes, waiting for the writers while the queue holds too much, and a
+    /// buffer to read them into.
+    fn take(&self, n: u64) -> Vec<u8> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        while held.used > 0 && held.used + n > QUEUED_BYTES {
+            held.waiting = true;
+            held = self.freed.wait(held).unwrap_or_else(PoisonError::into_inner);
         }
-        *used += n;
+        held.waiting = false;
+        held.used += n;
+        held.spare.pop().unwrap_or_default()
     }
 
-    fn give(&self, n: u64) {
-        *self.used.lock().unwrap_or_else(PoisonError::into_inner) -= n;
-        self.freed.notify_all();
+    /// `n` bytes written (or never queued), and the buffer they were in, to fill again.
+    fn give(&self, n: u64, buf: Option<Vec<u8>>) {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.used -= n;
+        if let Some(buf) = buf.filter(|b| b.len() <= SPARE_MAX)
+            && held.spare.len() < SPARE
+        {
+            held.spare.push(buf);
+        }
+        if held.waiting {
+            self.freed.notify_one();
+        }
     }
 }
 
@@ -574,12 +602,18 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 let _ = make_writable(&file);
                 let _ = fs::remove_file(&file);
             } else if path != "package.json" && size <= QUEUED_MAX && files.len() > INLINE_FILES {
-                budget.take(size);
-                let mut data = Vec::with_capacity(size as usize);
-                if let Err(e) = body.read_to_end(&mut data) {
-                    budget.give(size);
-                    return Err(corrupt(e));
+                let mut data = budget.take(size);
+                let n = usize::try_from(size).unwrap_or(usize::MAX);
+                if data.len() < n {
+                    data.resize(n, 0);
                 }
+                let got = match read_up_to(body, &mut data[..n]) {
+                    Ok(got) => got,
+                    Err(e) => {
+                        budget.give(size, Some(data));
+                        return Err(corrupt(e));
+                    }
+                };
                 let (send, _) = writers.get_or_insert_with(|| {
                     let (send, recv) = mpsc::sync_channel::<Queued>(WRITE_QUEUE);
                     let recv = Arc::new(Mutex::new(recv));
@@ -589,8 +623,8 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                     };
                     (send, (0..crate::pool::disk_threads().min(WRITERS)).map(spawn).collect())
                 });
-                if send.send((file, exec, data, size)).is_err() {
-                    budget.give(size);
+                if send.send((file, exec, data, got, size)).is_err() {
+                    budget.give(size, None);
                 }
                 return Ok(());
             }
@@ -635,6 +669,20 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     }
     let unpacked_size = files.values().map(|f| f.size).sum();
     Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
+}
+
+/// As much of `body` as fits in `buf`, reading until it is full or the body ends.
+fn read_up_to(body: &mut dyn Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match body.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
 }
 
 /// A file's body into `out` in `buf`-sized writes: one write for most files, where `io::copy`
@@ -810,9 +858,9 @@ fn finish(writers: &mut Option<Writers<'_>>) {
 fn write_queued(recv: &Mutex<mpsc::Receiver<Queued>>, failed: &Mutex<Option<Error>>, budget: &Budget) {
     loop {
         let job = recv.lock().unwrap_or_else(PoisonError::into_inner).recv();
-        let Ok((file, exec, data, taken)) = job else { return };
-        let written = create(&file, exec).and_then(|mut out| out.write_all(&data));
-        budget.give(taken);
+        let Ok((file, exec, data, len, taken)) = job else { return };
+        let written = create(&file, exec).and_then(|mut out| out.write_all(&data[..len]));
+        budget.give(taken, Some(data));
         if let Err(e) = written {
             failed
                 .lock()
@@ -1083,5 +1131,41 @@ pub mod tests {
         assert!(Index::parse("jpm-index 1 1\n- 1 ../x\n").is_none());
         assert!(Index::parse("jpm-index 1 1\n- 1 a/b\n").is_some());
         assert!(Index::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn writes_each_queued_file_whole_whatever_buffer_it_reused() {
+        // Past INLINE_FILES, big files then small ones: a buffer reused from a bigger file must
+        // not leave its bytes in a smaller one.
+        let bodies: Vec<Vec<u8>> = (0..4 * INLINE_FILES).map(|i| vec![b'a' + (i % 26) as u8; 4000 - 13 * i]).collect();
+        let names: Vec<String> = (0..bodies.len()).map(|i| format!("package/f{i}.txt")).collect();
+        let entries: Vec<(&str, u32, &[u8])> =
+            names.iter().zip(&bodies).map(|(n, b)| (n.as_str(), 0o644, b.as_slice())).collect();
+        let dir = scratch("reuse");
+        let index = extract(&mut gzip(&build(&entries)).as_slice(), &dir.join("x"), false).unwrap();
+        assert_eq!(index.files.len(), bodies.len());
+        for (i, body) in bodies.iter().enumerate() {
+            assert_eq!(&fs::read(dir.join(format!("x/f{i}.txt"))).unwrap(), body, "f{i}");
+        }
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn hands_written_buffers_back_to_the_reader() {
+        let budget = Budget::default();
+        let first = budget.take(10);
+        assert!(first.is_empty(), "nothing to reuse yet");
+        budget.give(10, Some(vec![7; 100]));
+        // The next body is read into the buffer the writer is done with.
+        assert_eq!(budget.take(5).len(), 100);
+        // A buffer past SPARE_MAX is freed, and at most SPARE are kept.
+        budget.give(5, Some(vec![0; SPARE_MAX + 1]));
+        assert!(budget.take(1).is_empty());
+        for _ in 0..SPARE + 3 {
+            budget.give(0, Some(vec![1]));
+        }
+        assert_eq!(budget.held.lock().unwrap().spare.len(), SPARE);
+        budget.give(1, None);
+        assert_eq!(budget.held.lock().unwrap().used, 0);
     }
 }
