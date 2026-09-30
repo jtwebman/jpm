@@ -88,6 +88,15 @@ struct Job {
     optional: bool,
     /// Skips the lockfile: a new consumer's unmet peer is fetched as a fresh resolve would.
     fresh: bool,
+    /// A peer's fetch: with no version to fetch, it may settle on what its scope has.
+    peer: bool,
+}
+
+/// A peer found in its consumer's scope: an edge to link, or an alias's version to fetch as the
+/// package itself.
+enum Scoped {
+    Link(String),
+    Fetch(String),
 }
 
 struct Top {
@@ -121,6 +130,8 @@ struct Walk<'a> {
     picks: Memo<Arc<Manifest>>,
     libcs: Memo<Option<Vec<String>>>,
     runtimes: Memo<Package>,
+    /// The tops' own registry edges, overrides applied, by the package they fetch.
+    direct: HashMap<String, Vec<Spec>>,
 }
 
 /// Values computed once however many threads ask.
@@ -187,6 +198,23 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
             locked_versions.entry(p.name.clone()).or_default().push(p.version.clone());
         }
     }
+    let mut direct: HashMap<String, Vec<Spec>> = HashMap::new();
+    for (key, top) in &tops {
+        for (name, range, _) in top.manifest.edges() {
+            let range = match rules::find(&manifest.overrides, crate::graph::split_key(key), &name, &range) {
+                Some(None) => continue,
+                Some(Some(r)) => r.to_string(),
+                None => range,
+            };
+            let Ok(own) = spec::parse_dep(&name, &range) else { continue };
+            // Not an alias: npm and yarn keep a dependency off the version a root alias pins (berry's
+            // basic.test.js), though pnpm takes it.
+            let plain = own.fetch_name == own.name && !local.contains_key(&own.name);
+            if plain && matches!(own.kind, Kind::Version | Kind::Range | Kind::Tag) {
+                direct.entry(own.fetch_name.clone()).or_default().push(own);
+            }
+        }
+    }
     let walk = Walk {
         opts,
         state: Mutex::new(state),
@@ -197,6 +225,7 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         picks: Mutex::default(),
         libcs: Mutex::default(),
         runtimes: Mutex::default(),
+        direct,
     };
     walk.run()
 }
@@ -209,7 +238,7 @@ impl Walk<'_> {
             for (key, top) in &self.tops {
                 s.edges.insert(key.clone(), Vec::new());
                 for (name, range, optional) in top.manifest.edges() {
-                    jobs.push(Job { from: key.clone(), name, range, optional, fresh: false });
+                    jobs.push(Job { from: key.clone(), name, range, optional, fresh: false, peer: false });
                 }
                 if key != ROOT {
                     let peers = s.records[key].peers.clone().unwrap_or_default();
@@ -231,13 +260,29 @@ impl Walk<'_> {
     }
 
     fn edge(&self, job: Job, queue: &Queue<Job>) {
-        let Job { from, name, range, optional, fresh } = job;
+        let Job { from, name, range, optional, fresh, peer } = job;
         if lock(&self.state).fatal.is_some() {
             return;
         }
         if let Err(error) = self.try_edge(&from, &name, &range, optional, fresh, queue) {
             // Offline, a skipped optional would be locked out for good, where online it is fetched.
             let mut s = lock(&self.state);
+            // A peer no version satisfies takes what its scope has, as pnpm links it, rather than
+            // fail: registry-mock's deadlock.b wants deadlock.c 2.0.0, and its parent has 1.0.0.
+            if peer
+                && matches!(error.code, "ETARGET" | "ENOVERSIONS")
+                && let Some(Scoped::Link(version)) = self.scope_peer(&s, &from, &name, &range, true)
+            {
+                let have = s.records.get(&format!("{name}@{version}")).map_or(version.clone(), |p| p.version.clone());
+                let who = if from.is_empty() { "root" } else { &from };
+                s.warnings.insert(format!(
+                    "{who} needs peer {name}@{range}, which no version satisfies; linked to {name}@{have}"
+                ));
+                if let Some(list) = s.edges.get_mut(&from) {
+                    list.push(Edge { name, version, optional: false });
+                }
+                return;
+            }
             if !optional || error.code == "EOFFLINE" {
                 let who = if from.is_empty() { "root" } else { &from };
                 let error =
@@ -358,7 +403,7 @@ impl Walk<'_> {
             push(edge(&version));
             return Ok(());
         }
-        let m = self.pick(&spec, fresh)?;
+        let m = self.pick(&spec, fresh, self.tops.contains_key(from))?;
         m.integrity()?;
         let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
@@ -389,9 +434,18 @@ impl Walk<'_> {
         rules::find(self.overrides(), crate::graph::split_key(from), name, range).map(|v| v.map(str::to_string))
     }
 
-    /// Memoized on the fetched name and range, so two aliases of one package share a pick.
-    fn pick(&self, spec: &Spec, fresh: bool) -> Result<Arc<Manifest>> {
-        let key = format!("{}{}@{}", if fresh { "!" } else { "" }, spec.fetch_name, spec.fetch_spec);
+    /// Memoized on the fetched name and range, so two aliases of one package share a pick. A
+    /// package's edge (not a top's) takes the version a top's own edge to that package gets
+    /// where its range allows it, as pnpm and npm dedupe it: a root pinning 1.0.0 keeps a
+    /// dependency's ^1 off 1.1.0.
+    fn pick(&self, spec: &Spec, fresh: bool, top: bool) -> Result<Arc<Manifest>> {
+        let key = format!(
+            "{}{}{}@{}",
+            if fresh { "!" } else { "" },
+            if top { "^" } else { "" },
+            spec.fetch_name,
+            spec.fetch_spec
+        );
         let cell = self.picks.lock().unwrap_or_else(PoisonError::into_inner).entry(key).or_default().clone();
         cell.get_or_init(|| {
             // An exact version or the locked version dedupe prefers is asked for by version.
@@ -401,12 +455,37 @@ impl Walk<'_> {
             }
             let kept = if self.opts.dedupe && !fresh { self.kept(spec) } else { None };
             let preferred = self.preferred(spec);
-            let wanted = exact.or_else(|| kept.clone()).or_else(|| preferred.clone());
-            // A version a lockfile names was taken before: the release age is for new picks.
-            let exempt = wanted.is_some() && (wanted == kept || wanted == preferred);
+            let direct = if top || exact.is_some() { None } else { self.direct(spec) };
+            let wanted = exact.or_else(|| kept.clone()).or_else(|| preferred.clone()).or_else(|| direct.clone());
+            // A version a lockfile names was taken before: the release age is for new picks, and
+            // a top's pick has met it already.
+            let exempt = wanted.is_some() && (wanted == kept || wanted == preferred || wanted == direct);
             self.opts.registry.pick(spec, wanted.as_deref(), exempt)
         })
         .clone()
+    }
+
+    /// The newest version a top's own registry edge to this package gets that `spec` allows.
+    fn direct(&self, spec: &Spec) -> Option<String> {
+        if spec.kind != Kind::Range {
+            return None;
+        }
+        let mut best: Option<semver::Version> = None;
+        for own in self.direct.get(&spec.fetch_name).into_iter().flatten() {
+            if own.fetch_spec == spec.fetch_spec {
+                continue;
+            }
+            // As the top's edge takes it: the locked version while it fits, else a pick.
+            let kept = if self.opts.dedupe { None } else { self.kept(own) };
+            let Some(version) = kept.or_else(|| self.pick(own, false, true).ok().map(|m| m.version.clone())) else {
+                continue;
+            };
+            let v = semver::parse(&version).filter(|v| semver::satisfies_version(v, &spec.fetch_spec, false));
+            if v.is_some() && v > best {
+                best = v;
+            }
+        }
+        best.map(|v| v.text)
     }
 
     /// What the file resolved this very range to, else the highest version it names that the
@@ -662,10 +741,13 @@ impl Walk<'_> {
         }
         s.edges.insert(key.clone(), Vec::new());
         // A dependency that is a peer too is a peer, as npm and pnpm take it: the MCP sdk's zod
-        // is the one its parent has, not the tree's newest.
-        let peers = declared_peers(&Deps::new(), &m.optional_dependencies, Some(&m.peer_dependencies), &|n| {
+        // is the one its parent has, not the tree's newest. An optional one is a dependency, as
+        // pnpm installs it: an optional peer is only wired to what is there, and the package
+        // would lose a dependency it asked for.
+        let mut peers = declared_peers(&Deps::new(), &m.optional_dependencies, Some(&m.peer_dependencies), &|n| {
             m.is_optional_peer(n)
         });
+        peers.retain(|n, kind| *kind == PeerKind::Required || !m.dependencies.contains_key(n));
         if !peers.is_empty() {
             found.peers = Some(peers.clone());
         }
@@ -679,11 +761,25 @@ impl Walk<'_> {
         crate::ui::count(&crate::ui::RESOLVED, 1);
         for (n, r) in &m.dependencies {
             if !m.optional_dependencies.contains_key(n) && !peers.contains_key(n) {
-                queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: false, fresh: false });
+                queue.push(Job {
+                    from: key.clone(),
+                    name: n.clone(),
+                    range: r.clone(),
+                    optional: false,
+                    fresh: false,
+                    peer: false,
+                });
             }
         }
         for (n, r) in &m.optional_dependencies {
-            queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: true, fresh: false });
+            queue.push(Job {
+                from: key.clone(),
+                name: n.clone(),
+                range: r.clone(),
+                optional: true,
+                fresh: false,
+                peer: false,
+            });
         }
         settle(&mut s, &key, false, &peers, Some(&m.peer_dependencies), self.overrides());
         Ok(true)
@@ -738,6 +834,7 @@ impl Walk<'_> {
         loop {
             // Unmet, by pool and name: a dev-only consumer never narrows what a shipped one gets.
             let mut unmet: Vec<(bool, Vec<(String, Job)>)> = Vec::new();
+            let mut aliased = Vec::new();
             {
                 let mut s = lock(&self.state);
                 let mut todo = std::mem::take(&mut s.hard_peers);
@@ -757,15 +854,25 @@ impl Walk<'_> {
                     // A shipped consumer takes a shipped copy first, else a dev one, which then ships:
                     // never a second copy of what the tree has (two Reacts break hooks).
                     let pool = if shipped.contains(&from) { &shipped_have } else { &have };
-                    if let Some(best) = self
+                    let found = self
                         .parents_peer(&s, &from, &name, &range, &have)
-                        .or_else(|| self.settle_on(&s, &from, &name, &range, pool))
-                        .or_else(|| self.settle_on(&s, &from, &name, &range, &have))
-                    {
-                        if let Some(list) = s.edges.get_mut(&from) {
-                            list.push(Edge { name, version: best, optional: false });
+                        .map(Scoped::Link)
+                        .or_else(|| self.scope_peer(&s, &from, &name, &range, false))
+                        .or_else(|| self.settle_on(&s, &from, &name, &range, pool).map(Scoped::Link))
+                        .or_else(|| self.settle_on(&s, &from, &name, &range, &have).map(Scoped::Link));
+                    match found {
+                        Some(Scoped::Link(best)) => {
+                            if let Some(list) = s.edges.get_mut(&from) {
+                                list.push(Edge { name, version: best, optional: false });
+                            }
+                            continue;
                         }
-                        continue;
+                        // An alias's package, as itself: the same version under its own name.
+                        Some(Scoped::Fetch(version)) if !self.opts.legacy_peers => {
+                            aliased.push(Job { from, name, range: version, optional: false, fresh: false, peer: true });
+                            continue;
+                        }
+                        _ => {}
                     }
                     if self.opts.legacy_peers {
                         let who = if from.is_empty() { "root" } else { &from };
@@ -782,14 +889,14 @@ impl Walk<'_> {
                     let fresh = again.is_none();
                     let ask = again.map_or_else(|| range.clone(), str::to_string);
                     let ships = shipped.contains(&from);
-                    let job = (range, Job { from, name, range: ask, optional: false, fresh });
+                    let job = (range, Job { from, name, range: ask, optional: false, fresh, peer: true });
                     match unmet.iter_mut().find(|(p, g)| *p == ships && g[0].1.name == job.1.name) {
                         Some((_, group)) => group.push(job),
                         None => unmet.push((ships, vec![job])),
                     }
                 }
             }
-            let mut jobs = Vec::new();
+            let mut jobs = aliased;
             // ponytail: one group at a time; a pool if many groups ever wait on the registry.
             for (_, mut group) in unmet {
                 self.share_peer(&mut group);
@@ -813,7 +920,10 @@ impl Walk<'_> {
                 if !j.fresh {
                     return Some(j.range.clone());
                 }
-                spec::parse_dep(&j.name, &j.range).and_then(|s| self.pick(&s, true)).ok().map(|m| m.version.clone())
+                spec::parse_dep(&j.name, &j.range)
+                    .and_then(|s| self.pick(&s, true, false))
+                    .ok()
+                    .map(|m| m.version.clone())
             })
             .collect();
         let fits_all = |v: &str| group.iter().zip(&answers).all(|((r, _), a)| a.is_none() || semver::satisfies(v, r));
@@ -890,9 +1000,7 @@ impl Walk<'_> {
         range: &str,
         have: &HashMap<String, Vec<String>>,
     ) -> Option<String> {
-        let is_from =
-            |e: &Edge| from.strip_prefix(e.name.as_str()).and_then(|r| r.strip_prefix('@')) == Some(&e.version);
-        let parents: Vec<&String> = s.edges.iter().filter(|(_, l)| l.iter().any(is_from)).map(|(k, _)| k).collect();
+        let parents = parents(s, from);
         let theirs: HashSet<&str> = parents
             .iter()
             .filter_map(|k| s.edges[*k].iter().find(|e| e.name == name))
@@ -905,6 +1013,45 @@ impl Walk<'_> {
         let near = pool(&|k| s.records.get(k).is_some_and(|p| theirs.contains(p.edge_version().as_str())));
         self.settle_on(s, from, name, range, &near)
             .or_else(|| self.settle_on(s, from, name, range, &pool(&|k| parents.contains(&k))))
+    }
+
+    /// What the consumer's scope has for a peer, as pnpm looks: its parents' dependency (or a
+    /// parent that is the peer), else the root's; at each, a package by that name, else the
+    /// newest alias of that package (a root's `peer-b: npm:peer-a@1` gives peer-a), which is linked
+    /// as the package itself. In the peer's range only, unless `any`: pnpm takes any version.
+    fn scope_peer(&self, s: &State, from: &str, name: &str, range: &str, any: bool) -> Option<Scoped> {
+        let live = |k: &str| s.records.get(k).filter(|_| !s.dead.contains_key(k));
+        let root = ROOT.to_string();
+        for level in [parents(s, from), vec![&root]] {
+            let edges: Vec<&Edge> = level.iter().filter_map(|k| s.edges.get(*k)).flatten().collect();
+            let mut named: Vec<(&str, String)> = edges
+                .iter()
+                .filter(|e| e.name == name)
+                .filter_map(|e| live(&format!("{}@{}", e.name, e.version)))
+                .chain(level.iter().filter_map(|k| live(k)).filter(|p| p.name == name))
+                .map(|p| (p.version.as_str(), p.edge_version()))
+                .collect();
+            named.sort_by_key(|(v, _)| semver::parse(v));
+            let fitting = named.iter().rev().find(|(v, _)| semver::satisfies(v, range));
+            if let Some((_, edge)) = fitting.or_else(|| named.last().filter(|_| any)) {
+                return Some(Scoped::Link(edge.clone()));
+            }
+            let alias = edges
+                .iter()
+                .filter_map(|e| crate::graph::split_alias(&e.version))
+                .filter(|(real, v)| *real == name && (any || semver::satisfies(v, range)))
+                .map(|(_, v)| v)
+                .max_by_key(|v| semver::parse(v));
+            if let Some(v) = alias {
+                let own = format!("{name}@{v}");
+                return Some(if live(&own).is_some() {
+                    Scoped::Link(v.to_string())
+                } else {
+                    Scoped::Fetch(v.to_string())
+                });
+            }
+        }
+        None
     }
 
     /// An optional peer never installs anything, but a consumer sees a version already here.
@@ -922,8 +1069,13 @@ impl Walk<'_> {
                 if list.iter().any(|e| e.name == name) {
                     continue;
                 }
+                let scoped = || match self.scope_peer(&s, &key, &name, &range, false) {
+                    Some(Scoped::Link(v)) => Some(v),
+                    _ => None,
+                };
                 if let Some(best) = self
                     .parents_peer(&s, &key, &name, &range, &all)
+                    .or_else(scoped)
                     .or_else(|| self.settle_on(&s, &key, &name, &range, pool))
                     && let Some(list) = s.edges.get_mut(&key)
                 {
@@ -1022,6 +1174,12 @@ impl Walk<'_> {
             warnings: s.warnings.iter().cloned().collect(),
         }
     }
+}
+
+/// Each package that depends on `key`, as a dependency or a peer.
+fn parents<'s>(s: &'s State, key: &str) -> Vec<&'s String> {
+    let is_key = |e: &Edge| key.strip_prefix(e.name.as_str()).and_then(|r| r.strip_prefix('@')) == Some(&e.version);
+    s.edges.iter().filter(|(_, l)| l.iter().any(is_key)).map(|(k, _)| k).collect()
 }
 
 /// Register a package's peers to settle after the walk: required ones become edges, optional
