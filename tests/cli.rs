@@ -235,6 +235,18 @@ fn installs_the_roots_own_required_peers() {
 }
 
 #[test]
+fn reads_an_optional_peer_named_only_in_its_meta() {
+    // mobx-react-lite names react-dom in peerDependenciesMeta alone: any version, optional.
+    let r = registry();
+    r.publish(pkg("lite", "1.0.0", json!({ "peerDependenciesMeta": { "host": { "optional": true } } })));
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "lite": "1.0.0", "host": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["lite@1.0.0"]["optionalDependencies"]["host"], "1.0.0");
+    assert!(env.read("node_modules/lite/../host/index.js").contains("host@1.0.0"));
+}
+
+#[test]
 fn settles_peers_against_the_tree() {
     let r = registry();
     let env = Env::new(&r);
