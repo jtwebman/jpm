@@ -1,0 +1,297 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/sourcehut.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "sourcehut:~foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "sourcehut:~foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "sourcehut:~foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "sourcehut:~foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git@git.sr.ht:~foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git@git.sr.ht:~foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git@git.sr.ht:~foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git@git.sr.ht:~foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://git@git.sr.ht:~foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://git@git.sr.ht:~foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://git@git.sr.ht:~foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://git@git.sr.ht:~foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://git.sr.ht/~foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://git.sr.ht/~foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://git.sr.ht/~foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://git.sr.ht/~foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "https://git.sr.ht/~foo/bar#branch",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#branch",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://git.sr.ht/~foo",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git://git@git.sr.ht:~foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "ssh://git.sr.ht:~foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://git.sr.ht/~foo/bar",
+      "from": "call",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "https://git.sr.ht/~foo/bar",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://@git.sr.ht/~foo/bar#fix/bug",
+      "from": "call",
+      "expect": {
+        "type": "sourcehut",
+        "user": "~foo",
+        "project": "bar",
+        "committish": "fix/bug",
+        "auth": null,
+        "default": "https",
+        "https": "https://git.sr.ht/~foo/bar#fix/bug",
+        "sshurl": "git+ssh://git@git.sr.ht/~foo/bar.git#fix/bug",
+        "tarball": "https://git.sr.ht/~foo/bar/archive/fix%2Fbug.tar.gz"
+      }
+    }
+  ]
+}

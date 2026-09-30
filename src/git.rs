@@ -1,6 +1,7 @@
 //! Git dependencies: a ref resolved to a commit with `git ls-remote`, and a commit's files
-//! unpacked from the host's archive (github, gitlab and bitbucket over https, through jpm's own
-//! http client and with no registry credentials) or from `git archive` of a shallow fetch.
+//! unpacked from the host's archive (github, gitlab, bitbucket and sourcehut over https, through
+//! jpm's own http client and with no registry credentials) or from `git archive` of a shallow
+//! fetch.
 //!
 //! git runs with only https, ssh and git:// allowed (no transport helper such as `ext::`, and no
 //! `file://`), with every url after `--`, and with the repository variables of whatever git
@@ -138,15 +139,19 @@ fn clone(url: &str, commit: &str, work: &Path, dest: &Path, source: &str) -> Res
 /// The host's archive of a commit, for a hosted repository over https.
 fn archive_url(url: &str, commit: &str) -> Option<String> {
     let (host, path) = url.strip_prefix("git+https://")?.split_once('/')?;
-    let path = path.strip_suffix(".git")?;
-    let repo = path.split_once('/')?.1;
-    match host {
-        "github.com" => {
+    match (host, path.strip_suffix(".git")) {
+        ("github.com", Some(path)) => {
             let base = std::env::var("JPM_CODELOAD_URL").unwrap_or_else(|_| "https://codeload.github.com".into());
             Some(format!("{base}/{path}/tar.gz/{commit}"))
         }
-        "gitlab.com" => Some(format!("https://gitlab.com/{path}/-/archive/{commit}/{repo}-{commit}.tar.gz")),
-        "bitbucket.org" => Some(format!("https://bitbucket.org/{path}/get/{commit}.tar.gz")),
+        // The repository's name is the last part: it may sit in a group within a group.
+        ("gitlab.com", Some(path)) => {
+            let repo = path.rsplit_once('/')?.1;
+            Some(format!("https://gitlab.com/{path}/-/archive/{commit}/{repo}-{commit}.tar.gz"))
+        }
+        ("bitbucket.org", Some(path)) => Some(format!("https://bitbucket.org/{path}/get/{commit}.tar.gz")),
+        // sourcehut's repository url has no `.git`.
+        ("git.sr.ht", None) => Some(format!("https://git.sr.ht/{path}/archive/{commit}.tar.gz")),
         _ => None,
     }
 }
@@ -356,6 +361,14 @@ mod tests {
         assert_eq!(
             archive_url("git+https://bitbucket.org/u/r.git", c).unwrap(),
             format!("https://bitbucket.org/u/r/get/{c}.tar.gz")
+        );
+        assert_eq!(
+            archive_url("git+https://gitlab.com/g/sub/r.git", c).unwrap(),
+            format!("https://gitlab.com/g/sub/r/-/archive/{c}/r-{c}.tar.gz")
+        );
+        assert_eq!(
+            archive_url("git+https://git.sr.ht/~u/r", c).unwrap(),
+            format!("https://git.sr.ht/~u/r/archive/{c}.tar.gz")
         );
         assert_eq!(archive_url("git+ssh://git@github.com/u/r.git", c), None);
         assert_eq!(archive_url("git+https://example.com/u/r.git", c), None);

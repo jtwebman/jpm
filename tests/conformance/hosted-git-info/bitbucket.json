@@ -1,0 +1,1492 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/bitbucket.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "bitbucket:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user:password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user:password@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket::password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket::password@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user:password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket:user:password@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket::password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "bitbucket::password@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "user@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "user@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "user:password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "user:password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": ":password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": ":password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "user@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "user@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "user:password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "user:password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": ":password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": ":password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://:password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://:password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://:password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+ssh://:password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user:password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user:password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://:password@bitbucket.org:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://:password@bitbucket.org:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user:password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://user:password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://:password@bitbucket.org:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "ssh://:password@bitbucket.org:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user:password@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user:password@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://:password@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://:password@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user:password@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://user:password@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://:password@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "git+https://:password@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://user@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://user@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://user:password@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://user:password@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://:password@bitbucket.org/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://:password@bitbucket.org/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://user@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://user@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://user:password@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://user:password@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "https://:password@bitbucket.org/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://:password@bitbucket.org/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@bitbucket.org/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#branch",
+        "tarball": "https://bitbucket.org/foo/bar/get/branch.tar.gz"
+      }
+    },
+    {
+      "input": "git://bitbucket.org/foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://bitbucket.org/foo/bar/get/archive.tar.gz",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://bitbucket.org/foo",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://bitbucket.org/foo/bar",
+      "from": "call",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://bitbucket.org/foo/bar.git",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git",
+        "tarball": "https://bitbucket.org/foo/bar/get/HEAD.tar.gz"
+      }
+    },
+    {
+      "input": "https://user@bitbucket.org/foo/bar#fix/bug",
+      "from": "call",
+      "expect": {
+        "type": "bitbucket",
+        "user": "foo",
+        "project": "bar",
+        "committish": "fix/bug",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@bitbucket.org/foo/bar.git#fix/bug",
+        "sshurl": "git+ssh://git@bitbucket.org/foo/bar.git#fix/bug",
+        "tarball": "https://bitbucket.org/foo/bar/get/fix%2Fbug.tar.gz"
+      }
+    }
+  ]
+}
