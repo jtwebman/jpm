@@ -3,7 +3,7 @@ name: ab
 # Throwaway: A/B timing of two refs on one ubuntu-latest runner (bench/ab.env). Pushes to perf-ab only.
 on:
   push:
-    branches: [perf-ab]
+    branches: [perf-ab-glibc]
 
 jobs:
   ab:
@@ -22,15 +22,20 @@ jobs:
             ref=${v#*=}; ref=${ref%%,*}; dir=$(echo $ref | tr / _)
             [ -d ../build-$dir ] && continue
             # ref+musl: that ref built for musl, as the releases are.
-            git worktree add --detach ../build-$dir ${ref%+musl}
-            if [ "$ref" != "${ref%+musl}" ]; then
+            git worktree add --detach ../build-$dir ${ref%+*}
+            if [ "$ref" != "${ref%+zig}" ]; then
+              # ref+zig: that ref built as the glibc releases are, against glibc 2.17 with zig.
+              [ -d $RUNNER_TEMP/zig ] || { python3 -m venv $RUNNER_TEMP/zig && $RUNNER_TEMP/zig/bin/pip install -q ziglang==0.16.0 cargo-zigbuild==0.23.4; }
+              (cd ../build-$dir && PATH=$RUNNER_TEMP/zig/bin:$PATH CARGO_TARGET_DIR=$PWD/../target-$dir cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17 2>&1 | tail -1)
+              mkdir -p ../target-$dir/release && cp ../target-$dir/x86_64-unknown-linux-gnu/release/jpm ../target-$dir/release/jpm
+            elif [ "$ref" != "${ref%+musl}" ]; then
               rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1; dpkg -s musl-tools >/dev/null 2>&1 || sudo apt-get install -y musl-tools >/dev/null 2>&1
               (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tail -1)
               mkdir -p ../target-$dir/release && cp ../target-$dir/x86_64-unknown-linux-musl/release/jpm ../target-$dir/release/jpm
             else
               (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release 2>&1 | tail -1)
             fi
-            echo "$ref $(git rev-parse --short ${ref%+musl}) $(stat -c %s ../target-$dir/release/jpm) bytes"
+            echo "$ref $(git rev-parse --short ${ref%+*}) $(stat -c %s ../target-$dir/release/jpm) bytes"
           done | tee sizes.txt
           grep -m1 'model name' /proc/cpuinfo | tee -a sizes.txt
       - name: ab
