@@ -99,6 +99,12 @@ fn installs_the_node_a_range_names() {
     assert!(env.exists("node_modules/.bin/node") && env.exists("node_modules/node/bin/node"));
     assert!(!env.exists("node_modules/node/lib") && !env.exists("node_modules/.bin/npm"), "the binary alone");
     assert_eq!(run_in(&env, &env.project(), "v"), "v22.12.0");
+    // An override of the npm package `node` leaves the runtime alone (EmailThing's `bun`).
+    env.manifest(json!({
+        "devDependencies": { "node": "runtime:22" }, "overrides": { "node": "npm:is-number@7" }, "scripts": { "v": "node --version" }
+    }));
+    env.ok(&["install"]);
+    assert_eq!(run_in(&env, &env.project(), "v"), "v22.12.0");
     // The same inputs: a no-op, which never asks the release site.
     let json: Value = serde_json::from_slice(&env.jpm(&["install", "--json"]).stdout).unwrap();
     assert_eq!(json["upToDate"], true);
