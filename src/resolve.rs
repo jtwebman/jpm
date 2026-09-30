@@ -292,7 +292,7 @@ impl Walk<'_> {
                     s.fatal.get_or_insert(error);
                     return;
                 }
-                s.dead.entry(from).or_insert(error);
+                die(&mut s.dead, from, error);
             } else {
                 let who = if from.is_empty() { "root".to_string() } else { from };
                 s.warnings.insert(format!("skipped optional {name}@{range} of {who}: {}", error.message));
@@ -945,7 +945,7 @@ impl Walk<'_> {
                         error.code,
                         format!("{} — resolving {name}@{range} (required by {who})", error.message),
                     );
-                    s.dead.entry(from).or_insert(error);
+                    die(&mut s.dead, from, error);
                 }
             }
         }
@@ -1070,7 +1070,9 @@ impl Walk<'_> {
     fn scope_peer(&self, s: &State, up: &Parents, from: &str, name: &str, range: &str) -> Option<(Scoped, bool)> {
         let live = |k: &str| s.records.get(k).filter(|_| !s.dead.contains_key(k));
         let newest = |versions: &mut Vec<(&str, String)>| {
-            versions.sort_by_key(|(v, _)| semver::parse(v));
+            // Two edges of one version (a workspace and the registry's) by the edge, whatever
+            // order the parents came in.
+            versions.sort_by(|a, b| semver::parse(a.0).cmp(&semver::parse(b.0)).then_with(|| a.1.cmp(&b.1)));
             let fitting = versions.iter().rev().find(|(v, _)| semver::satisfies_peer(v, range));
             fitting.or_else(|| versions.last()).map(|(v, edge)| (edge.clone(), semver::satisfies_peer(v, range)))
         };
@@ -1171,15 +1173,21 @@ impl Walk<'_> {
     /// until nothing points at anything unusable. A top has nothing to fall back on.
     fn prune(&self) -> Result<()> {
         let mut s = lock(&self.state);
-        if let Some(why) = s.dead.iter().find(|(k, _)| self.tops.contains_key(*k)).map(|(_, e)| e.clone()) {
+        if let Some(why) =
+            s.dead.iter().filter(|(k, _)| self.tops.contains_key(*k)).min_by_key(|(k, _)| *k).map(|(_, e)| e.clone())
+        {
             return Err(why);
         }
         let mut changed = true;
         while changed {
             changed = false;
-            let keys: Vec<String> = s.edges.keys().filter(|k| !s.dead.contains_key(*k)).cloned().collect();
+            // In key order, each package's edges by name: which dead package a consumer names as
+            // its reason is the same every run.
+            let mut keys: Vec<String> = s.edges.keys().filter(|k| !s.dead.contains_key(*k)).cloned().collect();
+            keys.sort_unstable();
             for key in keys {
-                let list = s.edges[&key].clone();
+                let mut list = s.edges[&key].clone();
+                list.sort_by(|a, b| (&a.name, &a.version).cmp(&(&b.name, &b.version)));
                 let mut keep = Vec::with_capacity(list.len());
                 for e in list {
                     let child = format!("{}@{}", e.name, e.version);
@@ -1268,7 +1276,22 @@ fn parent_index(s: &State) -> Parents {
             up.entry(format!("{}@{}", e.name, e.version)).or_default().push(from.clone());
         }
     }
+    // In key order, not the map's: a scope is looked through the same way every run.
+    up.values_mut().for_each(|l| l.sort_unstable());
     up
+}
+
+/// Mark `key` dead. Of two reasons the first by text stands, not the first to arrive.
+fn die(dead: &mut HashMap<String, Error>, key: String, error: Error) {
+    match dead.entry(key) {
+        std::collections::hash_map::Entry::Occupied(mut held) if error.message < held.get().message => {
+            held.insert(error);
+        }
+        std::collections::hash_map::Entry::Occupied(_) => {}
+        std::collections::hash_map::Entry::Vacant(slot) => {
+            slot.insert(error);
+        }
+    }
 }
 
 /// Register a package's peers to settle after the walk: required ones become edges, optional
@@ -1325,7 +1348,7 @@ fn peer_range(name: &str, range: &str) -> Option<String> {
     (!kept.is_empty()).then(|| kept.join(" || "))
 }
 
-/// Package name -> the keys of its records `keep` accepts.
+/// Package name -> the keys of its records `keep` accepts, in key order.
 fn by_name(records: &HashMap<String, Package>, keep: &dyn Fn(&str) -> bool) -> HashMap<String, Vec<String>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     for (key, p) in records {
@@ -1333,6 +1356,7 @@ fn by_name(records: &HashMap<String, Package>, keep: &dyn Fn(&str) -> bool) -> H
             out.entry(p.name.clone()).or_default().push(key.clone());
         }
     }
+    out.values_mut().for_each(|l| l.sort_unstable());
     out
 }
 
