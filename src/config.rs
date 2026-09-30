@@ -42,6 +42,9 @@ pub struct Config {
     pub noproxy: Option<String>,
     /// `node-mirror:release` (pnpm's), else `NODEJS_ORG_MIRROR`: where Node runtimes come from.
     pub node_mirror: Option<String>,
+    /// `verify-node-signature`: check a Node release's SHASUMS256.txt against Node's release
+    /// keys. On unless `false`.
+    pub verify_node_signature: bool,
 }
 
 /// What the command line says, over every file.
@@ -55,6 +58,7 @@ pub struct Flags {
     pub prefer_offline: Option<bool>,
     pub global_store: Option<bool>,
     pub legacy_peer_deps: Option<bool>,
+    pub verify_node_signature: Option<bool>,
 }
 
 type Layer = BTreeMap<String, String>;
@@ -255,6 +259,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         noproxy: set("noproxy"),
         node_mirror: set("node-mirror:release")
             .or_else(|| std::env::var("NODEJS_ORG_MIRROR").ok().filter(|m| !m.is_empty())),
+        verify_node_signature: merged.get("verify-node-signature").is_none_or(|v| v != "false"),
     })
 }
 
@@ -340,11 +345,14 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     if let Some(l) = flags.legacy_peer_deps {
         cli.insert("legacy-peer-deps".into(), l.to_string());
     }
+    if let Some(v) = flags.verify_node_signature {
+        cli.insert("verify-node-signature".into(), v.to_string());
+    }
     let mut config = to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())?;
     // A relative cafile is from where jpm runs, as npm takes it.
     config.cafile = config.cafile.map(|f| path(&f.to_string_lossy()));
     crate::http::configure(&config)?;
-    crate::runtime::configure(config.node_mirror.as_deref());
+    crate::runtime::configure(config.node_mirror.as_deref(), config.verify_node_signature);
     Ok(config)
 }
 

@@ -74,6 +74,9 @@ Options
   --verify             install: check sizes, links, bins and peers, not file contents
   --no-global-store    install: build package entries in the project, not once in the store
                        (also global-store=false in .npmrc or JPM_GLOBAL_STORE=0)
+  --no-verify-node-signature
+                       resolve a Node runtime without checking its SHASUMS256.txt signature
+                       (also verify-node-signature=false; for mirrors that publish none)
   -w, --workspace <name|path>
                        add, remove, run: select workspaces (repeatable; parent paths work)
   --workspaces         run: select all workspaces
@@ -96,7 +99,8 @@ Notes
   fetched as the host's archive or with git. A git package's prepare script is an install script.
   node@runtime:<range> (bun@, deno@ too) installs that runtime as a package, its binary in
   node_modules/.bin, locked with every platform's build; add saves it to devEngines.runtime
-  (--dev) or engines.runtime, as pnpm does. Node comes from nodejs.org or node-mirror:release.
+  (--dev) or engines.runtime, as pnpm does. Node comes from nodejs.org or node-mirror:release,
+  its SHASUMS256.txt checked against Node's release keys when the version is resolved.
   With no {LOCKFILE}, install writes one from package-lock.json, npm-shrinkwrap.json,
   pnpm-lock.yaml, bun.lock or yarn.lock: the same versions, resolved again only where package.json
   moved.
@@ -170,6 +174,7 @@ struct Cli {
     global_store: Option<bool>,
     ignore_scripts: bool,
     legacy_peer_deps: bool,
+    verify_node_signature: Option<bool>,
 }
 
 const COMMANDS: [&str; 13] = [
@@ -309,6 +314,8 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--legacy-peer-deps" => cli.legacy_peer_deps = true,
             "--global-store" => cli.global_store = Some(true),
             "--no-global-store" => cli.global_store = Some(false),
+            "--verify-node-signature" => cli.verify_node_signature = Some(true),
+            "--no-verify-node-signature" => cli.verify_node_signature = Some(false),
             "--frozen-lockfile" => cli.frozen = true,
             "--verify" => cli.verify = true,
             "--dev" | "-D" | "--save-dev" => cli.dev = true,
@@ -494,6 +501,7 @@ fn opts(cli: &Cli) -> Opts {
             prefer_offline: cli.prefer_offline.then_some(true),
             global_store: cli.global_store,
             legacy_peer_deps: cli.legacy_peer_deps.then_some(true),
+            verify_node_signature: cli.verify_node_signature,
         },
         store: cli.store.as_ref().map(PathBuf::from),
         production: cli.production,

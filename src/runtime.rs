@@ -7,7 +7,9 @@
 //!
 //! Node comes from nodejs.org (`node-mirror:release` in .npmrc or `NODEJS_ORG_MIRROR` name a
 //! mirror), each file checked against the release's `SHASUMS256.txt`: the `.tar.gz` on Linux and
-//! macOS, the bare `node.exe` on Windows (jpm reads no zip). Bun and Deno come from their npm
+//! macOS, the bare `node.exe` on Windows (jpm reads no zip). As pnpm does, jpm first checks that
+//! file's signature, `SHASUMS256.txt.sig`, against Node's release keys (`pgp.rs`), unless
+//! `verify-node-signature=false` says not to. Bun and Deno come from their npm
 //! platform packages (`@oven/bun-linux-x64`, `@deno/darwin-arm64`), through the registry like
 //! any other package.
 
@@ -27,6 +29,8 @@ pub const PROTOCOL: &str = "runtime:";
 const NODE_DIST: &str = "https://nodejs.org/download/release";
 /// Musl builds before Node 26 are only here.
 const UNOFFICIAL: &str = "https://unofficial-builds.nodejs.org/download/release";
+/// Node's release keys, one file per key fingerprint. `JPM_NODE_KEYS_URL` replaces it, for tests.
+const RELEASE_KEYS: &str = "https://raw.githubusercontent.com/nodejs/release-keys/HEAD/keys";
 
 /// One platform's build: `platform` is `<os>-<cpu>`, `-musl` added for a musl build, in Node's
 /// spelling. `file` is where it is: for Node a file under the release's directory on the mirror
@@ -39,10 +43,13 @@ pub struct Variant {
 }
 
 static MIRROR: OnceLock<String> = OnceLock::new();
+static VERIFY: OnceLock<bool> = OnceLock::new();
 
-/// Where Node releases come from, set once from the config.
-pub fn configure(mirror: Option<&str>) {
+/// Where Node releases come from, and whether their signatures are checked; set once from the
+/// config.
+pub fn configure(mirror: Option<&str>, verify: bool) {
     let _ = MIRROR.set(mirror.map_or(NODE_DIST, |m| m.trim_end_matches('/')).to_string());
+    let _ = VERIFY.set(verify);
 }
 
 fn mirror() -> &'static str {
@@ -123,16 +130,59 @@ pub fn resolve(name: &str, range: &str, pinned: Option<&str>, registry: &Registr
     Ok(p)
 }
 
-fn download(registry: &Registry, url: &str) -> Result<String> {
+fn fetch(registry: &Registry, url: &str) -> Result<Vec<u8>> {
     if registry.offline() {
         return Err(Error::new("EOFFLINE", format!("offline: cannot read {url}")));
     }
     let r = crate::http::get(url, &[], registry.auth())?;
     match r.status {
-        200 => String::from_utf8(r.body).map_err(|_| Error::new("ENETWORK", format!("{url} is not text"))),
+        200 => Ok(r.body),
         404 => Err(Error::new("E404", format!("{url} returned 404"))),
         s => Err(Error::new("ENETWORK", format!("{url} returned {s}"))),
     }
+}
+
+fn download(registry: &Registry, url: &str) -> Result<String> {
+    String::from_utf8(fetch(registry, url)?).map_err(|_| Error::new("ENETWORK", format!("{url} is not text")))
+}
+
+/// A release's `SHASUMS256.txt` (`text`, from `url`) must be signed by one of Node's release
+/// keys. The key comes from nodejs/release-keys once, and is kept in the store's metadata.
+fn check_signature(registry: &Registry, version: &str, url: &str, text: &str) -> Result<()> {
+    let refused = |why: &str| {
+        Error::new("ESIGNATURE", format!("Node.js {version}: {url} is not signed by a Node.js release key: {why}"))
+    };
+    let sig = match fetch(registry, &format!("{url}.sig")) {
+        Err(e) if e.code == "E404" => {
+            return Err(Error::new(
+                "ESIGNATURE",
+                format!(
+                    "Node.js {version}: {url}.sig is missing, and jpm checks the signature of every Node.js release. \
+                     For a mirror that publishes none, set verify-node-signature=false in .npmrc \
+                     (or pass --no-verify-node-signature)"
+                ),
+            ));
+        }
+        other => other?,
+    };
+    let key = crate::pgp::signer(&sig).map_err(|e| refused(&e))?;
+    let name = crate::pgp::hex(&key);
+    let kept = registry.metadata_dir().map(|d| d.join("_node_keys").join(format!("{name}.asc")));
+    if let Some(armored) = kept.as_ref().and_then(|f| std::fs::read(f).ok())
+        && crate::pgp::verify(text.as_bytes(), &sig, &key, &armored).is_ok()
+    {
+        return Ok(());
+    }
+    let base = std::env::var("JPM_NODE_KEYS_URL").unwrap_or_else(|_| RELEASE_KEYS.to_string());
+    let armored = fetch(registry, &format!("{base}/{name}.asc"))
+        .map_err(|e| e.context(format_args!("Node.js {version}: cannot read release key {name}")))?;
+    crate::pgp::verify(text.as_bytes(), &sig, &key, &armored).map_err(refused)?;
+    if let Some(file) = kept
+        && file.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+    {
+        let _ = crate::util::write_atomic(&file, &armored);
+    }
+    Ok(())
 }
 
 fn node(range: &str, pinned: Option<&str>, registry: &Registry) -> Result<(String, Vec<Variant>)> {
@@ -145,9 +195,15 @@ fn node(range: &str, pinned: Option<&str>, registry: &Registry) -> Result<(Strin
             pick_node(&index, range)?
         }
     };
-    let text = download(registry, &format!("{}/v{version}/SHASUMS256.txt", mirror()))?;
+    let url = format!("{}/v{version}/SHASUMS256.txt", mirror());
+    let text = download(registry, &url)?;
+    if *VERIFY.get().unwrap_or(&true) {
+        check_signature(registry, &version, &url, &text)?;
+    }
     let mut variants = node_variants(&text, &version, "");
     // nodejs.org's releases have unofficial musl builds beside them, for the platforms theirs lack.
+    // Their list is signed by no release key: it is trusted as far as its TLS download, as pnpm
+    // trusts it.
     if mirror() == NODE_DIST {
         let base = format!("{UNOFFICIAL}/v{version}/");
         if let Ok(text) = download(registry, &format!("{base}SHASUMS256.txt")) {

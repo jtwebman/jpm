@@ -52,11 +52,12 @@ fn serve_node(r: &Registry, releases: &[(&str, Option<&str>)]) {
     }
 }
 
+/// The fake releases are signed by no one: the signature check is off for them.
 fn setup(releases: &[(&str, Option<&str>)]) -> (Registry, Env) {
     let r = Registry::start(Vec::new());
     serve_node(&r, releases);
     let env = Env::new(&r);
-    env.write(".npmrc", &format!("node-mirror:release={}/dist/\n", r.url));
+    env.write(".npmrc", &format!("node-mirror:release={}/dist/\nverify-node-signature=false\n", r.url));
     (r, env)
 }
 
@@ -260,7 +261,7 @@ fn add_writes_the_runtime_where_pnpm_does() {
 #[test]
 fn the_mirror_can_come_from_the_environment() {
     let (r, env) = setup(&[("22.12.0", Some("Jod"))]);
-    env.write(".npmrc", "");
+    env.write(".npmrc", "verify-node-signature=false\n");
     env.manifest(json!({ "devDependencies": { "node": "runtime:22" }, "scripts": { "v": "node --version" } }));
     let out = env.command(&["install"]).env("NODEJS_ORG_MIRROR", format!("{}/dist", r.url)).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -408,4 +409,143 @@ fn brings_a_pnpm_runtime_over_at_its_version() {
     let out = env.ok(&["install"]);
     assert!(out.contains("versions preferred"), "{out}");
     assert_eq!(run_in(&env, &env.project(), "v"), "v22.11.0");
+}
+
+/// A real release as nodejs.org has it, from tests/fixtures/node: its `SHASUMS256.txt`, with
+/// `SHASUMS256.txt.sig` when `signed`, and the release key that signed it under `/keys`.
+const SIGNED: &str = "24.21.0";
+const SIGNER: &str = "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356";
+const OTHER_KEY: &str = "890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4";
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(format!("{}/tests/fixtures/node/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+}
+
+fn release_site(signed: bool) -> (Registry, Env) {
+    let r = Registry::start(Vec::new());
+    let index = json!([{ "version": format!("v{SIGNED}"), "lts": "Krypton" }]);
+    r.serve("/dist/index.json", serde_json::to_vec(&index).unwrap());
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt"), fixture(&format!("v{SIGNED}-SHASUMS256.txt")));
+    if signed {
+        r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt.sig"), fixture(&format!("v{SIGNED}-SHASUMS256.txt.sig")));
+    }
+    r.serve(&format!("/keys/{SIGNER}.asc"), fixture(&format!("{SIGNER}.asc")));
+    let env = Env::new(&r);
+    env.write(".npmrc", &format!("node-mirror:release={}/dist/\n", r.url));
+    env.manifest(json!({ "devDependencies": { "node": "runtime:24" } }));
+    (r, env)
+}
+
+/// `jpm lock` from scratch, with the release keys at `keys` on the fake site.
+fn lock(r: &Registry, env: &Env, keys: &str, args: &[&str]) -> std::process::Output {
+    let _ = std::fs::remove_file(env.project().join("jpm.lock"));
+    let mut all = vec!["lock"];
+    all.extend(args);
+    env.command(&all).env("JPM_NODE_KEYS_URL", format!("{}{keys}", r.url)).output().unwrap()
+}
+
+fn locks(r: &Registry, env: &Env, keys: &str, args: &[&str]) {
+    let out = lock(r, env, keys, args);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.read("jpm.lock").contains(&format!("package node@runtime:{SIGNED}\n")));
+}
+
+fn refused(r: &Registry, env: &Env, keys: &str, args: &[&str]) -> String {
+    let out = lock(r, env, keys, args);
+    assert!(!out.status.success() && !env.exists("jpm.lock"));
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn checks_the_signature_of_a_node_release() {
+    let (r, env) = release_site(true);
+    locks(&r, &env, "/keys", &[]);
+    // The real release's own hash for its Linux x64 build.
+    let sums = String::from_utf8(fixture(&format!("v{SIGNED}-SHASUMS256.txt"))).unwrap();
+    let line = sums.lines().find(|l| l.ends_with(&format!("node-v{SIGNED}-linux-x64.tar.gz"))).unwrap();
+    let raw: Vec<u8> = (0..64).step_by(2).map(|i| u8::from_str_radix(&line[i..i + 2], 16).unwrap()).collect();
+    let text = env.read("jpm.lock");
+    assert!(text.contains(&format!("  variant linux-x64 sha256-{} ", b64(&raw))), "{text}");
+    // The key is kept: with the key site gone, a new resolve still checks the signature.
+    let kept = env.store().join(format!("metadata/_node_keys/{SIGNER}.asc"));
+    assert_eq!(std::fs::read(&kept).unwrap(), fixture(&format!("{SIGNER}.asc")));
+    let key_fetches = || r.hits.lock().unwrap().iter().filter(|h| h.starts_with("/keys/")).count();
+    assert_eq!(key_fetches(), 1);
+    locks(&r, &env, "/gone", &[]);
+    assert_eq!(key_fetches(), 1);
+    // With no key kept and none to fetch, the error says which.
+    let kept_dir = kept.parent().unwrap().to_path_buf();
+    std::fs::rename(&kept_dir, kept_dir.with_extension("away")).unwrap();
+    let err = refused(&r, &env, "/gone", &[]);
+    assert!(err.contains(&format!("Node.js {SIGNED}: cannot read release key {SIGNER}: ")), "{err}");
+    std::fs::rename(kept_dir.with_extension("away"), &kept_dir).unwrap();
+    // A kept key that does not verify is fetched again.
+    std::fs::write(&kept, fixture(&format!("{OTHER_KEY}.asc"))).unwrap();
+    locks(&r, &env, "/keys", &[]);
+    assert_eq!((key_fetches(), std::fs::read(&kept).unwrap()), (2, fixture(&format!("{SIGNER}.asc"))));
+    // A fetched key must be the one its fingerprint names, and is not kept otherwise.
+    r.serve(&format!("/keys/{SIGNER}.asc"), fixture(&format!("{OTHER_KEY}.asc")));
+    std::fs::remove_file(&kept).unwrap();
+    let err = refused(&r, &env, "/keys", &[]);
+    assert!(err.contains("the key file holds another key than the one it is named for"), "{err}");
+    assert!(!kept.exists());
+}
+
+#[test]
+fn refuses_a_changed_list_or_signature() {
+    let (r, env) = release_site(true);
+    let url = format!("{}/dist/v{SIGNED}/SHASUMS256.txt", r.url);
+    let mut sums = fixture(&format!("v{SIGNED}-SHASUMS256.txt"));
+    sums[0] = if sums[0] == b'0' { b'1' } else { b'0' };
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt"), sums);
+    let err = refused(&r, &env, "/keys", &[]);
+    let why = "is not signed by a Node.js release key: the document is not the one signed";
+    assert!(err.contains("ESIGNATURE") && err.contains(&format!("Node.js {SIGNED}: {url} {why}")), "{err}");
+    // A signature naming a key that is not a release key; an empty one.
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt"), fixture(&format!("v{SIGNED}-SHASUMS256.txt")));
+    let mut sig = fixture(&format!("v{SIGNED}-SHASUMS256.txt.sig"));
+    let at = sig.windows(4).position(|w| w == [0x5b, 0xe8, 0xa3, 0xf6]).unwrap();
+    sig[at] ^= 1;
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt.sig"), sig);
+    assert!(refused(&r, &env, "/keys", &[]).contains("not a Node.js release key"));
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt.sig"), Vec::new());
+    assert!(refused(&r, &env, "/keys", &[]).contains("not one signature packet"));
+}
+
+#[test]
+fn a_mirror_without_signatures_needs_the_check_off() {
+    let (r, env) = release_site(false);
+    let err = refused(&r, &env, "/keys", &[]);
+    assert!(
+        err.contains(&format!("Node.js {SIGNED}: {}/dist/v{SIGNED}/SHASUMS256.txt.sig is missing", r.url)),
+        "{err}"
+    );
+    assert!(err.contains("verify-node-signature=false") && err.contains("--no-verify-node-signature"), "{err}");
+    locks(&r, &env, "/keys", &["--no-verify-node-signature"]);
+    env.write(".npmrc", &format!("node-mirror:release={}/dist/\nverify-node-signature=false\n", r.url));
+    locks(&r, &env, "/keys", &[]);
+    // The flag turns it back on over the file.
+    refused(&r, &env, "/keys", &["--verify-node-signature"]);
+    assert!(!r.hits.lock().unwrap().iter().any(|h| h.starts_with("/keys/")));
+}
+
+/// nodejs.org itself: the newest LTS and an old line, both checked against the release keys.
+/// `cargo test --test runtimes -- --ignored --nocapture real_node_releases`
+#[test]
+#[ignore = "network"]
+fn real_node_releases_verify() {
+    let r = Registry::start(Vec::new());
+    let env = Env::new(&r);
+    for range in ["lts", "18"] {
+        env.manifest(json!({ "devDependencies": { "node": format!("runtime:{range}") } }));
+        let started = std::time::Instant::now();
+        let out = env.command(&["lock"]).output().unwrap();
+        assert!(out.status.success(), "{range}: {}", String::from_utf8_lossy(&out.stderr));
+        println!(
+            "runtime:{range}: {:?}\n{}",
+            started.elapsed(),
+            env.read("jpm.lock").lines().find(|l| l.starts_with("package node")).unwrap()
+        );
+        std::fs::remove_file(env.project().join("jpm.lock")).unwrap();
+    }
 }

@@ -1318,7 +1318,7 @@ package d@1.0.0
              \x20 variant zz-other {sha} node-v22.0.0-zz.tar.gz\n"
         );
         let lock = parse_lockfile(&text, LOCKFILE).unwrap();
-        crate::runtime::configure(None);
+        crate::runtime::configure(None, true);
         let res = from_lockfile(&lock, &|_| String::new());
         let node = &res.packages["node@runtime:22.0.0"];
         assert_eq!((node.version.as_str(), node.integrity.as_str(), node.dev), ("22.0.0", sha, true));

@@ -19,6 +19,7 @@ mod link;
 mod lock;
 mod manifest;
 mod patch;
+mod pgp;
 mod pool;
 mod project;
 mod registry;
