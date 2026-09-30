@@ -1,6 +1,7 @@
 #!/bin/sh
 # Install jpm: curl -fsSL https://getjpm.sh | sh
-# JPM_VERSION picks a release (default: latest); JPM_INSTALL moves it (default: ~/.jpm/bin).
+# JPM_VERSION picks a release (default: latest); JPM_INSTALL moves it (default: ~/.jpm/bin);
+# JPM_LIBC=glibc or musl picks the Linux build (default: the system's).
 set -eu
 
 repo="jtwebman/jpm"
@@ -23,6 +24,22 @@ if [ "$os" = darwin ] && [ "$cpu" = x64 ] && [ "$(sysctl -n sysctl.proc_translat
 fi
 
 asset="jpm-$os-$cpu"
+# Linux has a glibc build and a static musl one. glibc 2.17 or later, as getconf reports it, takes
+# the glibc build; anything else (musl, as on Alpine, or an older glibc) the static one, which runs
+# anywhere. getconf, not a look for musl's loader: Debian's musl package installs one beside glibc.
+# JPM_LIBC=glibc or musl decides instead.
+if [ "$os" = linux ]; then
+  libc="${JPM_LIBC:-}"
+  if [ -z "$libc" ]; then
+    v="$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc 2\.\([0-9]*\).*/\1/p')"
+    if [ -n "$v" ] && [ "$v" -ge 17 ]; then libc=glibc; else libc=musl; fi
+  fi
+  case "$libc" in
+    glibc | gnu) ;;
+    musl) asset="$asset-musl" ;;
+    *) echo "jpm: JPM_LIBC must be glibc or musl, not $libc" >&2; exit 1 ;;
+  esac
+fi
 if [ -n "${JPM_VERSION:-}" ]; then
   base="https://github.com/$repo/releases/download/$JPM_VERSION"
 else

@@ -22,7 +22,7 @@ pub fn system_roots() -> Vec<Vec<u8>> {
 }
 
 /// musl's loader is `/lib/ld-musl-<arch>.so.1`; a system without one is glibc. Read off the
-/// system, not this binary, which is static and would say musl on any machine.
+/// system, not this binary: the static musl build runs on glibc systems too.
 pub fn libc() -> Option<&'static str> {
     let musl = std::fs::read_dir("/lib")
         .map(|dir| dir.flatten().any(|e| e.file_name().to_string_lossy().starts_with("ld-musl-")))
@@ -33,7 +33,7 @@ pub fn libc() -> Option<&'static str> {
 /// glibc's malloc keeps an arena per thread, up to eight per core, and each holds on to what was
 /// freed in it: an install's forty-odd threads (downloads, writers, the walk) put nuxt's peak at
 /// 42 MB from a lockfile, where one arena per core holds it to 26 MB for the same CPU. A
-/// `MALLOC_ARENA_MAX` the user set is left to glibc; musl, which the releases use, has no arenas.
+/// `MALLOC_ARENA_MAX` the user set is left to glibc; the musl build's malloc has no arenas.
 pub fn cap_malloc_arenas() {
     #[cfg(target_env = "gnu")]
     if let Some(n) = arena_cap(std::env::var_os("MALLOC_ARENA_MAX").is_some(), crate::pool::disk_threads()) {

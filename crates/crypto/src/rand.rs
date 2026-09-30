@@ -1,5 +1,9 @@
 //! The operating system's random numbers: getrandom(2) on Linux, getentropy(3) on macOS,
-//! BCryptGenRandom on Windows. There is no fallback; without them jpm aborts.
+//! BCryptGenRandom on Windows. Without them jpm aborts.
+//!
+//! On Linux it is the system call, not glibc's wrapper: the release is built against glibc 2.17,
+//! which has none (2.25 added it). A kernel older than 3.17, which has no such call, gets
+//! /dev/urandom instead.
 
 /// Fills `buf` with random bytes from the operating system. Aborts if it cannot.
 pub fn fill(buf: &mut [u8]) {
@@ -12,17 +16,24 @@ pub fn fill(buf: &mut [u8]) {
 fn os_fill(mut buf: &mut [u8]) -> bool {
     while !buf.is_empty() {
         // SAFETY: the pointer and length describe `buf`, which the kernel only writes into.
-        let n = unsafe { libc::getrandom(buf.as_mut_ptr().cast(), buf.len(), 0) };
+        let n = unsafe { libc::syscall(libc::SYS_getrandom, buf.as_mut_ptr(), buf.len(), 0) };
         if n < 0 {
-            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
-                continue;
+            match std::io::Error::last_os_error().raw_os_error() {
+                Some(libc::EINTR) => continue,
+                Some(libc::ENOSYS) => return urandom(buf),
+                _ => return false,
             }
-            return false;
         }
         // Reads over 32 MiB, or interrupted ones, may come back short.
         buf = &mut buf[n as usize..];
     }
     true
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn urandom(buf: &mut [u8]) -> bool {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(buf)).is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -100,5 +111,14 @@ mod tests {
             }
         }
         assert!(or.iter().all(|&o| o != 0));
+    }
+
+    /// The fallback for kernels without getrandom(2) fills as the system call does.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn urandom_fills() {
+        let (mut a, mut b) = ([0u8; 64], [0u8; 64]);
+        assert!(super::urandom(&mut a) && super::urandom(&mut b));
+        assert_ne!(a, b);
     }
 }
