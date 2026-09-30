@@ -846,6 +846,12 @@ impl Linker<'_> {
             } else {
                 let link = relative(&bin_dir, &file).to_string_lossy().into_owned();
                 replace_link(&bin_dir.join(bin), &link, &bin_dir, false)?;
+                // A workspace's bin is the project's own file, which a checkout from Windows or
+                // an unset bit leaves unrunnable: made executable, as npm and pnpm do. Never one
+                // outside the project; the store's are made so as they are unpacked.
+                if pkg.local.as_deref().is_some_and(|p| !p.starts_with("..")) {
+                    executable(&file);
+                }
             }
             Counts::add(&self.counts.bins, 1);
         }
@@ -1016,6 +1022,23 @@ fn seal(dir: &Path) {
     }
     #[cfg(not(unix))]
     let _ = dir;
+}
+
+/// Executable by whoever may read it, through links; a file that is missing or already is,
+/// left alone.
+fn executable(file: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = fs::metadata(file) else { return };
+        let mode = meta.permissions().mode();
+        let want = mode | ((mode & 0o444) >> 2);
+        if meta.is_file() && want != mode {
+            let _ = fs::set_permissions(file, fs::Permissions::from_mode(want));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = file;
 }
 
 /// A copy the owner may write: the store's files are read-only.
