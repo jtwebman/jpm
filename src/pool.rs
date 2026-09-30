@@ -144,9 +144,11 @@ pub fn network_threads() -> usize {
     std::env::var("JPM_CONCURRENCY").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(32)
 }
 
-/// Threads for disk-bound work: the cores this process may use.
+/// Threads for disk-bound work: the cores this process may use, asked once (on Linux the answer
+/// reads the cgroup's files each time).
 pub fn disk_threads() -> usize {
-    std::thread::available_parallelism().map_or(4, usize::from).max(2)
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CORES.get_or_init(|| std::thread::available_parallelism().map_or(4, usize::from).max(2))
 }
 
 #[cfg(test)]
