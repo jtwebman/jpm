@@ -1,9 +1,9 @@
 name: ab
 
-# Throwaway: A/B timing of two refs on one ubuntu-latest runner (bench/ab.env). Pushes to perf-ab only.
+# Throwaway: A/B timing of two refs on one ubuntu-latest runner (bench/ab.env). Pushes to perf3-ab only.
 on:
   push:
-    branches: [perf-ab]
+    branches: [perf3-ab]
 
 jobs:
   ab:

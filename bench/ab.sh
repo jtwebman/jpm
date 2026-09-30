@@ -1,19 +1,24 @@
 #!/bin/bash
-# Throwaway (never merged): interleaved A/B installs of two jpm builds on one runner.
-# ab.sh <n> <phases> <fixtures> <tag=bin>...: every build once per round, the order rotating.
+# ab3.sh <n> <phases> <fixtures> <tag=bin>...: interleaved A/B installs of jpm builds on one machine.
+# Phases: cold (nothing), ci (lockfile, empty store), warm (lockfile and store, no node_modules).
+# Fixtures come from $FIX (default: bench/fixtures of the checkout this runs from).
 set -u
 N=$1 PH=$2 FX=$3; shift 3
 BUILDS=("$@")
 A=${BUILDS[0]#*=}
-W=$RUNNER_TEMP/ab; mkdir -p $W
-FIX=$PWD/bench/fixtures
+W=${W:-${RUNNER_TEMP:-$HOME/p3}/ab}; mkdir -p $W
+FIX=${FIX:-$PWD/bench/fixtures}
 wipe() { chmod -R u+w "$1" 2>/dev/null; rm -rf "$1"; }
 run() { # run <bin> <fixture> <phase> <tag>
   bin=$1 f=$2 p=$3 tag=$4
-  d=$W/$f; wipe $d/proj/node_modules; wipe $d/home; mkdir -p $d/home $d/proj
+  d=$W/$f; wipe $d/proj; wipe $d/home; mkdir -p $d/home $d/proj
   cp $FIX/$f/package.json $d/proj/
   if [ $p = cold ]; then rm -f $d/proj/jpm.lock; else cp $W/$f.lock $d/proj/jpm.lock; fi
   cd $d/proj
+  if [ $p = warm ]; then
+    env HOME=$d/home XDG_CACHE_HOME=$d/home/.cache JPM_STORE=$d/home/store $bin install --ignore-scripts >$W/log 2>&1
+    wipe $d/proj/node_modules
+  fi
   t0=$(date +%s%N)
   env HOME=$d/home XDG_CACHE_HOME=$d/home/.cache JPM_STORE=$d/home/store /usr/bin/time -f '%U %S %M' -o $W/time $bin install --ignore-scripts >$W/log 2>&1
   st=$?; t1=$(date +%s%N); cd - >/dev/null
@@ -23,7 +28,7 @@ run() { # run <bin> <fixture> <phase> <tag>
   awk -v w=$(( (t1-t0)/1000000 )) -v u=$u -v s=$s -v m=$m -v c=$cache -v k="$f $p $tag" 'BEGIN{printf "%s %d %d %d %d %d %d\n", k, w, (u+s)*1000, u*1000, s*1000, m, c}'
 }
 for f in ${FX//,/ }; do
-  # One lockfile for both, made by A.
+  # One lockfile for every build, made by A.
   wipe $W/$f; mkdir -p $W/$f/proj $W/$f/home; cp $FIX/$f/package.json $W/$f/proj/
   (cd $W/$f/proj && HOME=$W/$f/home JPM_STORE=$W/$f/home/store $A install --ignore-scripts >/dev/null 2>&1); cp $W/$f/proj/jpm.lock $W/$f.lock
   for p in ${PH//,/ }; do
