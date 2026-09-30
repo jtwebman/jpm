@@ -262,13 +262,13 @@ impl Registry {
     }
 
     fn load_corgi(&self, name: &str) -> Result<Arc<Packument>> {
-        // A scoped package named for linux is nearly always a linux build: its libc is only in
-        // the full document, as are the publish dates the release cutoff reads, so the walk
-        // would ask for that next. Asked for first, it is one request instead of two. The name
-        // only decides which document is asked for; what the package is, and where it runs,
-        // is read from the document. Without one (offline, say), the abbreviated one serves.
-        if name.starts_with('@')
-            && name.contains("linux")
+        // A package named for linux is nearly always a linux build: its libc is only in the
+        // full document (or an unscoped one's route), as are the publish dates the release
+        // cutoff reads, so the walk would ask for that next. Asked for first, it is one request
+        // instead of two or three. The name only decides which document is asked for; what the
+        // package is, and where it runs, is read from the document. Without one (offline, say),
+        // the abbreviated one serves.
+        if name.contains("linux")
             && let Ok(full) = self.full(name)
         {
             return Ok(self.cut(name, full));
@@ -979,6 +979,28 @@ mod tests {
         let asked = asked.lock().unwrap().clone();
         let each = |kind: &str, path: &str| (kind.to_string(), path.to_string());
         assert_eq!(asked, [each("full", "/@s%2fbinding-linux-x64-gnu"), each("corgi", "/@s%2fbinding-darwin-x64")]);
+    }
+
+    #[test]
+    fn dates_a_package_pin_on_a_linux_build_from_its_full_document_alone() {
+        let old = "2000-01-01T00:00:00.000Z";
+        let (name, darwin) = ("tool-linux-x64-gnu", "tool-darwin-x64");
+        let docs = [
+            ("/tool-linux-x64-gnu".to_string(), platform_docs(name, "linux", &[("1.0.0", old)])),
+            ("/tool-darwin-x64".to_string(), platform_docs(darwin, "darwin", &[("1.0.0", old)])),
+        ];
+        let (base, asked) = registry_of(docs.into_iter().collect());
+        let config = Config { registry: base, before: Some(now_ms()), ..Config::default() };
+        let registry = Registry::new(&config, None);
+        // Held to the release cutoff, the pin is dated by a packument, not read by its route:
+        // for a linux build, the full document, with the libc the walk asks for next.
+        let m = registry.pick(&parse_dep(name, "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+        assert_eq!(m.libc, Some(vec!["glibc".to_string()]));
+        // Any other, the abbreviated document, old since before the cutoff.
+        registry.pick(&parse_dep(darwin, "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+        let asked = asked.lock().unwrap().clone();
+        let each = |kind: &str, path: &str| (kind.to_string(), path.to_string());
+        assert_eq!(asked, [each("full", "/tool-linux-x64-gnu"), each("corgi", "/tool-darwin-x64")]);
     }
 
     #[test]
