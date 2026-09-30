@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::bin;
 use crate::error::{Error, Result};
-use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root, Specs, same_specs, split_key};
+use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root, Specs, same_specs, split_key, split_peers};
 use crate::json::{self, Object, Value};
 use crate::project::{RootManifest, Workspace, local_path, local_shape};
 use crate::registry::tarball_url;
@@ -311,7 +311,9 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
         );
     }
     for (key, e) in lock.packages {
-        let Some((name, tail)) = split_key(&key) else { continue };
+        // A copy for one set of peers: `name@version(peer@version)`.
+        let (base, suffix) = split_peers(&key);
+        let Some((name, tail)) = split_key(base) else { continue };
         // A linked directory: where it is, never stored.
         let link = tail.strip_prefix("link:").map(str::to_string);
         let source = e.version.as_ref().filter(|_| link.is_none()).map(|_| tail.to_string());
@@ -354,6 +356,7 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             patch: e.patch,
             runtime: (!e.variants.is_empty()).then_some(e.variants),
             alias: alias.map(|(r, _)| r.to_string()),
+            peer_suffix: suffix.to_string(),
             ..Package::default()
         };
         if package.runtime.is_some() {
@@ -823,7 +826,7 @@ pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String
         .iter()
         .filter(|(key, _)| !is_link(key))
         .map(|(key, e)| {
-            let (name, tail) = split_key(key)?;
+            let (name, tail) = split_key(split_peers(key).0)?;
             // An alias's `npm:<real>@<version>`: its real name and version, as `keys::store_keys`
             // names it.
             let alias = crate::graph::split_alias(tail);
@@ -863,7 +866,7 @@ fn fill_subgraphs(lock: &mut Lockfile) {
 /// subgraphs are hashed again, and the file no longer has the content it was read with.
 pub fn mark_patches(lock: &mut Lockfile, patches: &[crate::patch::Patch]) -> Result<bool> {
     let packages = lock.packages.iter().filter(|(k, _)| !is_link(k)).filter_map(|(k, e)| {
-        let (name, tail) = split_key(k)?;
+        let (name, tail) = split_key(split_peers(k).0)?;
         Some((k.as_str(), name, e.version.as_deref().unwrap_or(tail)))
     });
     let chosen = crate::patch::select(patches, packages)?;
@@ -942,9 +945,20 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         }
         known.insert(format!("{}@link:{path}", ws.name));
     }
+    // Every copy of a package is one tarball: the facts that name it are the same.
+    let mut bases: std::collections::HashMap<&str, &LockEntry> = std::collections::HashMap::new();
     for (key, e) in &lock.packages {
         let at = format!("packages[{key:?}]");
-        let source = check_key(key)?;
+        let (base, suffix) = split_peers(key);
+        let source = check_key(base)?;
+        if !suffix.is_empty() {
+            check_suffix(&at, base, suffix, e, lock)?;
+        }
+        if let Some(first) = bases.insert(base, e)
+            && (first.integrity != e.integrity || first.resolved != e.resolved || first.version != e.version)
+        {
+            return Err(fail(format!("{at} is a copy of {base}, and names another tarball than its other copies")));
+        }
         // A linked directory's dependencies are its own; the rest of an entry is not read.
         if is_link(key) {
             let bare = e.dependencies.is_empty() && e.optional_dependencies.is_empty();
@@ -965,7 +979,8 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         {
             return Err(fail(format!("{at}.subgraph is not a digest")));
         }
-        if let Some((name, version)) = split_key(key).and_then(|(n, v)| Some((n, v.strip_prefix(runtime::PROTOCOL)?))) {
+        if let Some((name, version)) = split_key(base).and_then(|(n, v)| Some((n, v.strip_prefix(runtime::PROTOCOL)?)))
+        {
             check_runtime(&at, name, version, e)?;
         } else if !e.variants.is_empty() {
             return Err(fail(format!("{at} has variants, which only a runtime has")));
@@ -1081,6 +1096,7 @@ struct Asks<'a> {
 /// by its path, which may share the name.
 fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()> {
     for (name, version) in deps {
+        let version = &crate::graph::edge_base(name, version).to_string();
         let ranges = top.specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
         let asked: Vec<spec::Spec> = ranges
             .chain(top.peers.get(name))
@@ -1202,6 +1218,41 @@ fn check_edges(
 fn escapes(value: &str) -> bool {
     let clean = value.replace('\\', "/");
     clean.starts_with('/') || clean.contains(':') || clean.split('/').any(|p| p == "..")
+}
+
+/// A copy's peer suffix, `(peer@version)...` as pnpm writes it: groups sorted as text, one per
+/// name, each a copy the lockfile has (or its package, where a cycle cut the key short), and
+/// each the copy it links under that name. A linked directory and a runtime have no peers.
+fn check_suffix(at: &str, base: &str, suffix: &str, e: &LockEntry, lock: &Lockfile) -> Result<()> {
+    let bad = |why: &str| Err(fail(format!("{at} has a peer suffix that {why}")));
+    if is_link(base) || split_key(base).is_some_and(|(_, v)| v.starts_with(runtime::PROTOCOL)) {
+        return bad("only a registry, git or tarball package may have");
+    }
+    let Some(groups) = crate::graph::peer_groups(suffix) else { return bad("is not groups of keys") };
+    let known = |k: &str| {
+        lock.packages.contains_key(k)
+            || split_key(k).is_some_and(|(n, v)| {
+                v.strip_prefix("link:").is_some_and(|p| lock.workspaces.get(p).is_some_and(|w| w.name == n))
+            })
+    };
+    let mut names: HashSet<&str> = HashSet::new();
+    for (i, inner) in groups.iter().enumerate() {
+        let Some((name, _)) = split_key(inner) else { return bad("is not groups of keys") };
+        if !names.insert(name) || (i > 0 && format!("({})", groups[i - 1]) >= format!("({inner})")) {
+            return bad("is not sorted, one group a name");
+        }
+        let cut = || split_peers(inner).1.is_empty() && lock.packages.keys().any(|k| split_peers(k).0 == *inner);
+        if !known(inner) && !cut() {
+            return bad(&format!("names {inner}, which is not in packages"));
+        }
+        if let Some(v) = e.dependencies.get(name).or_else(|| e.optional_dependencies.get(name)) {
+            let linked = format!("{name}@{v}");
+            if linked != *inner && split_peers(&linked).0 != *inner {
+                return bad(&format!("names {inner}, and it links {linked}"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A key is `name@version` or `name@<source>`, and both halves become path segments.
@@ -1478,6 +1529,107 @@ package d@1.0.0
         assert_ne!(plain["b@1.0.0"], built["b@1.0.0"]);
         assert_ne!(plain["a@1.0.0"], built["a@1.0.0"]);
         assert_eq!(plain["c@1.0.0"], built["c@1.0.0"]);
+    }
+
+    const COPIES: &str = r#"jpm-lock 2
+hash 0
+root
+  spec dependencies a ^1
+  spec dependencies b ^1
+  dep a 1.0.0
+  dep b 1.0.0
+package a@1.0.0
+  integrity sha512-a
+  dep host 1.0.0
+  dep ui 1.0.0(host@1.0.0)
+package b@1.0.0
+  integrity sha512-b
+  dep host 2.0.0
+  dep ui 1.0.0(host@2.0.0)
+package host@1.0.0
+  integrity sha512-h1
+package host@2.0.0
+  integrity sha512-h2
+package ui@1.0.0(host@1.0.0)
+  integrity sha512-ui
+  dep host 1.0.0
+  peer host *
+  settled host required
+package ui@1.0.0(host@2.0.0)
+  integrity sha512-ui
+  dep host 2.0.0
+  peer host *
+  settled host required
+"#;
+
+    #[test]
+    fn keeps_a_copy_per_set_of_peers() {
+        let lock = parse_lockfile(COPIES, LOCKFILE).unwrap();
+        let base = |_: &str| "https://registry.npmjs.org".to_string();
+        let res = from_lockfile(&lock, &base);
+        let ui = &res.packages["ui@1.0.0(host@2.0.0)"];
+        assert_eq!((ui.version.as_str(), ui.peer_suffix.as_str()), ("1.0.0", "(host@2.0.0)"));
+        assert_eq!(ui.resolved, "https://registry.npmjs.org/ui/-/ui-1.0.0.tgz");
+        assert_eq!(ui.key(), "ui@1.0.0(host@2.0.0)");
+        // Each copy is an entry of its own, named without its suffix.
+        let keys = crate::keys::store_keys(&res.packages);
+        let (one, two) = (&keys["ui@1.0.0(host@1.0.0)"], &keys["ui@1.0.0(host@2.0.0)"]);
+        assert!(one != two && one.starts_with("ui@1.0.0-") && two.starts_with("ui@1.0.0-"), "{one} {two}");
+        let text = format_lockfile(&to_lockfile(&res, &base)).unwrap();
+        let again = parse_lockfile(&text, LOCKFILE).unwrap();
+        assert_eq!(format_lockfile(&to_lockfile(&from_lockfile(&again, &base), &base)).unwrap(), text);
+        assert_eq!(recorded_keys(&again).unwrap(), keys);
+        // The walk takes the copies as one package.
+        let merged = crate::graph::merge_copies(&res);
+        assert!(merged.packages.contains_key("ui@1.0.0") && merged.packages.len() == 5);
+        assert_eq!(merged.packages["a@1.0.0"].dependencies["ui"], "1.0.0");
+    }
+
+    #[test]
+    fn refuses_a_malformed_peer_suffix() {
+        let refused = |from: &str, to: &str, why: &str| {
+            let text = COPIES.replace(from, to);
+            let e = parse_lockfile(&text, LOCKFILE).unwrap_err();
+            assert!(e.message.contains(why), "{to}: {}", e.message);
+        };
+        // The edge to the copy is renamed with it, so the key is what is refused.
+        for bad in ["1.0.0(host@1.0.0", "1.0.0(host@1.0.0)x", "1.0.0()", "1.0.0(host)", "1.0.0)(host@1.0.0"] {
+            refused("1.0.0(host@1.0.0)", bad, "package key");
+        }
+        // A copy that names a peer it does not link, or one that is not there.
+        refused(
+            "package ui@1.0.0(host@1.0.0)
+  integrity sha512-ui
+  dep host 1.0.0",
+            "package ui@1.0.0(host@1.0.0)
+  integrity sha512-ui
+  dep host 2.0.0",
+            "it links host@2.0.0",
+        );
+        refused("1.0.0(host@1.0.0)", "1.0.0(host@3.0.0)", "not in packages");
+        // One group a name, in order.
+        refused("1.0.0(host@1.0.0)", "1.0.0(host@1.0.0)(host@2.0.0)", "sorted");
+        refused("1.0.0(host@2.0.0)", "1.0.0(host@2.0.0)(b@1.0.0)", "sorted");
+        // Every copy is the same tarball.
+        refused(
+            "package ui@1.0.0(host@2.0.0)
+  integrity sha512-ui",
+            "package ui@1.0.0(host@2.0.0)
+  integrity sha512-other",
+            "another tarball",
+        );
+        // A linked directory has no peers.
+        let linked = "jpm-lock 2
+hash 0
+root
+  spec dependencies l link:../l
+  dep l link:../l(h@1.0.0)
+                      package l@link:../l(h@1.0.0)
+  version 1.0.0
+package h@1.0.0
+  integrity sha512-h
+";
+        assert!(parse_lockfile(linked, LOCKFILE).is_err());
     }
 
     #[test]

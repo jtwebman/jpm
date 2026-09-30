@@ -896,9 +896,15 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         .chain(res.packages.values().filter(|p| p.local.is_some()).map(|p| &p.dependencies));
     let taken: HashSet<String> = tops.flat_map(|deps| deps.iter().map(|(n, v)| format!("{n}@{v}"))).collect();
     for (id, p) in res.packages.iter().filter(|(_, p)| p.local.is_none()) {
-        let deps = p.all_deps();
-        let sourced: Vec<(&String, &String)> =
-            deps.iter().filter(|(n, v)| is_sourced(v) && !taken.contains(&format!("{n}@{v}"))).collect();
+        // A copy's edges name the copies they reach: the source is what comes before the suffix.
+        let deps: Vec<(&String, &str)> = p
+            .dependencies
+            .iter()
+            .chain(&p.optional_dependencies)
+            .filter(|(n, v)| !taken.contains(&format!("{n}@{v}")))
+            .map(|(n, v)| (n, crate::graph::edge_base(n, v)))
+            .collect();
+        let sourced: Vec<(&String, &str)> = deps.into_iter().filter(|(_, v)| is_sourced(v)).collect();
         if sourced.is_empty() {
             continue;
         }
@@ -925,7 +931,8 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         let names = |m: &Manifest, name: &str, version: &str| {
             let ranges = [&m.dependencies, &m.optional_dependencies, &m.peer_dependencies];
             ranges.iter().filter_map(|r| r.get(name)).any(|range| {
-                let range = match rules::find(&res.root.overrides, crate::graph::split_key(id), name, range) {
+                let parent = crate::graph::split_key(crate::graph::split_peers(id).0);
+                let range = match rules::find(&res.root.overrides, parent, name, range) {
                     Some(Some(value)) => value,
                     Some(None) => return false,
                     None => range,
@@ -967,7 +974,10 @@ fn same_files(dir: &Path, files: &BTreeMap<String, Option<Stamp>>) -> bool {
 fn local_sources(lock: &Lockfile) -> BTreeMap<String, String> {
     lock.packages
         .keys()
-        .filter_map(|k| k.find("@file:").filter(|at| *at > 0).map(|at| (k.clone(), k[at + 1..].to_string())))
+        .filter_map(|k| {
+            let base = crate::graph::split_peers(k).0;
+            base.find("@file:").filter(|at| *at > 0).map(|at| (k.clone(), base[at + 1..].to_string()))
+        })
         .collect()
 }
 
@@ -1120,7 +1130,7 @@ fn fill_bins(ctx: &Ctx, lock: &mut Lockfile, store: &Store, dir: &Path) -> Resul
     let jobs: Vec<(String, Tarball, String)> = keys
         .iter()
         .filter_map(|key| {
-            let (name, version) = crate::graph::split_key(key)?;
+            let (name, version) = crate::graph::split_key(crate::graph::split_peers(key).0)?;
             let e = lock.packages.get(key)?;
             let url = e.resolved.clone().unwrap_or_else(|| crate::registry::tarball_url(&base(name), name, version));
             Some((key.clone(), tarball_of(dir, &url, None), e.integrity.clone()))
@@ -1202,12 +1212,18 @@ fn resolve_lock(
     for w in &resolution.warnings {
         warn(w);
     }
-    // An approval stays with its version and bytes, however the walk reached them.
+    // An approval stays with its version and bytes, however the walk reached them, and whichever
+    // of its copies it was.
     if let Some(existing) = &existing {
+        let approved: HashSet<(&str, &str)> = existing
+            .packages
+            .iter()
+            .filter(|(_, e)| e.build)
+            .map(|(k, e)| (crate::graph::split_peers(k).0, e.integrity.as_str()))
+            .collect();
         for (key, p) in &mut resolution.packages {
-            if let Some(e) = existing.packages.get(key) {
-                p.build |= p.scripts && e.build && e.integrity == p.integrity;
-            }
+            let base = crate::graph::split_peers(key).0;
+            p.build |= p.scripts && approved.contains(&(base, p.integrity.as_str()));
         }
     }
     let mut lock = lock::to_lockfile(&resolution, &base);
@@ -1645,6 +1661,8 @@ fn locked_package(ctx: &Ctx, dir: &Path, spec: &str) -> Result<Package> {
     let res = lock::from_lockfile(&lock, &ctx.base_for());
     let mut found: Vec<Package> =
         res.packages.into_values().filter(|p| p.local.is_none() && p.name == name && fits(p)).collect();
+    // Copies of a version for other peers are one package to patch.
+    found.dedup_by(|a, b| a.version == b.version && a.integrity == b.integrity);
     match found.len() {
         1 => Ok(found.remove(0)),
         0 => Err(fail("ENOENT", format!("{LOCKFILE} has no {spec}"))),

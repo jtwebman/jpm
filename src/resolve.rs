@@ -122,6 +122,8 @@ struct State {
 
 struct Walk<'a> {
     opts: &'a Options<'a>,
+    /// `opts.locked`, one package per key.
+    locked: Option<&'a Resolution>,
     state: Mutex<State>,
     tops: HashMap<String, Top>,
     /// Workspace name -> its record.
@@ -196,7 +198,10 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         state.records.insert(key, found);
     }
     let mut locked_versions: HashMap<String, Vec<String>> = HashMap::new();
-    for p in opts.locked.iter().flat_map(|l| l.packages.values()) {
+    // Copies of one package are one to the walk: it settles peers afresh.
+    let merged = opts.locked.map(crate::graph::merge_copies);
+    let locked = merged.as_deref();
+    for p in locked.iter().flat_map(|l| l.packages.values()) {
         if p.local.is_none() && p.source.is_none() {
             locked_versions.entry(p.name.clone()).or_default().push(p.version.clone());
         }
@@ -220,6 +225,7 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
     }
     let walk = Walk {
         opts,
+        locked,
         state: Mutex::new(state),
         tops,
         local,
@@ -334,7 +340,7 @@ impl Walk<'_> {
             // An override's path is the root's, whoever's edge it replaces.
             let source = self.source_of(&spec.fetch_spec, if over.is_some() { ROOT } else { from })?;
             let key = format!("{}@{source}", spec.name);
-            let pinned = self.opts.locked.and_then(|l| l.packages.get(&key)).map(|p| p.integrity.clone());
+            let pinned = self.locked.and_then(|l| l.packages.get(&key)).map(|p| p.integrity.clone());
             if pinned.is_some() && !fresh && !self.opts.dedupe {
                 self.visit_locked(from, &key);
             } else {
@@ -533,7 +539,7 @@ impl Walk<'_> {
     /// What a top's edge was locked to, while the top still declares it as it did then. Only a
     /// top: a package's own edges are replayed whole with it (`visit_locked`), or walked afresh.
     fn kept_commit(&self, from: &str, name: &str, range: &str) -> Option<String> {
-        let locked = self.opts.locked?;
+        let locked = self.locked?;
         let (specs, edge) = if from == ROOT {
             (locked.root.specs.as_ref(), locked.root.dependencies.get(name))
         } else {
@@ -559,7 +565,7 @@ impl Walk<'_> {
                 self.visit_locked(from, &format!("{name}@{source}"));
                 return Ok(source);
             }
-            let locked = self.opts.locked.iter().flat_map(|l| l.packages.values()).filter(|p| p.name == name);
+            let locked = self.locked.iter().flat_map(|l| l.packages.values()).filter(|p| p.name == name);
             if let Some(v) = in_range(&mut locked.filter_map(|p| p.source.as_deref())) {
                 let source = format!("{}{v}", crate::runtime::PROTOCOL);
                 self.visit_locked(from, &format!("{name}@{source}"));
@@ -630,7 +636,7 @@ impl Walk<'_> {
         if spec.kind == Kind::Tag {
             return None;
         }
-        let locked = self.opts.locked?;
+        let locked = self.locked?;
         let versions = self.locked_versions.get(&spec.name)?;
         let alias = spec.fetch_name != spec.name;
         let same = |v: &&String| {
@@ -779,7 +785,7 @@ impl Walk<'_> {
     /// A locked package and everything under its own edges. Its peer edges are not replayed:
     /// they are settled against the tree at hand.
     fn visit_locked(&self, from: &str, key: &str) {
-        let Some(locked) = self.opts.locked else { return };
+        let Some(locked) = self.locked else { return };
         let mut s = lock(&self.state);
         let mut stack = vec![(from.to_string(), key.to_string())];
         while let Some((from, key)) = stack.pop() {
@@ -983,7 +989,7 @@ impl Walk<'_> {
     }
 
     fn locked_peer(&self, from: &str, name: &str) -> Option<String> {
-        self.opts.locked?.packages.get(from)?.dependencies.get(name).cloned()
+        self.locked?.packages.get(from)?.dependencies.get(name).cloned()
     }
 
     /// The version a peer settles on out of `pool`. A top takes a fitting workspace first.
