@@ -715,6 +715,9 @@ impl Walk<'_> {
     /// Record a picked package and queue its edges, unless it is already being walked. A key
     /// is one package: `x@1.0.0` reached as the real `x` and as `npm:other@1.0.0` under the
     /// name `x` would otherwise let whichever came first stand in for the other everywhere.
+    /// A pick the lockfile has, the same bytes, is its locked self, as an edge that keeps it
+    /// has it: a tag or a fresh peer landing on a locked version never races a kept edge to
+    /// decide whether its dependencies are the lock's. `dedupe` walks registry packages afresh.
     fn visit(
         &self,
         from: &str,
@@ -727,6 +730,11 @@ impl Walk<'_> {
         let mut found = record(name, m, source);
         found.alias = alias.map(str::to_string);
         let key = found.key();
+        let locked = self.locked.and_then(|l| l.packages.get(&key));
+        if (!self.opts.dedupe || source.is_some()) && locked.is_some_and(|p| p.integrity == found.integrity) {
+            self.visit_locked(from, &key);
+            return Ok(false);
+        }
         let mut s = lock(&self.state);
         if !s.started.insert(key.clone()) {
             let integrity = m.integrity().unwrap_or_default();

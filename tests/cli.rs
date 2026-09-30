@@ -2330,3 +2330,38 @@ fn shows_progress_only_on_a_terminal() {
     assert!(!ok && text.contains("\rjpm: "), "{text:?}");
     assert!(text.ends_with("\r\x1b[K\x1b]9;4;0\x1b\\"), "{text:?}");
 }
+
+/// A locked package reached by an edge that keeps it and by a tag that picks the same version
+/// afresh is its locked self both ways: which edge the registry answers first never decides
+/// whether its dependencies are the lock's or new ones.
+#[test]
+fn a_locked_package_keeps_its_edges_whichever_edge_reaches_it_first() {
+    let r = Registry::start(vec![
+        pkg("a", "1.0.0", json!({ "dependencies": { "c": "^1.0.0" } })),
+        pkg("c", "1.0.0", json!({})),
+        pkg("v", "1.0.0", json!({ "dependencies": { "a": "^1.0.0" } })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0" } }));
+    env.ok(&["lock"]);
+    // A newer c, which a lockfile that has both versions gives a fresh walk of a.
+    r.publish(pkg("c", "1.1.0", json!({})));
+    r.publish(pkg("d", "1.0.0", json!({ "dependencies": { "c": "1.1.0" } })));
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0", "d": "1.0.0" } }));
+    env.ok(&["lock"]);
+    let before = env.read("jpm.lock");
+    assert!(before.contains("package c@1.1.0"), "{before}");
+    // The root's a by tag, and v's a by a range the lock keeps.
+    env.manifest(json!({ "dependencies": { "a": "latest", "d": "1.0.0", "v": "1.0.0" } }));
+    let mut locks = Vec::new();
+    for slow in [&["v"][..], &["a"]] {
+        r.slow_documents(slow, 300);
+        let _ = std::fs::remove_dir_all(env.store().join("metadata"));
+        env.write("jpm.lock", &before);
+        env.ok(&["lock"]);
+        locks.push(env.read("jpm.lock"));
+    }
+    r.slow_documents(&[], 0);
+    assert!(locks[0] == locks[1], "{}\nnot\n{}", locks[0], locks[1]);
+    assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["c"], "1.0.0");
+}
