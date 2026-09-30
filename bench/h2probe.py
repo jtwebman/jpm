@@ -3,15 +3,7 @@
 import asyncio, re, socket, ssl, sys, time
 import httpx
 
-names = []
-for line in open(sys.argv[1]):
-    m = re.match(r'package (.+)@([^@\s]+)$', line.strip())
-    if m and not m.group(2).startswith(('link:', 'file:', 'workspace:')):
-        names.append((m.group(1), m.group(2)))
-def url(n, v):
-    base = n.split('/')[-1]
-    return f"https://registry.npmjs.org/{n}/-/{base}-{v}.tgz"
-urls = [url(n, v) for n, v in names]
+urls = [l.strip() for l in open(sys.argv[1]) if l.strip()]
 print(len(urls), "tarballs")
 
 async def run(http2, conns, streams):
@@ -79,3 +71,4 @@ for _ in range(3):
     asyncio.run(run(True, 1, 100))
     asyncio.run(run(True, 4, 200))
     asyncio.run(run(True, 1, 600))
+    asyncio.run(run(True, 2, 128))
