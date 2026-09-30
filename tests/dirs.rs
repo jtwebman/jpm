@@ -232,3 +232,39 @@ fn installs_file_directories_that_share_a_name() {
     assert!(env.ok(&["install"]).contains("up to date"));
     env.ok(&["ci"]);
 }
+
+#[test]
+fn a_lockfile_cannot_swap_directories_that_share_a_name() {
+    let r = registry();
+    let env = Env::new(&r);
+    // Two `file:` directories named `dep`, and a workspace named `dep` the root takes by name.
+    env.manifest(json!({ "name": "root", "workspaces": ["apps/*"], "dependencies": { "dep": "workspace:*" } }));
+    env.write("apps/three/package.json", r#"{ "name": "dep", "version": "1.0.0" }"#);
+    for app in ["one", "two"] {
+        env.write(
+            &format!("apps/{app}/package.json"),
+            &format!(r#"{{ "name": "{app}", "dependencies": {{ "dep": "file:dep" }} }}"#),
+        );
+        env.write(&format!("apps/{app}/dep/package.json"), r#"{ "name": "dep", "version": "1.0.0" }"#);
+    }
+    env.ok(&["install"]);
+    leads(&env.project(), "dep", &env.project().join("apps/three"));
+    let lock = env.read("jpm.lock");
+    // Each edit points a name at another directory named alike; none reads.
+    for (from, to) in [
+        ("dep dep link:apps/one/dep", "dep dep link:apps/two/dep"),
+        ("dep dep link:apps/three", "dep dep link:apps/one/dep"),
+    ] {
+        let edited = lock.replacen(from, to, 1);
+        assert_ne!(edited, lock, "{from}");
+        env.write("jpm.lock", &edited);
+        let out = env.jpm(&["ci"]);
+        assert!(
+            !out.status.success() && stderr(&out).contains("which its specs do not name"),
+            "{to}: {}",
+            stderr(&out)
+        );
+    }
+    env.write("jpm.lock", &lock);
+    env.ok(&["ci"]);
+}

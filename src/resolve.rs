@@ -43,6 +43,8 @@ pub struct Options<'a> {
     pub prefer: Option<&'a Prefer>,
     /// `legacy-peer-deps`: a peer is linked to what the tree has, and never added.
     pub legacy_peers: bool,
+    /// pnpm's `block-exotic-subdeps`: only a top may take a git or tarball-url package.
+    pub block_exotic: bool,
     pub threads: usize,
 }
 
@@ -121,6 +123,16 @@ struct Walk<'a> {
 
 /// Values computed once however many threads ask.
 type Memo<V> = Mutex<HashMap<String, Arc<std::sync::OnceLock<Result<V>>>>>;
+
+/// `block-exotic-subdeps` refusing a package's own git or tarball-url dependency.
+pub fn exotic(from: &str, raw: &str) -> Error {
+    Error::new(
+        "EEXOTIC",
+        format!(
+            "{from} depends on {raw}: with block-exotic-subdeps, only the project may take a git or tarball-url package"
+        ),
+    )
+}
 
 fn lock(m: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -258,6 +270,9 @@ impl Walk<'_> {
                 format!("only the root and workspaces link to workspaces, so not {from}"),
             ));
         }
+        if matches!(spec.kind, Kind::Git | Kind::Tarball) && self.opts.block_exotic && !self.tops.contains_key(from) {
+            return Err(exotic(from, &spec.raw));
+        }
         let push = |version: String| {
             if let Some(list) = lock(&self.state).edges.get_mut(from) {
                 list.push(Edge { name: name.to_string(), version, optional });
@@ -293,7 +308,10 @@ impl Walk<'_> {
         if spec.kind == Kind::Git {
             // The locked commit while the spec that chose it stands: a branch is not followed
             // until package.json names another ref.
-            let source = match self.kept_commit(from, name, range).filter(|_| !fresh) {
+            // The same repository, at the pinned commit if the spec pins one: never another the
+            // lockfile names in its place.
+            let kept = self.kept_commit(from, name, range).filter(|e| !fresh && spec::names_source(&spec, "", e));
+            let source = match kept {
                 Some(source) => {
                     self.visit_locked(from, &format!("{name}@{source}"));
                     source

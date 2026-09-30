@@ -547,6 +547,30 @@ fn never_builds_or_prunes_through_a_committed_symlink() {
     }
 }
 
+/// package.json names one tarball url, and an edited jpm.lock another in its place.
+#[test]
+fn a_lockfile_cannot_move_a_tarball_dependency_to_another_url() {
+    let r = registry();
+    let good = pkg("tb", "1.0.0", json!({})).file("which.js", 0o644, "good");
+    let evil = pkg("tb", "1.0.0", json!({})).file("which.js", 0o644, "evil");
+    r.serve("/good/tb.tgz", good.tarball());
+    r.serve("/evil/tb.tgz", evil.tarball());
+    let env = Env::new(&r);
+    let (g, e) = (format!("{}/good/tb.tgz", r.url), format!("{}/evil/tb.tgz", r.url));
+    env.manifest(json!({ "dependencies": { "tb": e } }));
+    env.ok(&["install"]);
+    env.manifest(json!({ "dependencies": { "tb": g } }));
+    let lock = env.read("jpm.lock");
+    env.write("jpm.lock", &lock.replace(&format!("spec dependencies tb {e}"), &format!("spec dependencies tb {g}")));
+    let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+    let out = env.jpm(&["ci"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("which its specs do not name"), "{text}");
+    assert!(!env.exists("node_modules/tb"));
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/tb/which.js"), "good");
+}
+
 #[test]
 fn sends_tokens_only_where_they_belong() {
     let r = registry();

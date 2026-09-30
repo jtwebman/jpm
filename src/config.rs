@@ -28,6 +28,9 @@ pub struct Config {
     pub global_store: Option<bool>,
     /// `ignore-scripts`: run no install or lifecycle scripts.
     pub ignore_scripts: bool,
+    /// pnpm's `block-exotic-subdeps`: only the root and workspaces may take a package from a git
+    /// repository or a tarball url.
+    pub block_exotic_subdeps: bool,
     /// `legacy-peer-deps`: install no peers; link one only to what the tree already has.
     pub legacy_peer_deps: bool,
     /// `cafile`: a PEM file of certificates to trust in place of Mozilla's roots.
@@ -249,6 +252,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         // Any layer can turn scripts off and none can turn them back on: a cloned repo's .npmrc
         // must not undo the user's own `ignore-scripts=true`.
         ignore_scripts: layers.iter().any(|l| l.get("ignore-scripts").is_some_and(|v| v == "true")),
+        // Likewise: a cloned repo's .npmrc cannot undo the user's own `block-exotic-subdeps=true`.
+        block_exotic_subdeps: layers.iter().any(|l| l.get("block-exotic-subdeps").is_some_and(|v| v == "true")),
         legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
         cafile: set("cafile").map(PathBuf::from),
         // npm's ini reads `\n` in a quoted value as a line break.
@@ -426,6 +431,15 @@ mod tests {
         assert!(to_config(&[on.clone(), off.clone()], None).unwrap().ignore_scripts, "a later layer cannot undo it");
         assert!(to_config(&[off.clone(), on], None).unwrap().ignore_scripts);
         assert!(!to_config(&[off], None).unwrap().ignore_scripts);
+    }
+
+    #[test]
+    fn block_exotic_subdeps_only_turns_on() {
+        let on: Layer = [("block-exotic-subdeps".into(), "true".into())].into();
+        let off: Layer = [("block-exotic-subdeps".into(), "false".into())].into();
+        assert!(to_config(&[on.clone(), off.clone()], None).unwrap().block_exotic_subdeps, "a project cannot undo it");
+        assert!(!to_config(&[off], None).unwrap().block_exotic_subdeps);
+        assert!(!to_config(&[], None).unwrap().block_exotic_subdeps, "off by default");
     }
 
     #[test]

@@ -203,6 +203,14 @@ impl Ctx {
         let rules = rules::read(&dir, &manifest)?;
         rules.apply(&mut manifest)?;
         self.patched = manifest.patches.iter().map(|p| p.hash.as_str()).collect::<Vec<_>>().join(",");
+        // Only for a repository the project names itself may git ask for credentials.
+        for m in std::iter::once(&manifest).chain(workspaces.iter().map(|w| &w.manifest)) {
+            for (name, range, _) in m.edges() {
+                if let Some(s) = spec::parse_dep(&name, &range).ok().filter(|s| s.kind == Kind::Git) {
+                    crate::git::named_by_project(&s.fetch_spec);
+                }
+            }
+        }
         Ok(Project { dir, manifest, workspaces, rules })
     }
 
@@ -461,6 +469,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     ui::phase("planned");
     // A failed plan drops the fetcher, and with it what is still waiting.
     let ((workspaces, locked, lock_hash, tarballs), keys, mut resolution) = planned?;
+    let block = ctx.config().block_exotic_subdeps;
+    check_sourced(&store, &ctx.registry(&store), &dir, &resolution, block)?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
@@ -845,6 +855,63 @@ fn stale(e: Error, source: &str) -> Error {
     )
 }
 
+/// Whether an edge's version is a git repository or a tarball rather than a registry version.
+fn is_sourced(version: &str) -> bool {
+    spec::is_git(version) || version.contains("://") || version.starts_with("file:")
+}
+
+/// A package's own git or tarball dependencies, as the graph has them, checked against what the
+/// package names: a lockfile edit cannot give a package another repository, commit or url, nor
+/// one it never asked for. What a top takes was checked against its specs as the lockfile was
+/// read. With `block-exotic-subdeps`, a package takes none of its own.
+fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolution, block: bool) -> Result<()> {
+    let tops = std::iter::once(&res.root.dependencies)
+        .chain(res.packages.values().filter(|p| p.local.is_some()).map(|p| &p.dependencies));
+    let taken: HashSet<String> = tops.flat_map(|deps| deps.iter().map(|(n, v)| format!("{n}@{v}"))).collect();
+    for (id, p) in res.packages.iter().filter(|(_, p)| p.local.is_none()) {
+        let deps = p.all_deps();
+        let sourced: Vec<(&String, &String)> =
+            deps.iter().filter(|(n, v)| is_sourced(v) && !taken.contains(&format!("{n}@{v}"))).collect();
+        let Some((name, version)) = sourced.first() else { continue };
+        if block {
+            return Err(resolve::exotic(id, &format!("{name}@{version}")));
+        }
+        // What it ships says, and what the registry says of it: the walk reads the latter.
+        store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
+        let text = std::fs::read_to_string(store.file(&p.integrity, "package.json")?).unwrap_or_default();
+        let shipped = Manifest::from_json(&text).ok();
+        let listed = || {
+            let name = shipped.as_ref().map_or(p.name.as_str(), |m| m.name.as_str());
+            if p.source.is_some() { None } else { registry.manifest(name, &p.version).ok() }
+        };
+        let names = |m: &Manifest, name: &str, version: &str| {
+            let ranges = [&m.dependencies, &m.optional_dependencies, &m.peer_dependencies];
+            ranges.iter().filter_map(|r| r.get(name)).any(|range| {
+                let range = match rules::find(&res.root.overrides, crate::graph::split_key(id), name, range) {
+                    Some(Some(value)) => value,
+                    Some(None) => return false,
+                    None => range,
+                };
+                spec::parse_dep(name, range).is_ok_and(|s| spec::names_source(&s, "", version))
+            })
+        };
+        let mut registry_says = None;
+        for (name, version) in sourced {
+            if shipped.as_ref().is_some_and(|m| names(m, name, version)) {
+                continue;
+            }
+            let listed = registry_says.get_or_insert_with(listed);
+            if !listed.as_ref().is_some_and(|m| names(m, name, version)) {
+                return Err(fail(
+                    "ELOCK",
+                    format!("{id} depends on {name}@{version} in {LOCKFILE}, which its package.json does not name"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Each local tarball the lockfile names, with the stamp this command took before checking it.
 fn files_of(ctx: &Ctx, lock: &Lockfile) -> BTreeMap<String, Option<Stamp>> {
     let stamped = ctx.stamped.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1080,6 +1147,7 @@ fn resolve_lock(
         on_pick,
         prefer,
         legacy_peers: ctx.config().legacy_peer_deps || prefer.is_some_and(|p| p.legacy_peers),
+        block_exotic: ctx.config().block_exotic_subdeps,
         threads: pool::network_threads(),
     };
     let mut resolution = resolve::resolve(&project.manifest, &options(locked.as_ref()))?;
@@ -1194,7 +1262,8 @@ fn tops(project: &Project) -> Result<Vec<Workspace>> {
 /// to its commit) and its integrity.
 fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Option<&str>) -> Result<Arc<Manifest>> {
     let git = spec::is_git(source);
-    let resolved = if git { crate::git::resolve(source, ctx.config().offline)? } else { source.to_string() };
+    let resolved =
+        if git { crate::git::resolve(source, ctx.config().offline, &store.tmp_dir())? } else { source.to_string() };
     let source = resolved.as_str();
     let at = tarball_of(dir, source, Some(source));
     let stamp = match (&at, pinned) {
@@ -1397,6 +1466,10 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
         .zip(&bare)
         .map(|(s, b)| if b.is_none() { spec::parse_spec(s).map(Some) } else { Ok(None) })
         .collect::<Result<_>>()?;
+    let typed = parsed.iter().flatten().filter(|s| s.kind == Kind::Git).map(|s| &s.fetch_spec);
+    for source in bare.iter().flatten().chain(typed).filter(|s| spec::is_git(s)) {
+        crate::git::named_by_project(source);
+    }
     let mut ctx = Ctx::open(opts, false)?;
     let exact = ctx.opts.exact || ctx.config().save_exact;
     let mut edit = edit_target(&mut ctx, "add")?;
