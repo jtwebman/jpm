@@ -19,15 +19,24 @@ jobs:
         run: |
           source bench/ab.env
           for v in $REFS; do
-            tag=${v%%=*} ref=${v#*=}
-            git worktree add --detach ../build-$tag $ref
-            (cd ../build-$tag && CARGO_TARGET_DIR=$PWD/../target-$tag cargo build --release 2>&1 | tail -1)
-            echo "$tag=$ref $(git rev-parse --short $ref) $(stat -c %s ../target-$tag/release/jpm) bytes"
+            ref=${v#*=}; ref=${ref%%,*}; dir=$(echo $ref | tr / _)
+            [ -d ../build-$dir ] && continue
+            git worktree add --detach ../build-$dir $ref
+            (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release 2>&1 | tail -1)
+            echo "$ref $(git rev-parse --short $ref) $(stat -c %s ../target-$dir/release/jpm) bytes"
           done | tee sizes.txt
       - name: ab
         run: |
           source bench/ab.env
-          bins=(); for v in $REFS; do tag=${v%%=*}; bins+=("$tag=$PWD/../target-$tag/release/jpm"); done
+          # tag=ref,VAR=value runs that ref's build with that environment, through a wrapper.
+          bins=(); for v in $REFS; do
+            tag=${v%%=*} rest=${v#*=}; ref=${rest%%,*}; bin=$PWD/../target-$(echo $ref | tr / _)/release/jpm
+            case $rest in *,*) w=$PWD/../wrap-$tag; printf '#!/bin/sh
+export %s
+exec %s "$@"
+' "${rest#*,}" "$bin" > $w; chmod +x $w; bin=$w ;; esac
+            bins+=("$tag=$bin")
+          done
           bash bench/ab.sh $N $PHASES $FIXTURES "${bins[@]}" | tee ab.out
           { echo "## A/B on ubuntu-latest ($(nproc) cores)"; echo; sed 's/$/  /' sizes.txt; echo; grep '^|' ab.out; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
