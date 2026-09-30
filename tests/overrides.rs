@@ -231,7 +231,7 @@ fn says_what_it_does_not_read() {
         "minimumReleaseAge: 1440\npublicHoistPattern: ['@types/*']\npeerDependencyRules:\n  ignoreMissing: [x]\n",
     );
     let out = env.ok(&["install"]);
-    assert!(out.contains("pnpm-workspace.yaml sets minimumReleaseAge, which jpm does not read"), "{out}");
+    assert!(!out.contains("minimumReleaseAge"), "read as min-release-age: {out}");
     assert!(out.contains("pnpm-workspace.yaml sets publicHoistPattern, which jpm does not read"), "{out}");
     assert!(!out.contains("peerDependencyRules"), "only settings that change the tree: {out}");
 }

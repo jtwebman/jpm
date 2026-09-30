@@ -1704,6 +1704,40 @@ fn keeps_new_versions_an_imported_lockfile_names() {
 }
 
 #[test]
+fn reads_the_release_age_in_pnpm_workspace_yaml() {
+    let at = |date: &str| json!({ "_published": date });
+    let r = Registry::start(vec![
+        pkg("b", "1.0.0", json!({})),
+        pkg("b", "1.1.0", at("2025-01-01T00:00:00.000Z")),
+        pkg("@s/fresh", "1.0.0", at("2999-01-01T00:00:00.000Z")),
+    ]);
+    let env = Env::new(&r);
+    // The default age, one day, and nothing from the environment: what the file says counts.
+    let lock = || env.command(&["lock"]).env_remove("npm_config_min_release_age").output().unwrap();
+    // Ten years (in minutes) holds b 1.1.0 back; `@s/*` lets a package of that scope in however new.
+    env.write("pnpm-workspace.yaml", "minimumReleaseAge: 5256000\nminimumReleaseAgeExclude:\n  - '@s/*'\n");
+    env.manifest(json!({ "dependencies": { "b": "^1.0.0", "@s/fresh": "^1.0.0" } }));
+    let out = lock();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{text}");
+    assert!(!text.contains("minimumReleaseAge"), "it is read now: {text}");
+    let packages = &env.lock()["packages"];
+    assert!(packages.get("b@1.0.0").is_some() && packages.get("@s/fresh@1.0.0").is_some(), "{packages}");
+    // A repository cannot let in newer versions than the user's setting (here the default): 0 is
+    // ignored with a warning, and the exclude list alone still works.
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    env.write("pnpm-workspace.yaml", "minimumReleaseAge: 0\n");
+    let out = lock();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && text.contains("min-release-age"), "{text}");
+    assert!(text.contains("pnpm-workspace.yaml sets minimumReleaseAge, which lets in newer versions"), "{text}");
+    env.write("pnpm-workspace.yaml", "minimumReleaseAge: 0\nminimumReleaseAgeExclude: ['@s/*']\n");
+    let out = lock();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.lock()["packages"].get("b@1.1.0").is_some());
+}
+
+#[test]
 fn legacy_peer_deps_links_only_peers_the_tree_has() {
     let r = registry();
     let env = Env::new(&r);

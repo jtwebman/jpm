@@ -348,6 +348,16 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
             });
         }
     }
+    // pnpm-workspace.yaml's release age comes with the repository too: under the project's
+    // .npmrc, and held to the same rule.
+    let mut pnpm = pnpm_layer(dir);
+    if restrict_project(&mut pnpm, &[global.clone(), user.clone()])?.iter().any(|k| k == "min-release-age") {
+        crate::ui::warn(&format!(
+            "{} sets minimumReleaseAge, which lets in newer versions than ~/.npmrc, the global npmrc, \
+             npm_config_* or a flag does; ignored",
+            dir.join(crate::rules::PNPM_WORKSPACE).display()
+        ));
+    }
     let mut cli = Layer::new();
     if let Some(age) = flags.min_release_age {
         cli.insert("min-release-age".into(), age.to_string());
@@ -376,12 +386,34 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     if let Some(v) = flags.verify_node_signature {
         cli.insert("verify-node-signature".into(), v.to_string());
     }
-    let mut config = to_config(&[global, user, project, from_env, cli], flags.registry.as_deref())?;
+    let mut config = to_config(&[global, user, pnpm, project, from_env, cli], flags.registry.as_deref())?;
     // A relative cafile is from where jpm runs, as npm takes it.
     config.cafile = config.cafile.map(|f| path(&f.to_string_lossy()));
     crate::http::configure(&config)?;
     crate::runtime::configure(config.node_mirror.as_deref(), config.verify_node_signature);
     Ok(config)
+}
+
+/// pnpm-workspace.yaml's `minimumReleaseAge` (minutes) and `minimumReleaseAgeExclude` (names and
+/// patterns), as the .npmrc settings they are: `min-release-age` (days) and its exclude list.
+fn pnpm_layer(dir: &Path) -> Layer {
+    use crate::json::Value;
+    let mut layer = Layer::new();
+    let Ok(text) = std::fs::read_to_string(dir.join(crate::rules::PNPM_WORKSPACE)) else { return layer };
+    let Ok(Value::Object(y)) = crate::foreign::read_yaml(text.trim_start_matches('\u{feff}')) else { return layer };
+    let minutes = match y.get("minimumReleaseAge") {
+        Some(Value::Number(n) | Value::String(n)) => n.trim().parse::<f64>().ok().filter(|m| *m >= 0.0),
+        _ => None,
+    };
+    if let Some(minutes) = minutes {
+        layer.insert("min-release-age".into(), (minutes / 1440.0).to_string());
+    }
+    let exclude = y.get("minimumReleaseAgeExclude").and_then(Value::as_array).into_iter().flatten();
+    let names: Vec<&str> = exclude.filter_map(Value::as_str).collect();
+    if !names.is_empty() {
+        layer.insert("min-release-age-exclude".into(), names.join(","));
+    }
+    layer
 }
 
 /// What a project's .npmrc may not set: a cloned repository could route every request, and the
