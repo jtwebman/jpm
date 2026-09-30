@@ -227,6 +227,17 @@ fn settles_peers_against_the_tree() {
     let lock = env.lock();
     assert_eq!(lock["packages"]["plugin@1.0.0"]["dependencies"]["host"], "1.0.0", "the root's host, not the newest");
     assert!(env.read("node_modules/plugin/../host/index.js").contains("host@1.0.0"));
+
+    // The root's dev host too: a second copy would be a second React. It then ships.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "plugin": "1" }, "devDependencies": { "host": "1.0.0" } }));
+    env.ok(&["install"]);
+    let lock = env.lock();
+    assert_eq!(lock["packages"]["plugin@1.0.0"]["dependencies"]["host"], "1.0.0", "{lock}");
+    assert_eq!(lock["packages"].as_object().unwrap().keys().filter(|k| k.starts_with("host@")).count(), 1);
+    let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+    env.ok(&["install", "--production"]);
+    assert!(env.read("node_modules/plugin/../host/index.js").contains("host@1.0.0"));
 }
 
 #[test]
