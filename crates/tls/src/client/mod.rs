@@ -8,7 +8,6 @@ mod tls12;
 mod tls13;
 
 use std::io::{self, Read, Write};
-use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::x509::Anchor;
 use record::{ALERT, APPLICATION_DATA, Conn, HANDSHAKE, MAX_PLAIN};
@@ -118,96 +117,6 @@ pub struct Stream<S> {
     closed: bool,
     /// A fatal error has happened: the connection is unusable.
     failed: bool,
-    /// Where writes go once `split`.
-    writer: Option<Writer>,
-}
-
-/// The write side of a split stream: records sealed under the client's key, sent on a second
-/// handle to the connection. Clones share it, and a lock, so any thread can send whole records.
-#[derive(Clone)]
-pub struct Writer(Arc<Mutex<WriteSide>>);
-
-struct WriteSide {
-    conn: Conn<Box<dyn Write + Send>>,
-    secrets: Option<tls13::Secrets>,
-    failed: bool,
-}
-
-/// What a handshake message after the handshake asks the write side to send.
-#[derive(Clone, Copy)]
-enum Reply {
-    /// Our own KeyUpdate, then the next key (RFC 8446 section 4.6.3).
-    KeyUpdate,
-    /// A warning that renegotiation is refused (RFC 5746 section 4.2).
-    NoRenegotiation,
-}
-
-/// Send `r` on `conn`, whose client secret `secrets` holds in TLS 1.3.
-fn reply<W: Write>(conn: &mut Conn<W>, secrets: &mut Option<tls13::Secrets>, r: Reply) -> Result<()> {
-    match (r, secrets) {
-        (Reply::KeyUpdate, Some(s)) => {
-            conn.send(HANDSHAKE, &[24, 0, 0, 1, 0])?;
-            s.client = tls13::next_secret(s.hash, &s.client);
-            conn.write = Some(tls13::keys(s.hash, s.aead, &s.client));
-            Ok(())
-        }
-        (Reply::KeyUpdate, None) => Err(Error::Tls(alert::INTERNAL_ERROR, "tls: KeyUpdate without TLS 1.3")),
-        (Reply::NoRenegotiation, _) => conn.send(ALERT, &[1, alert::NO_RENEGOTIATION]),
-    }
-}
-
-impl Writer {
-    fn lock(&self) -> std::sync::MutexGuard<'_, WriteSide> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn reply(&self, r: Reply) -> Result<()> {
-        let w = &mut *self.lock();
-        let got = reply(&mut w.conn, &mut w.secrets, r);
-        w.failed |= got.is_err();
-        got
-    }
-
-    /// Tell the peer why the connection failed; nothing is sent after that.
-    fn fail(&self, e: Error) -> io::Error {
-        let mut w = self.lock();
-        w.failed = true;
-        w.conn.fail(e)
-    }
-}
-
-impl Write for &Writer {
-    /// Up to four full records at a time, sealed and written in one go.
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut w = self.lock();
-        if w.failed {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "tls: connection failed earlier"));
-        }
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        let n = buf.len().min(4 * MAX_PLAIN);
-        if let Err(e) = w.conn.send(APPLICATION_DATA, &buf[..n]) {
-            // Part of a record may have gone out: nothing more can be sent after it.
-            w.failed = true;
-            return Err(w.conn.fail(e));
-        }
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.lock().conn.io.flush()
-    }
-}
-
-impl Write for Writer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        (&*self).write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        (&*self).flush()
-    }
 }
 
 impl<S: Read + Write> Stream<S> {
@@ -217,9 +126,7 @@ impl<S: Read + Write> Stream<S> {
     pub fn connect(io: S, host: &str, config: &Config) -> io::Result<Self> {
         let mut conn = Conn::new(io);
         match hello::handshake(&mut conn, host, config) {
-            Ok(done) => {
-                Ok(Self { conn, alpn: done.alpn, secrets: done.secrets, closed: false, failed: false, writer: None })
-            }
+            Ok(done) => Ok(Self { conn, alpn: done.alpn, secrets: done.secrets, closed: false, failed: false }),
             Err(e) => Err(conn.fail(e)),
         }
     }
@@ -229,46 +136,11 @@ impl<S: Read + Write> Stream<S> {
         self.alpn.as_deref()
     }
 
-    /// The connection underneath, such as the `TcpStream` to clone for `split`.
-    pub fn get_ref(&self) -> &S {
-        &self.conn.io
-    }
-
-    /// Send from here on through the returned `Writer`, on `w`: a second handle to the same
-    /// connection, such as a `TcpStream::try_clone`. One thread can then wait on reads while
-    /// others write. The stream keeps reading, and answers the server's KeyUpdate through the
-    /// writer; its own writes go through the writer too.
-    pub fn split(&mut self, w: impl Write + Send + 'static) -> Writer {
-        if let Some(w) = &self.writer {
-            return w.clone();
-        }
-        let mut conn = Conn::writer(Box::new(w) as Box<dyn Write + Send>);
-        conn.write = self.conn.write.take();
-        conn.tls13 = self.conn.tls13;
-        conn.explicit_nonce = self.conn.explicit_nonce;
-        let secrets = self.secrets.clone();
-        let w = Writer(Arc::new(Mutex::new(WriteSide { conn, secrets, failed: self.failed })));
-        self.writer = Some(w.clone());
-        w
-    }
-
     fn fail(&mut self, e: Error) -> io::Error {
-        if matches!(&e, Error::Io(_)) {
-            return e.into();
+        if !matches!(&e, Error::Io(_)) {
+            self.failed = true;
         }
-        self.failed = true;
-        match &self.writer {
-            // The alert goes out under the write key, which the writer holds now.
-            Some(w) => w.fail(e),
-            None => self.conn.fail(e),
-        }
-    }
-
-    fn reply(&mut self, r: Reply) -> Result<()> {
-        match &self.writer {
-            Some(w) => w.reply(r),
-            None => reply(&mut self.conn, &mut self.secrets, r),
-        }
+        self.conn.fail(e)
     }
 
     /// Read one record and act on it. Application data waits in `conn.plaintext()`.
@@ -325,10 +197,15 @@ impl<S: Read + Write> Stream<S> {
                 }
                 s.server = tls13::next_secret(s.hash, &s.server);
                 self.conn.read = Some(tls13::keys(s.hash, s.aead, &s.server));
-                if requested { self.reply(Reply::KeyUpdate) } else { Ok(()) }
+                if requested {
+                    self.conn.send(HANDSHAKE, &[KEY_UPDATE, 0, 0, 1, 0])?;
+                    s.client = tls13::next_secret(s.hash, &s.client);
+                    self.conn.write = Some(tls13::keys(s.hash, s.aead, &s.client));
+                }
+                Ok(())
             }
             // No renegotiation (RFC 5746 section 4.2): say so with a warning and go on.
-            (None, HELLO_REQUEST) if body.is_empty() => self.reply(Reply::NoRenegotiation),
+            (None, HELLO_REQUEST) if body.is_empty() => self.conn.send(ALERT, &[1, alert::NO_RENEGOTIATION]),
             _ => Err(Error::Tls(alert::UNEXPECTED_MESSAGE, "tls: unexpected handshake message after the handshake")),
         }
     }
@@ -364,9 +241,6 @@ impl<S: Read + Write> Read for Stream<S> {
 impl<S: Read + Write> Write for Stream<S> {
     /// Up to four full records at a time, sealed and written in one go.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(w) = &self.writer {
-            return (&*w).write(buf);
-        }
         if self.failed {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "tls: connection failed earlier"));
         }
@@ -383,10 +257,7 @@ impl<S: Read + Write> Write for Stream<S> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match &self.writer {
-            Some(w) => (&*w).flush(),
-            None => self.conn.io.flush(),
-        }
+        self.conn.io.flush()
     }
 }
 
@@ -536,44 +407,11 @@ mod tests {
         let mut c = conn(peer.io.output, &server, &client);
         c.io.fail_writes = true;
         let secrets = Secrets { hash: Sha256, aead: Aes128Gcm, client, server };
-        let mut s = Stream { conn: c, alpn: None, secrets: Some(secrets), closed: false, failed: false, writer: None };
+        let mut s = Stream { conn: c, alpn: None, secrets: Some(secrets), closed: false, failed: false };
         assert_eq!(s.read(&mut [0; 16]).unwrap_err().kind(), io::ErrorKind::TimedOut);
         s.conn.io.fail_writes = false;
         assert!(s.write(b"GET").is_err());
         assert!(s.conn.io.output.is_empty());
-    }
-
-    /// Writes that fail, for a split stream's writer.
-    struct Broken;
-
-    impl Write for Broken {
-        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::TimedOut, "write timed out"))
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// Split, the KeyUpdate answer goes through the writer; when it cannot be sent, both halves
-    /// have failed.
-    #[test]
-    fn key_update_reply_fails_through_the_writer() {
-        let server = derive(Sha256, &[1; 32], b"s", b"");
-        let client = derive(Sha256, &[2; 32], b"c", b"");
-        let mut peer = conn(Vec::new(), &client, &server);
-        peer.send(HANDSHAKE, &[24, 0, 0, 1, 1]).ok().unwrap();
-
-        let c = conn(peer.io.output, &server, &client);
-        let secrets = Secrets { hash: Sha256, aead: Aes128Gcm, client, server };
-        let mut s = Stream { conn: c, alpn: None, secrets: Some(secrets), closed: false, failed: false, writer: None };
-        let w = s.split(Broken);
-        assert!(s.conn.write.is_none(), "the write key moved to the writer");
-        assert_eq!(s.read(&mut [0; 16]).unwrap_err().kind(), io::ErrorKind::TimedOut);
-        assert!(s.failed);
-        assert_eq!((&w).write(b"GET").unwrap_err().kind(), io::ErrorKind::InvalidData);
-        assert!(s.write(b"GET").is_err());
-        assert!(s.conn.io.output.is_empty(), "nothing went out on the reading handle");
     }
 }
 

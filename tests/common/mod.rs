@@ -1,6 +1,6 @@
 //! A registry on localhost for end-to-end tests: packuments, per-version manifests and
-//! tarballs made in memory, served over HTTP/1.1 with keep-alive (and over TLS, HTTP/2 when the
-//! client asks for it by ALPN), plus helpers to run jpm against it with a private store and home.
+//! tarballs made in memory, served over HTTP/1.1 with keep-alive (plain or over TLS),
+//! plus helpers to run jpm against it with a private store and home.
 
 #![allow(dead_code)]
 
@@ -126,8 +126,6 @@ pub struct Registry {
     /// does, and how many are answered at once (see `Flight`).
     busy: Arc<AtomicUsize>,
     flight: Arc<Flight>,
-    /// Requests served over HTTP/2.
-    pub h2: Arc<AtomicUsize>,
 }
 
 /// Tarball requests in flight at once, counting only those from the `from`th on (0 is the first):
@@ -168,7 +166,7 @@ impl Registry {
                 std::thread::spawn(move || serve(stream, &server));
             }
         });
-        Self { url, pkgs, files, hits, requests, delay, slow, busy, flight, h2: Arc::default() }
+        Self { url, pkgs, files, hits, requests, delay, slow, busy, flight }
     }
 
     /// The next `n` tarball requests are answered 503 at once.
@@ -220,7 +218,7 @@ impl Registry {
 pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut config = rustls::ServerConfig::builder_with_provider(provider)
+    let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
@@ -229,7 +227,6 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
         )
         .unwrap();
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     let config = Arc::new(config);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("https://{}", listener.local_addr().unwrap());
@@ -244,7 +241,6 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
         busy: Arc::default(),
         flight: Arc::default(),
     };
-    let h2 = Arc::new(AtomicUsize::new(0));
     let registry = Registry {
         url,
         pkgs: server.pkgs.clone(),
@@ -255,19 +251,12 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
         slow: server.slow.clone(),
         busy: server.busy.clone(),
         flight: server.flight.clone(),
-        h2: h2.clone(),
     };
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let (server, config, h2) = (server.clone(), config.clone(), h2.clone());
+            let (server, config) = (server.clone(), config.clone());
             std::thread::spawn(move || {
-                let mut tls = rustls::StreamOwned::new(rustls::ServerConnection::new(config).unwrap(), stream);
-                while tls.conn.is_handshaking() {
-                    if tls.conn.complete_io(&mut tls.sock).is_err() {
-                        return;
-                    }
-                }
-                if tls.conn.alpn_protocol() == Some(b"h2") { serve_h2(tls, &server, &h2) } else { serve(tls, &server) }
+                serve(rustls::StreamOwned::new(rustls::ServerConnection::new(config).unwrap(), stream), &server)
             });
         }
     });
@@ -366,60 +355,6 @@ fn serve(stream: impl Read + Write, server: &Server) {
         server.sent(counted);
         if sent.is_err() {
             return;
-        }
-    }
-}
-
-/// HTTP/2, one request at a time, built on jpm-http's frames and HPACK. It keeps no windows:
-/// the client's (2 MiB a stream, 8 MiB the connection) hold every body a test serves.
-fn serve_h2(mut s: impl Read + Write, server: &Server, served: &AtomicUsize) {
-    use jpm_http::{frame, hpack};
-    let mut preface = [0; 24];
-    if s.read_exact(&mut preface).is_err() || preface[..] != *frame::PREFACE {
-        return;
-    }
-    let mut out = Vec::new();
-    frame::put(&mut out, frame::SETTINGS, 0, 0, &[]);
-    let (mut decoder, mut block, mut buf) = (hpack::Decoder::default(), Vec::new(), Vec::new());
-    loop {
-        if s.write_all(&out).and_then(|()| s.flush()).is_err() {
-            return;
-        }
-        out.clear();
-        let Ok(Some(Ok(h))) = frame::read(&mut s, 1 << 24, &mut buf) else { return };
-        match h.typ {
-            frame::SETTINGS if h.flags & frame::ACK == 0 => frame::put(&mut out, frame::SETTINGS, frame::ACK, 0, &[]),
-            frame::PING if h.flags & frame::ACK == 0 => frame::put(&mut out, frame::PING, frame::ACK, 0, &buf),
-            frame::HEADERS | frame::CONTINUATION => {
-                if h.typ == frame::HEADERS {
-                    block.clear();
-                }
-                block.extend_from_slice(&buf);
-                if h.flags & frame::END_HEADERS == 0 {
-                    continue;
-                }
-                let Ok(fields) = decoder.decode(&block, 1 << 20) else { return };
-                let field = |name: &[u8]| {
-                    fields.iter().find(|(n, _)| n == name).map(|(_, v)| String::from_utf8_lossy(v).into_owned())
-                };
-                let path = field(b":path").unwrap_or_default();
-                let auth = field(b"authorization").map(|a| format!(" authorization: {a}")).unwrap_or_default();
-                served.fetch_add(1, Ordering::Relaxed);
-                let (status, bytes, counted) = server.reply(&path, &auth);
-                let mut head = Vec::new();
-                hpack::encode(&mut head, ":status", &status[..3], false);
-                hpack::encode(&mut head, "content-length", &bytes.len().to_string(), false);
-                hpack::encode(&mut head, "content-type", "application/json", false);
-                let end = if bytes.is_empty() { frame::END_STREAM } else { 0 };
-                frame::put(&mut out, frame::HEADERS, frame::END_HEADERS | end, h.stream, &head);
-                let chunks: Vec<&[u8]> = bytes.chunks(frame::DEFAULT_MAX_FRAME).collect();
-                for (i, chunk) in chunks.iter().enumerate() {
-                    let end = if i + 1 == chunks.len() { frame::END_STREAM } else { 0 };
-                    frame::put(&mut out, frame::DATA, end, h.stream, chunk);
-                }
-                server.sent(counted);
-            }
-            _ => {}
         }
     }
 }
