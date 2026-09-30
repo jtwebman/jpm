@@ -194,6 +194,23 @@ impl Counts {
     }
 }
 
+/// What an entry links a dependency to: another entry, or the directory of a workspace (or the
+/// root) that a peer of the entry resolved to, as pnpm links nuxt's `@nuxt/schema` peer.
+#[derive(Clone, Copy)]
+enum Dep<'a> {
+    Entry(&'a Entry<'a>),
+    Dir(&'a Package),
+}
+
+impl Dep<'_> {
+    fn pkg(&self) -> &Package {
+        match self {
+            Dep::Entry(e) => e.pkg,
+            Dep::Dir(p) => p,
+        }
+    }
+}
+
 struct Entry<'a> {
     pkg: &'a Package,
     key: String,
@@ -339,9 +356,19 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
     // An entry that lacks an optional package, or reaches one that does, stays in the project:
     // a global copy would be incomplete for everyone else.
-    // So does one being built, and every entry that reaches it.
-    if opts.global.is_some() && !(dropped.is_empty() && opts.built.is_empty()) {
+    // So does one being built, and one whose peer is a workspace of this project, and every
+    // entry that reaches either.
+    let to_dir = |p: &Package| {
+        let dir = |(n, v): (&String, &String)| res.packages.get(&format!("{n}@{v}")).is_some_and(|d| d.local.is_some());
+        p.peer_dependencies.as_ref().is_some_and(|peers| p.all_deps().iter().any(|e| peers.contains_key(e.0) && dir(e)))
+    };
+    let peering: Vec<String> = match opts.global {
+        Some(_) => wanted.iter().filter(|(_, e)| to_dir(e.pkg)).map(|(id, _)| id.clone()).collect(),
+        None => Vec::new(),
+    };
+    if opts.global.is_some() && !(dropped.is_empty() && opts.built.is_empty() && peering.is_empty()) {
         let mut local: HashSet<String> = opts.built.iter().filter(|id| wanted.contains_key(*id)).cloned().collect();
+        local.extend(peering);
         let missing: HashSet<&str> = dropped.iter().map(String::as_str).collect();
         let mut changed = true;
         while changed {
@@ -510,8 +537,16 @@ impl Linker<'_> {
 
     /// A dep link's target: every entry sits at the same depth, so from `<entry>/node_modules`
     /// it is always `../../<home>`, one `..` more from under a scope directory. A project entry
-    /// reaches a global one by its full path.
-    fn dep_target(&self, entry: &Entry, name: &str, dep: &Entry) -> String {
+    /// reaches a global one by its full path, and a workspace by the way up to it.
+    fn dep_target(&self, entry: &Entry, name: &str, dep: Dep) -> String {
+        let dep = match dep {
+            Dep::Entry(e) => e,
+            Dep::Dir(p) => {
+                let at = self.root_of(entry).join(&entry.key).join("node_modules").join(name);
+                let dir = self.opts.dir.join(p.local.as_deref().unwrap_or_default());
+                return relative(at.parent().unwrap_or(&at), &dir).to_string_lossy().into_owned();
+            }
+        };
         if let Some(global) = self.global_of(dep).filter(|_| !entry.shared) {
             return global.join(&dep.home).to_string_lossy().into_owned();
         }
@@ -521,16 +556,20 @@ impl Linker<'_> {
 
     /// An entry's deps that are linked. A self-dep would collide with its own directory: pnpm
     /// leaves it out too, and the package requires itself.
-    fn deps_of(&self, pkg: &Package) -> Result<Vec<(String, &Entry<'_>)>> {
+    fn deps_of(&self, pkg: &Package) -> Result<Vec<(String, Dep<'_>)>> {
         let mut out = Vec::new();
         for (name, version) in pkg.all_deps() {
             let id = format!("{name}@{version}");
-            // Only a top reaches a workspace, so no entry links out of `.jpm`.
-            if self.res.packages.get(&id).is_some_and(|p| p.local.is_some()) {
-                return Err(fail(format!("{}@{} depends on the workspace {name}", pkg.name, pkg.version)));
+            // Only a peer reaches a workspace from an entry: a package never names a path.
+            if let Some(dir) = self.res.packages.get(&id).filter(|p| p.local.is_some()) {
+                if !pkg.peer_dependencies.as_ref().is_some_and(|p| p.contains_key(&name)) {
+                    return Err(fail(format!("{}@{} depends on the workspace {name}", pkg.name, pkg.version)));
+                }
+                out.push((name, Dep::Dir(dir)));
+                continue;
             }
             if let Some(dep) = self.wanted.get(&id).filter(|d| name != pkg.dir_name() && self.present(d)) {
-                out.push((name, dep));
+                out.push((name, Dep::Entry(dep)));
             }
         }
         Ok(out)
@@ -637,7 +676,7 @@ impl Linker<'_> {
             return Ok(false);
         }
         let deps = self.deps_of(entry.pkg)?;
-        if !deps.iter().all(|(name, dep)| sys::links_to(&nm.join(name), &self.dep_target(entry, name, dep))) {
+        if !deps.iter().all(|(name, dep)| sys::links_to(&nm.join(name), &self.dep_target(entry, name, *dep))) {
             return Ok(false);
         }
         let bin_dir = nm.join(".bin");
@@ -699,7 +738,7 @@ impl Linker<'_> {
                     .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
             }
             let at = nm.join(name);
-            sys::symlink_dir(&self.dep_target(entry, name, dep), &at)
+            sys::symlink_dir(&self.dep_target(entry, name, *dep), &at)
                 .map_err(|e| Error::io(&e, format!("cannot link {}", at.display())).with_code("ELINK"))?;
         }
         let bins = bins_of(&deps);
@@ -993,15 +1032,15 @@ impl Linker<'_> {
     }
 }
 
-fn dep_pkg<'a>(deps: &'a [(String, &Entry)], name: &str) -> Option<&'a Package> {
-    deps.iter().find(|(n, _)| n == name).map(|(_, e)| e.pkg)
+fn dep_pkg<'a>(deps: &'a [(String, Dep)], name: &str) -> Option<&'a Package> {
+    deps.iter().find(|(n, _)| n == name).map(|(_, d)| d.pkg())
 }
 
 /// Bin name -> (dep name, target). Name collisions are last-wins, as npm's are.
-fn bins_of(deps: &[(String, &Entry)]) -> BTreeMap<String, (String, String)> {
+fn bins_of(deps: &[(String, Dep)]) -> BTreeMap<String, (String, String)> {
     let mut out = BTreeMap::new();
     for (name, dep) in deps {
-        for (bin, target) in &dep.pkg.bin {
+        for (bin, target) in &dep.pkg().bin {
             out.insert(bin.clone(), (name.clone(), target.clone()));
         }
     }

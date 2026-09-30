@@ -273,3 +273,201 @@ fn a_long_peer_suffix_never_reaches_a_path() {
         );
     }
 }
+
+/// A monorepo whose workspace `schema` is at `version`, with the registry's plugin (a peer on
+/// schema) and wrap (which depends on plugin) at the root and in the workspace `app`.
+fn schema_repo(env: &Env, version: &str) {
+    monorepo(
+        env,
+        json!({ "plugin": "1.0.0", "wrap": "1.0.0", "schema": "workspace:*" }),
+        &[("app", json!({ "wrap": "1.0.0", "schema": "workspace:*" }))],
+    );
+    let m = json!({ "name": "schema", "version": version });
+    env.write("packages/schema/package.json", &m.to_string());
+    env.write("packages/schema/index.js", &format!("module.exports = 'schema@{version}'"));
+}
+
+fn schema_registry() -> Registry {
+    Registry::start(vec![
+        requiring("plugin", "1.0.0", "schema", json!({ "peerDependencies": { "schema": "^1" } })),
+        requiring("wrap", "1.0.0", "plugin", json!({ "dependencies": { "plugin": "1.0.0" } })),
+    ])
+}
+
+/// Where a project's link leads, resolved.
+fn real(env: &Env, rel: &str) -> std::path::PathBuf {
+    std::fs::canonicalize(env.path(rel)).unwrap()
+}
+
+#[test]
+fn a_registry_package_takes_its_peer_from_a_workspace() {
+    // nuxt's root has @nuxt/cli, whose peer @nuxt/schema is the workspace packages/schema: pnpm
+    // links the one to the other, `(@nuxt/schema@packages+schema)`, in its range or out of it.
+    let r = schema_registry();
+    for store in ["global-store=true", "global-store=false"] {
+        for version in ["1.2.0", "2.0.0"] {
+            let env = Env::new(&r);
+            env.write(".npmrc", &format!("{store}\n"));
+            schema_repo(&env, version);
+            let out = env.ok(&["install"]);
+            let unmet = format!("unmet peer schema@^1 of plugin@1.0.0: linked to the schema@{version} above it");
+            assert_eq!(out.contains(&unmet), version == "2.0.0", "{store} {version}: {out}");
+            let lock = env.lock();
+            assert_eq!(lock["packages"]["plugin@1.0.0"]["dependencies"]["schema"], "link:packages/schema");
+            let want = format!("schema@{version}");
+            assert_eq!(node_require(&env, ".", "plugin"), want, "{store}");
+            assert_eq!(node_require(&env, ".", "wrap"), want, "{store}");
+            assert_eq!(node_require(&env, "packages/app", "wrap"), want, "{store}");
+            // In the project, not the global store: another project's schema is another package.
+            // So is wrap, which reaches it.
+            let entries = real(&env, "node_modules/.jpm");
+            for dep in ["plugin", "wrap"] {
+                assert!(real(&env, &format!("node_modules/{dep}")).starts_with(&entries), "{store} {dep}");
+            }
+            assert!(env.ok(&["install"]).contains("up to date"), "{store} {version}");
+            // Relinked, plugin's link to the workspace is already right: nothing is rebuilt.
+            let _ = std::fs::remove_dir(env.path("node_modules/wrap"));
+            let _ = std::fs::remove_file(env.path("node_modules/wrap"));
+            let out = env.ok(&["install"]);
+            assert!(!out.contains("repaired") && !out.contains("up to date"), "{store} {version}: {out}");
+            assert_eq!(node_require(&env, ".", "wrap"), want, "{store}");
+
+            // Read again, resolved again, installed from it: the same file and the same tree.
+            let text = env.read("jpm.lock");
+            env.ok(&["dedupe"]);
+            assert_eq!(env.read("jpm.lock"), text);
+            std::fs::remove_file(env.path("jpm.lock")).unwrap();
+            env.ok(&["lock"]);
+            assert_eq!(env.read("jpm.lock"), text);
+            std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+            std::fs::remove_dir_all(env.path("packages/app/node_modules")).unwrap();
+            env.ok(&["install", "--frozen-lockfile"]);
+            assert_eq!(node_require(&env, "packages/app", "wrap"), want, "{store}");
+            assert!(env.ok(&["install"]).contains("up to date"), "{store} {version}");
+        }
+    }
+}
+
+#[test]
+fn a_copy_whose_peer_is_a_workspace_names_it_in_its_key() {
+    let mut pkgs = vec![pkg("schema", "1.0.0", json!({}))];
+    pkgs[0].files = vec![("index.js".into(), 0o644, b"module.exports = 'schema@1.0.0'".to_vec())];
+    pkgs.push(requiring("plugin", "1.0.0", "schema", json!({ "peerDependencies": { "schema": "^1" } })));
+    pkgs.push(requiring("wrap", "1.0.0", "plugin", json!({ "dependencies": { "plugin": "1.0.0" } })));
+    let r = Registry::start(pkgs);
+    for store in ["global-store=true", "global-store=false"] {
+        let env = Env::new(&r);
+        env.write(".npmrc", &format!("{store}\n"));
+        schema_repo(&env, "2.0.0");
+        // `other` takes schema from the registry: plugin is a copy for each schema.
+        let m = json!({ "name": "other", "version": "1.0.0", "dependencies": { "wrap": "1.0.0", "schema": "1.0.0" } });
+        env.write("packages/other/package.json", &m.to_string());
+        env.ok(&["install"]);
+        let lock = env.lock();
+        assert_eq!(keys(&lock, "plugin"), ["plugin@1.0.0(schema@1.0.0)", "plugin@1.0.0(schema@link:packages/schema)"]);
+        assert_eq!(node_require(&env, "packages/app", "wrap"), "schema@2.0.0", "{store}");
+        assert_eq!(node_require(&env, "packages/other", "wrap"), "schema@1.0.0", "{store}");
+        assert!(env.ok(&["install"]).contains("up to date"), "{store}");
+        let text = env.read("jpm.lock");
+        std::fs::remove_file(env.path("jpm.lock")).unwrap();
+        env.ok(&["lock"]);
+        assert_eq!(env.read("jpm.lock"), text);
+    }
+}
+
+#[test]
+fn a_package_links_a_directory_only_as_a_peer_on_a_workspace() {
+    let r = schema_registry();
+    let env = Env::new(&r);
+    schema_repo(&env, "1.2.0");
+    env.ok(&["install"]);
+    let text = env.read("jpm.lock");
+    let plugin = "package plugin@1.0.0\n";
+    assert!(text.contains(plugin) && text.contains("  dep schema link:packages/schema\n"), "{text}");
+    let refused = |edited: String, why: &str| {
+        env.write("jpm.lock", &edited);
+        let out = env.jpm(&["install", "--frozen-lockfile"]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && err.contains(why), "{err}\n{edited}");
+    };
+    // wrap's own dependency, sent to the workspace by an edit.
+    refused(
+        text.replace("package wrap@1.0.0\n", "package wrap@1.0.0\n  dep schema link:packages/schema\n"),
+        "packages[\"wrap@1.0.0\"].dependencies[\"schema\"] is link:packages/schema: a package links a directory only for a peer",
+    );
+    // plugin's peer, sent to a directory that is no workspace.
+    let peer = "link:packages/schema
+  peer schema ^1";
+    for dir in ["link:packages/app", "link:../outside"] {
+        refused(
+            text.replace(peer, &peer.replace("link:packages/schema", dir)),
+            "only for a peer, to the workspace of its name",
+        );
+    }
+    env.write("jpm.lock", &text);
+    env.ok(&["install", "--frozen-lockfile"]);
+
+    // A registry package that declares a path dependency is refused, as before.
+    for path in ["link:../x", "file:../x"] {
+        let r = Registry::start(vec![pkg("bad", "1.0.0", json!({ "dependencies": { "x": path } }))]);
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { "bad": "1.0.0" } }));
+        let out = env.jpm(&["install"]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && err.contains("only the root and workspaces may depend on a path"), "{err}");
+    }
+}
+
+#[test]
+fn a_pnpm_lock_whose_package_peers_on_a_workspace_installs() {
+    // nuxt's pnpm-lock.yaml has `@nuxt/cli-nightly@…(@nuxt/schema@packages+schema)`. A lock with
+    // workspaces is read for its versions, and the peer links to the workspace, as pnpm's did.
+    let r = schema_registry();
+    let env = Env::new(&r);
+    schema_repo(&env, "1.2.0");
+    env.write(
+        "pnpm-lock.yaml",
+        "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      plugin:
+        specifier: 1.0.0
+        version: 1.0.0(schema@packages+schema)
+      schema:
+        specifier: workspace:*
+        version: link:packages/schema
+      wrap:
+        specifier: 1.0.0
+        version: 1.0.0(schema@packages+schema)
+  packages/app:
+    dependencies:
+      schema:
+        specifier: workspace:*
+        version: link:../schema
+      wrap:
+        specifier: 1.0.0
+        version: 1.0.0(schema@packages+schema)
+  packages/schema: {}
+packages:
+  plugin@1.0.0:
+    resolution: {integrity: sha512-plugin}
+    peerDependencies:
+      schema: ^1
+  wrap@1.0.0:
+    resolution: {integrity: sha512-wrap}
+snapshots:
+  plugin@1.0.0(schema@packages+schema):
+    dependencies:
+      schema: link:packages/schema
+  wrap@1.0.0(schema@packages+schema):
+    dependencies:
+      plugin: 1.0.0(schema@packages+schema)
+",
+    );
+    let out = env.ok(&["install"]);
+    assert!(out.contains("pnpm-lock.yaml has workspaces"), "{out}");
+    assert_eq!(env.lock()["packages"]["plugin@1.0.0"]["dependencies"]["schema"], "link:packages/schema");
+    assert_eq!(node_require(&env, "packages/app", "wrap"), "schema@1.2.0");
+    assert!(env.ok(&["install"]).contains("up to date"));
+}

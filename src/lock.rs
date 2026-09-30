@@ -968,9 +968,16 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             check_edges(&at, &e.bin, &e.peers, &e.peer_dependencies, [&e.dependencies; 2], &|_| false)?;
             continue;
         }
-        // A directory is linked from a top only.
-        if e.dependencies.values().chain(e.optional_dependencies.values()).any(|v| v.starts_with("link:")) {
-            return Err(fail(format!("{at} depends on a directory; only the root and workspaces may")));
+        // A directory is linked from a top, and from a package only as a peer the project
+        // provides, as pnpm links `(@nuxt/schema@packages+schema)`: a published package never
+        // names a path of its own.
+        for (name, v) in e.dependencies.iter().chain(&e.optional_dependencies) {
+            let peer = || e.peer_dependencies.contains_key(name) && known.contains(&format!("{name}@{v}"));
+            if v.starts_with("link:") && !peer() {
+                return Err(fail(format!(
+                    "{at}.dependencies[{name:?}] is {v}: a package links a directory only for a peer, to the workspace of its name"
+                )));
+            }
         }
         // It becomes part of a directory name, so it is exactly what `short_hash` writes.
         if e.subgraph
@@ -1008,9 +1015,8 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
                 return Err(fail(format!("{at}.resolved must be an http or https url")));
             }
         }
-        // A store entry links to packages only: a workspace is reached from a top, never from it.
         check_edges(&at, &e.bin, &e.peers, &e.peer_dependencies, [&e.dependencies, &e.optional_dependencies], &|k| {
-            lock.packages.contains_key(k)
+            known.contains(k)
         })?;
     }
     for (path, ws) in &lock.workspaces {
