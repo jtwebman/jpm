@@ -18,6 +18,7 @@
 //! - `leave_interrupts_to_children()`: while the value it returns lives (around a child's wait),
 //!   Ctrl+C is the children's to act on (Windows; unix delivers it to the whole process group).
 //! - `vt()`: whether stderr takes escape sequences (turned on for a Windows console that can).
+//! - `cap_malloc_arenas()`: glibc's malloc held to one arena per core (Linux; nothing elsewhere).
 //! - `FOLDS_CASE`: whether `Foo.js` and `foo.js` are one file, as on a Mac's or Windows's
 //!   disk by default.
 //! - `on_interrupt(undo)`: Ctrl+C writes `undo` to stderr before ending the process as before;
@@ -64,6 +65,8 @@ pub use unix::{
 pub fn libc() -> Option<&'static str> {
     None
 }
+#[cfg(not(target_os = "linux"))]
+pub fn cap_malloc_arenas() {}
 #[cfg(all(unix, not(target_os = "linux")))]
 pub fn system_roots() -> Vec<Vec<u8>> {
     Vec::new()
