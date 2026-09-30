@@ -604,3 +604,8 @@ bench/bench.sh -r jpm,npm,pnpm,bun -f nuxt
 
 MIT, Copyright (c) 2026 JT Turner. jpm started as a port of upm, Copyright (c) Pooya Parsa,
 also MIT. See [LICENSE](LICENSE).
+
+jpm also builds on BearSSL's constant-time AES and GHASH, npm's cmd-shim, and the crates it is
+compiled with (flate2, zlib-rs, webpki-roots and others); its tests use Project Wycheproof's and
+the RFCs' test vectors. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) credits each with its
+license, and ships with every release.
