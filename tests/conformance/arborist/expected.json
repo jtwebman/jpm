@@ -1,0 +1,1019 @@
+{
+  "accept-dependencies": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "ancient-lockfile-invalid/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions; its one version is a tarball url, so nothing is pinned"
+  },
+  "audit-all-severities/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 517,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-dep-vuln-with-own-advisory/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-fix-old-tap/package-lock.json": {
+    "outcome": "imported",
+    "packages": 439,
+    "pins": 571
+  },
+  "audit-linked-package/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on electron-test-app, which package-lock.json has from no registry",
+    "pins": 0,
+    "why": "the lock has the root dependency as a link to a folder; jpm imports registry packages only"
+  },
+  "audit-missing-packument/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-mkdirp/mkdirp-unfixable/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-mkdirp/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-nyc-mkdirp/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 329,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "audit-omit/package-lock.json": {
+    "outcome": "imported",
+    "packages": 379,
+    "pins": 751
+  },
+  "audit-one-vuln/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 1,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "bad": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "bundle": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "bundle-metadep-duplication/x/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 3,
+    "why": "package.json adds @isaacs/bundle-metadep-duplication-z and abbrev the lock does not record"
+  },
+  "carbonium/package-lock.json": {
+    "outcome": "imported",
+    "packages": 119,
+    "pins": 126
+  },
+  "cli-750-fresh": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "cli-750/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on app, which package-lock.json has from no registry",
+    "pins": 0,
+    "why": "a root dependency is a link to a folder (file:app); jpm imports registry packages only"
+  },
+  "conflict-bundle-file-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "conflict-package-lock/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json cannot be read (it has git conflict markers left in it): expected '\"' at position 236",
+    "pins": "package-lock.json cannot be read (it has git conflict markers left in it): expected '\"' at position 236",
+    "why": "git conflict markers: npm merges both sides, jpm refuses and resolves again; no package.json either, read as {}"
+  },
+  "conflicted-peer-optional-from-dev-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "dedupe-actual": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "dedupe-lockfile/package-lock.json": {
+    "outcome": "imported",
+    "packages": 3,
+    "pins": 3
+  },
+  "dedupe-tests": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "dedupe-tests-2": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "deep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "deepmixedloop": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "dep-installed-without-bin-link/package-lock.json": {
+    "outcome": "imported",
+    "packages": 2,
+    "pins": 2
+  },
+  "dep-missing-resolved/package-lock.json": {
+    "outcome": "imported",
+    "packages": 227,
+    "pins": 233
+  },
+  "deprecated-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "dev-deps/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 5,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "devloop": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "edit-package-json/changed/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 7,
+    "why": "package.json was edited after the lock was written (the fixture tests that npm notices)"
+  },
+  "edit-package-json/ok/package-lock.json": {
+    "outcome": "imported",
+    "packages": 6,
+    "pins": 7
+  },
+  "edit-package-json/removed/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 7,
+    "why": "package.json dropped a dependency the lock still records"
+  },
+  "edit-package-json/workspaces-changed/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "empty": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "empty-with-shrinkwrap-no-pj/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions; no package.json either (jpm stops there), read as {}"
+  },
+  "empty-with-shrinkwrap/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "engine-omit-test": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "engine-specification/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 2,
+    "why": "the lock records other dependencies (@bonkydog/test, lodash) than package.json declares"
+  },
+  "eslintme/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 156,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions; no package.json either (jpm stops there), read as {}"
+  },
+  "external-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "external-link-cached-dummy-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "external-link-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on aaaaaa, which package-lock.json has from no registry",
+    "pins": 0,
+    "why": "a root dependency is a link; jpm imports registry packages only"
+  },
+  "external-link/root/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on j, which package-lock.json has from no registry",
+    "pins": 6,
+    "why": "a root dependency is a link outside the project; jpm imports registry packages only"
+  },
+  "fail-allinstall": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "fail-install": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "fail-postinstall": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "fail-preinstall": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "flow-outdated/package-lock.json": {
+    "outcome": "imported",
+    "packages": 5,
+    "pins": 5
+  },
+  "fs-parent-dots": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "global-style": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "hidden-lockfile": {
+    "outcome": "skipped",
+    "why": "only node_modules/.package-lock.json, npm's record of what it installed, which jpm does not read"
+  },
+  "install-types-sw-only/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 18,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions; no package.json either (jpm stops there), read as {}"
+  },
+  "install-types/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 18,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-dep-cycle": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "link-dep-empty/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-dep-has-dep-with-optional-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "link-dep-lifecycle-scripts/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on a, which package-lock.json has from no registry",
+    "pins": 0,
+    "why": "a root dependency is a link to a folder; jpm imports registry packages only"
+  },
+  "link-dep-nested/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-dep-nested/root/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-dev-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "link-meta-deps-empty": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "link-meta-deps/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "links-all-over": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "malformed-json": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "minimist-git-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on minimist, which package-lock.json has from no registry",
+    "pins": 0,
+    "why": "the root's peer is a git dependency, which jpm resolves itself"
+  },
+  "minimist-git-metadep/package-lock.json": {
+    "outcome": "refused",
+    "message": "@isaacs/minimist-git-dep@1.0.0 depends on minimist, which package-lock.json has from no registry",
+    "pins": 1,
+    "why": "a dependency's dependency is from git, which jpm resolves itself"
+  },
+  "mixedloop": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "mixedmidway": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "mkdirp-pinned/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "noname": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "old-lock-with-link/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "old-package-lock-with-bins/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 1,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "old-package-lock/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "once-outdated/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "optional-dep-allinstall-fail/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 1,
+    "why": "the lock is optional-dep-postinstall-fail's, copied: it records another package than package.json declares"
+  },
+  "optional-dep-enotarget": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-dep-install-fail/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 1,
+    "why": "the lock is optional-dep-postinstall-fail's, copied: it records another package than package.json declares"
+  },
+  "optional-dep-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-dep-postinstall-fail/package-lock.json": {
+    "outcome": "imported",
+    "packages": 1,
+    "pins": 1
+  },
+  "optional-dep-preinstall-fail/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 1,
+    "why": "the lock is optional-dep-postinstall-fail's, copied: it records another package than package.json declares"
+  },
+  "optional-dep-tgz-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-engine-omit-test": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-engine-specification/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 2,
+    "why": "the lock records other dependencies (@bonkydog/test, lodash) than package.json declares"
+  },
+  "optional-metadep-allinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-enotarget": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-install-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-postinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-preinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-metadep-tgz-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-ok": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optional-platform-specification": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optionalloop": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "optofdev": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "other": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "outdated-no-lockfile": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "package-json-shorthands": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "pathological-dep-nesting-cycle": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-dep-conflict-infinite-loop": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-dep-cycle": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-dep-cycle-nested": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-dep-cycle-nested-with-sw/package-lock.json": {
+    "outcome": "imported",
+    "packages": 4,
+    "pins": 4
+  },
+  "peer-dep-cycle-with-sw/package-lock.json": {
+    "outcome": "imported",
+    "packages": 3,
+    "pins": 3
+  },
+  "peer-engine-omit-test": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-optional-eresolve": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "peer-optional-installs": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "platform-specification": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "pnpm/package-lock.json": {
+    "outcome": "refused",
+    "message": "package.json depends on @scope/x, which package-lock.json has from no registry",
+    "pins": 4,
+    "why": "written over a pnpm-style node_modules/.pnpm tree: every root dependency is a link into it"
+  },
+  "prod-dep-allinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-enotarget": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-install-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-postinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-preinstall-fail": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prod-dep-tgz-missing": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prune-actual": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prune-actual-omit-dev": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prune-dev-bins": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prune-dev-dep-duplicate": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "prune-lockfile-omit-dev/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json gives once@1.4.0 no integrity",
+    "pins": 3,
+    "why": "hand-written: no resolved or integrity for any package, and jpm.lock pins every tarball"
+  },
+  "prune-lockfile-optional-peer/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json gives dedent@1.6.0 no integrity",
+    "pins": 2,
+    "why": "hand-written: no resolved or integrity for any package, and jpm.lock pins every tarball"
+  },
+  "prune-lockfile/package-lock.json": {
+    "outcome": "imported",
+    "packages": 0,
+    "pins": 1
+  },
+  "rebuild-foreground-scripts/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json gives a@1.2.3 no integrity",
+    "pins": 2,
+    "why": "hand-written: no resolved or integrity for any package, and jpm.lock pins every tarball"
+  },
+  "registry-mocks": {
+    "outcome": "skipped",
+    "why": "arborist's mock registry data, not a project"
+  },
+  "reify-cases": {
+    "outcome": "skipped",
+    "why": "generated copies of the other fixtures as tap fixture definitions"
+  },
+  "root": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "root-bundler/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 0,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "sax/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 229,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "selflink": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "semver-installed-with-old-package-lock/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 1,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "sequental-peer-dep-tree-shuffling": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "simple": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "symlinked-node-modules": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "tab-indented-package-json": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "tap-and-flow/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 471,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "tap-old-lockfile/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 413,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions; no package.json either (jpm stops there), read as {}"
+  },
+  "tap-react15-collision": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "tap-react15-collision-legacy-sw/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 385,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "tap-with-yarn-lock": {
+    "outcome": "skipped",
+    "why": "a yarn.lock and no npm lockfile"
+  },
+  "tarball-dependencies": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "test-conflicted-optional-peer-dep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "test-package-with-shrinkwrap/package-lock.json": {
+    "outcome": "imported",
+    "packages": 1,
+    "pins": 1
+  },
+  "test-peer-looser-than-dev": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "test-root-matches-metadep": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-asymmetrical-bin-no-lock": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-asymmetrical-bin-with-lock/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 2,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "testing-bundle-dupes": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-bundledeps": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-bundledeps-2": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-bundledeps-3/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 5,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "testing-bundledeps-empty": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-bundledeps-legacy-bundling/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 4,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "testing-bundledeps-parent/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json v1 has no packages map; npm 7 and later write one",
+    "pins": 4,
+    "why": "a v1 lockfile (npm 5 and 6) names no peers, bins, platforms or optional edges; npm itself refetches every manifest to use one, and jpm resolves again preferring its versions"
+  },
+  "testing-bundledeps-sw/package-lock.json": {
+    "outcome": "imported",
+    "packages": 3,
+    "pins": 5
+  },
+  "testing-dev-optional-flags": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-dev-optional-flags-2": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-missing-tgz": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-peer-dep-conflict-chain/package-lock.json": {
+    "outcome": "imported",
+    "packages": 6,
+    "pins": 6
+  },
+  "testing-peer-dep-nesting": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-peer-deps": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-peer-deps-nested/package-lock.json": {
+    "outcome": "imported",
+    "packages": 8,
+    "pins": 8
+  },
+  "testing-peer-deps-overlap": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-peer-deps-unresolvable": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "testing-rebuild-bundle-reified/package-lock.json": {
+    "outcome": "imported",
+    "packages": 2,
+    "pins": 3
+  },
+  "testing-rebuild-bundle/a/package-lock.json": {
+    "outcome": "imported",
+    "packages": 1,
+    "pins": 1
+  },
+  "testing-rebuild-bundle/package-lock.json": {
+    "outcome": "imported",
+    "packages": 2,
+    "pins": 3
+  },
+  "testing-rebuild-bundle/parent/package-lock.json": {
+    "outcome": "imported",
+    "packages": 1,
+    "pins": 2
+  },
+  "testing-rebuild-script-env-flags/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json gives devdep@1.0.0 no integrity",
+    "pins": 4,
+    "why": "hand-written: no resolved or integrity for any package, and jpm.lock pins every tarball"
+  },
+  "testing-transitive-conflicted-peer": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "two-bundled-deps/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json is out of date with package.json",
+    "pins": 421,
+    "why": "package.json declares tap as a devDependency and not abbrev; the lock records abbrev and not tap"
+  },
+  "update-exact-version/package-lock.json": {
+    "outcome": "imported",
+    "packages": 1,
+    "pins": 1
+  },
+  "workspace": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspace2": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspace3/packages/a/npm-shrinkwrap.json": {
+    "outcome": "refused",
+    "message": "npm-shrinkwrap.json cannot be read: unexpected token at position 0",
+    "pins": "npm-shrinkwrap.json cannot be read: unexpected token at position 0",
+    "why": "not JSON (the fixture holds \"this isn't json\")"
+  },
+  "workspace3/packages/a/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json cannot be read: unexpected token at position 0",
+    "pins": "package-lock.json cannot be read: unexpected token at position 0",
+    "why": "not JSON (the fixture holds \"this isn't json\")"
+  },
+  "workspace4": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-add-new-dep/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-conflicting-versions": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-conflicting-versions-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 3,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-duplicate": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-ignore-nm": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-ignore-nm-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-link-bin": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-need-update/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 3,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-non-simplistic/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 3,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-not-root/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 2,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-peer-ranges": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-prefer-linking": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-prefer-linking-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-root-linked": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-scoped-pkg": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-shared-deps": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-shared-deps-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 4,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-simple": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-simple-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-top-level-link": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-top-level-link-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 0,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-transitive-deps": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-transitive-deps-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 2,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-version-unsatisfied": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-version-unsatisfied-virtual/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 1,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "workspaces-with-files-spec": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "workspaces-with-overrides/package-lock.json": {
+    "outcome": "refused",
+    "message": "package-lock.json has workspaces, which jpm reads only for their versions",
+    "pins": 1,
+    "why": "jpm reads no workspace project from another manager's lockfile; it resolves again preferring the versions"
+  },
+  "yargs": {
+    "outcome": "skipped",
+    "why": "no package-lock.json or npm-shrinkwrap.json: a package.json and node_modules tree (or none) for arborist's own tree-building tests"
+  },
+  "yarn-lock-mkdirp": {
+    "outcome": "skipped",
+    "why": "a yarn.lock and no npm lockfile"
+  },
+  "yarn-lock-mkdirp-file-dep": {
+    "outcome": "skipped",
+    "why": "a yarn.lock and no npm lockfile"
+  },
+  "yarn-lock-mkdirp-no-resolved": {
+    "outcome": "skipped",
+    "why": "a yarn.lock and no npm lockfile"
+  },
+  "yarn-stuff": {
+    "outcome": "skipped",
+    "why": "a yarn.lock and no npm lockfile"
+  }
+}
