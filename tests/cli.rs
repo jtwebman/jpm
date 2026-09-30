@@ -960,6 +960,19 @@ fn scripted() -> Registry {
     ])
 }
 
+#[test]
+fn believes_the_tarball_over_the_registry_on_install_scripts() {
+    // fsevents 2: the registry says hasInstallScript, the tarball has no script or binding.gyp.
+    let r = Registry::start(vec![
+        pkg("fsev", "1.0.0", json!({ "hasInstallScript": true })),
+        pkg("gyp", "1.0.0", json!({ "hasInstallScript": true })).file("binding.gyp", 0o644, "{}"),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "fsev": "1.0.0", "gyp": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("install scripts not run for gyp@1.0.0") && !out.contains("fsev"), "{out}");
+}
+
 #[cfg(unix)]
 #[test]
 fn runs_install_scripts_only_when_approved() {

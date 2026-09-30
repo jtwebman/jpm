@@ -619,8 +619,13 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         tops.extend(project.workspaces.iter().map(|w| (w.dir.as_path(), &w.manifest)));
         build::run_lifecycle(&tops)?;
     }
+    // Installed, and with scripts in the tarball itself, whatever the registry said.
+    let ships = |p: &crate::graph::Package| match (store.pkg_dir(&p.integrity), store.index(&p.integrity)) {
+        (Ok(dir), Some(index)) => build::ships_install_scripts(p, &dir, &index),
+        _ => true,
+    };
     let installed = |id: &str| {
-        resolution.packages.get(id).is_some_and(|p| !(ctx.opts.production && p.dev))
+        resolution.packages.get(id).is_some_and(|p| !(ctx.opts.production && p.dev) && ships(p))
             && !outcome.dropped.iter().any(|d| d == id)
     };
     let mut unbuilt = build::skipped(&resolution, &chosen, &installed);
