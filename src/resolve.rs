@@ -236,7 +236,10 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         runtimes: Mutex::default(),
         direct,
     };
-    walk.run()
+    let res = walk.run()?;
+    // Peers only linked to what the tree has, as yarn 1 and npm's legacy mode link them, are
+    // one set per package, as there.
+    Ok(if opts.legacy_peers { res } else { crate::copies::split(res) })
 }
 
 impl Walk<'_> {

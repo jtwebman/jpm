@@ -31,8 +31,8 @@ of its own per manager. The result is read from `node_modules`, not a lockfile, 
 come out in one shape: every installed package as `name@version` with what each name in its
 `dependencies`, `optionalDependencies` and `peerDependencies` (and `peerDependenciesMeta`)
 resolves to from its own directory (`-` for nothing), the root's dependencies, and the root's
-bins. pnpm's copies of a package that differ only in their peers' peers read as one, as jpm keeps
-one. A line is `-` when only pnpm has it and `+` when only jpm has it.
+bins. Copies of a package that differ only in their peers' peers read as one, since a line shows
+only what its own names resolve to. A line is `-` when only pnpm has it and `+` when only jpm has it.
 
 ## Running
 

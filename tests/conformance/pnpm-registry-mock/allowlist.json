@@ -8,8 +8,7 @@
     "peerbin": "pnpm links the bins of a peer it installs into the root's node_modules/.bin, as if the root depended on it; jpm links the bins of the root's own dependencies only.",
     "peerparent": "The peers of a peer jpm installs come from the package that asked for it (its @pnpm/y 1.0.0); pnpm puts a peer it installs at the root, so its peers come from there (@pnpm/y 2.0.0).",
     "platform": "jpm refuses a required dependency that does not run on this platform (EBADPLATFORM), as npm does; pnpm installs it with a warning. tests/cli.rs skips_a_dev_dependency_for_another_platform pins this.",
-    "range": "Among several aliases of a peer's package at one level, jpm takes the newest in the peer's range (peer-c 1.0.1 of 1.0.0, 1.0.1 and 2.0.0), as it does for plain versions; pnpm takes the newest alias, out of range too. A peer the scope has only out of range is linked, with a warning, as in pnpm.",
-    "variant": "jpm keeps one copy of each version of a package, with one set of peers; pnpm makes another copy for each peer context along a path."
+    "range": "Among several aliases of a peer's package at one level, jpm takes the newest in the peer's range (peer-c 1.0.1 of 1.0.0, 1.0.1 and 2.0.0), as it does for plain versions; pnpm takes the newest alias, out of range too. A peer the scope has only out of range is linked, with a warning, as in pnpm."
   },
   "allowed": [
     {"scenario":"bins: directories.bin","reason":"dirbin","diff":["bins: - pkg-with-directories-bin"]},
@@ -22,8 +21,6 @@
     {"scenario":"peer: highest of several aliases","reason":"range","diff":["packages: - @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0","packages: + @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1"]},
     {"scenario":"peer: no common range of two peers","reason":"nocommon","diff":["packages: - @pnpm.e2e/wants-peer-c-1@1.0.0 @pnpm.e2e/peer-c=-","packages: - @pnpm.e2e/wants-peer-c-2@1.0.0 @pnpm.e2e/peer-c=-","packages: + @pnpm.e2e/peer-c@1.0.1","packages: + @pnpm.e2e/peer-c@2.0.0","packages: + @pnpm.e2e/wants-peer-c-1@1.0.0 @pnpm.e2e/peer-c=1.0.1","packages: + @pnpm.e2e/wants-peer-c-2@1.0.0 @pnpm.e2e/peer-c=2.0.0"]},
     {"scenario":"peer: peer of peer from the dependent","reason":"peerparent","diff":["packages: - @pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0","packages: + @pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=1.0.0"]},
-    {"scenario":"peer: recursive with optional peer","reason":"variant","diff":["packages: - @pnpm.e2e/recursive-with-optional-peer@1.0.0 @pnpm.e2e/dep-of-recursive-with-optional-peer=1.0.0 @pnpm.e2e/peer-a=1.0.0"]},
-    {"scenario":"peer: repeated peers hoisted","reason":"variant","diff":["packages: - @pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0"]},
     {"scenario":"single @pnpm.e2e/abc-parent-with-aliases-of-same-pkg","reason":"range","diff":["packages: - @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0","packages: + @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1"]},
     {"scenario":"single @pnpm.e2e/darwin-arm64","reason":"platform","diff":["failed: pnpm succeeded, jpm failed"]},
     {"scenario":"single @pnpm.e2e/darwin-x64","reason":"platform","diff":["failed: pnpm succeeded, jpm failed"]},

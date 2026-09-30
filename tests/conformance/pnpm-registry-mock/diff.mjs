@@ -16,8 +16,8 @@
 // lockfile, so the two layouts come out in one shape: each package instance as name@version and
 // what each name in its dependencies, optionalDependencies and peerDependencies resolves to from
 // its own directory, the root's dependencies the same way, and the root's bins. An instance is
-// kept once per distinct set of resolutions, so pnpm's copies of a package that differ only in
-// their peers' peers read as one, as jpm keeps them. A difference fails the run unless
+// kept once per distinct set of resolutions, so copies of a package that differ only in their
+// peers' peers read as one. A difference fails the run unless
 // allowlist.json names it, with a reason.
 
 import { spawn } from 'node:child_process'
