@@ -97,7 +97,7 @@ Notes
   link:<dir> links a directory as it is. file:<dir> (or ./<dir>) inside the project is linked
   and its dependencies installed, as a workspace's are; outside the project it is linked as
   link: is, and jpm writes nothing there.
-  github:u/r, u/r, gitlab:, bitbucket:, sourcehut:, git+https://, git+ssh:// and git:// are git
+  github:u/r, u/r, gitlab:, bitbucket:, sourcehut:, gist:, git+https://, git+ssh://, git:// are git
   dependencies, #<commit>, #<branch|tag> or #semver:<range>; locked to a commit (git ls-remote),
   fetched as the host's archive or with git. A git package's prepare script is an install script.
   jsr:@scope/name@<range> is npm:@jsr/scope__name from npm.jsr.io (or @jsr:registry).

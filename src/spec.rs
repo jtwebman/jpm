@@ -262,7 +262,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 3] = ["catalog:", "exec:", "gist:"];
+    const PROTOCOLS: [&str; 2] = ["catalog:", "exec:"];
     let lower = s.to_ascii_lowercase();
     if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
         return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
@@ -270,20 +270,24 @@ fn unsupported(s: &str, raw: &str) -> Result<()> {
     Ok(())
 }
 
-/// A host whose repositories npm reads in every spelling (hosted-git-info's hosts, but gist):
+/// A host whose repositories npm reads in every spelling (hosted-git-info's hosts):
 /// `<prefix>user/repo`, its https page, and its https, git:// and ssh urls.
 pub struct Host {
     pub prefix: &'static str,
     pub domain: &'static str,
     /// `ssh://` is read as `git+ssh://`, as npm reads it for all but sourcehut.
     ssh: bool,
+    /// An ssh url stays ssh, whose keys reach a private repository. A gist needs none: anyone
+    /// with its url reads it, so every url of one is fetched over https.
+    keys: bool,
 }
 
-pub const HOSTS: [Host; 4] = [
-    Host { prefix: "github:", domain: "github.com", ssh: true },
-    Host { prefix: "gitlab:", domain: "gitlab.com", ssh: true },
-    Host { prefix: "bitbucket:", domain: "bitbucket.org", ssh: true },
-    Host { prefix: "sourcehut:", domain: "git.sr.ht", ssh: false },
+pub const HOSTS: [Host; 5] = [
+    Host { prefix: "github:", domain: "github.com", ssh: true, keys: true },
+    Host { prefix: "gitlab:", domain: "gitlab.com", ssh: true, keys: true },
+    Host { prefix: "bitbucket:", domain: "bitbucket.org", ssh: true, keys: true },
+    Host { prefix: "sourcehut:", domain: "git.sr.ht", ssh: false, keys: true },
+    Host { prefix: "gist:", domain: "gist.github.com", ssh: true, keys: false },
 ];
 
 impl Host {
@@ -302,15 +306,21 @@ impl Host {
     }
 
     /// The repository a url's path names, `.git` and a trailing `/` dropped: `user/repo`, a
-    /// gitlab group's `group/sub/repo`, sourcehut's `~user/repo`.
+    /// gitlab group's `group/sub/repo`, sourcehut's `~user/repo`, a gist's id.
     fn repo(&self, path: &str) -> Option<String> {
         let path = path.trim_end_matches('/');
         let path = path.strip_suffix(".git").unwrap_or(path);
+        let chars = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+        let lead = |p: &str| chars(p) && !p.starts_with(['.', '-']);
+        // A gist is its id, its owner before it or not (`/id` too); its url has no owner.
+        if self.domain == "gist.github.com" {
+            let (owner, id) = path.rsplit_once('/').unwrap_or(("", path));
+            let id_ok = !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric());
+            return ((owner.is_empty() || lead(owner)) && id_ok).then(|| id.to_string());
+        }
         let (owner, name) = path.rsplit_once('/')?;
         let mut owner = owner.split('/');
         let first = owner.next().unwrap_or_default();
-        let chars = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
-        let lead = |p: &str| chars(p) && !p.starts_with(['.', '-']);
         let user = if self.domain == "git.sr.ht" { first.strip_prefix('~').is_some_and(lead) } else { lead(first) };
         // Only gitlab has groups within groups.
         let groups = if self.domain == "gitlab.com" { owner.all(lead) } else { owner.next().is_none() };
@@ -325,14 +335,18 @@ impl Host {
     }
 }
 
+/// Why a password, or any user in a url that is not ssh, is refused.
+const CREDENTIALS: &str = "credentials in package.json would be written to jpm.lock; keep them in .npmrc, a git \
+                           credential helper or ssh keys";
+
 /// A git spec's `fetch_spec`, or `None` when `s` is not one: the repository as a lockfile spells
 /// it, `#`, and the ref as written. A hosted repository over https or `git://` (`github:u/r`,
 /// `u/r`, `git+https://github.com/u/r`) is always the host's own https url (`Host::https`),
 /// and over ssh always reached as `git@`, as npm does; any other url keeps its spelling, the
 /// scheme lowercased. The ref is empty for the default branch, a commit, a branch or tag, or
 /// `semver:<range>` over the tags. Nothing here reaches git as an option: a url, host or user
-/// starting with `-` is refused, and so are credentials in a url that is not ssh, which would
-/// end up in jpm.lock.
+/// starting with `-` is refused, and so are a password and a user in a url that is not ssh,
+/// which would end up in jpm.lock.
 fn git(s: &str, raw: &str) -> Result<Option<String>> {
     let (repo, mut committish) = s.split_once('#').unwrap_or((s, ""));
     let lower = repo.to_ascii_lowercase();
@@ -343,8 +357,12 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
     let short = HOSTS.iter().find(|h| lower.starts_with(h.prefix)).map(|h| (h, &repo[h.prefix.len()..]));
     let short = short.or_else(|| bare.then_some((github, repo)));
     let url = if let Some((host, path)) = short {
-        // npm drops a user or password written before the repository (`github:user@u/r`).
-        let path = path.split_once('@').filter(|(auth, _)| !auth.contains('/')).map_or(path, |(_, p)| p);
+        // A user written before the repository (`github:user@u/r`) is dropped, as npm does.
+        let auth = path.split_once('@').filter(|(auth, _)| !auth.contains('/'));
+        if auth.is_some_and(|(auth, _)| auth.contains(':')) {
+            return bad(CREDENTIALS);
+        }
+        let path = auth.map_or(path, |(_, p)| p);
         let Some(path) = host.repo(path) else { return bad("give the repository as user/repo") };
         host.https(&path)
     } else if let Some(url) = scp(repo) {
@@ -357,7 +375,15 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
     } else if lower.starts_with("ssh://") && Host::over(&repo[6..]).is_some_and(|h| h.ssh) {
         format!("git+ssh://{}", &repo[6..])
     } else if let Some((url, tree)) = hosted_page(repo) {
-        committish = tree.unwrap_or(committish);
+        if let Some(tree) = tree {
+            // npm takes the one segment after `tree/`: `feature` of `tree/feature/x`.
+            if tree.contains('/') {
+                return bad(&format!(
+                    "the ref after /tree/ is ambiguous, since a branch name may hold a `/`; write {url}#{tree}"
+                ));
+            }
+            committish = tree;
+        }
         url
     } else {
         return Ok(None);
@@ -399,18 +425,27 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
     let bad_host = if file { !host.is_empty() } else { !named(host) && !v6(host) };
     let hosted = Host::named(host);
     let ssh = scheme == "git+ssh://";
-    // A hosted repository's ssh user is `git`: npm drops any other, and any password.
+    if user.contains(':') {
+        return bad(CREDENTIALS);
+    }
+    // A hosted repository's ssh user is `git`: npm drops any other.
     let user = if hosted.is_some() && ssh { "git" } else { user };
     if user.starts_with('-') || drive || bad_host {
         return bad("not a repository host");
     }
-    if !user.is_empty() && (!ssh || user.contains(':')) {
-        return bad("credentials belong in git's credential helper or ssh, not package.json");
+    if !user.is_empty() && !ssh {
+        return bad(CREDENTIALS);
     }
-    // A hosted repository over https or git:// is the host's own https url, however written.
+    // npm decodes a hosted path's escapes; one read as written names no repository there, and
+    // decoded it may be any path (`%2e%2e`).
+    if hosted.is_some() && path.contains('%') {
+        return bad("a hosted repository's path has no `%` escapes");
+    }
+    // A hosted repository over https or git:// (or a gist over ssh) is the host's own https
+    // url, however written.
     let url = match hosted {
-        Some(h) if ssh => format!("git+ssh://git@{}{}", h.domain, &rest[host_at + host.len()..]),
-        Some(h) if scheme == "git+https://" || scheme == "git://" => h.repo(path).map_or(url, |p| h.https(&p)),
+        Some(h) if ssh && h.keys => format!("git+ssh://git@{}{}", h.domain, &rest[host_at + host.len()..]),
+        Some(h) if ssh || scheme == "git+https://" || scheme == "git://" => h.repo(path).map_or(url, |p| h.https(&p)),
         _ => url,
     };
     let committish = match git_ref(committish, raw) {
@@ -477,18 +512,17 @@ fn warn_once(message: &str) {
 }
 
 /// `https://github.com/u/r`, a hosted repository's page, as a `git+https://` url, with the ref
-/// of github's `…/tree/<ref>`: npm reads it as the repository (as hosted-git-info does), and
-/// downloading it as a tarball gets an HTML page. Only a repository's top, or its tree at a
-/// ref: `…/archive/v1.tar.gz` and other paths are still urls to download.
+/// of github's `…/tree/<ref>` (refused by `git` when it holds a `/`): npm reads it as the
+/// repository (as hosted-git-info does), and downloading it as a tarball gets an HTML page.
+/// Only a repository's top, or its tree at a ref: `…/archive/v1.tar.gz` and other paths
+/// (bitbucket's `…/src/…` too, which npm reads as the repository) are still urls to download.
 fn hosted_page(repo: &str) -> Option<(String, Option<&str>)> {
     let lower = repo.to_ascii_lowercase();
     let rest = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://"))?;
     let rest = &repo[repo.len() - rest.len()..];
     let host = Host::over(rest)?;
     let (authority, path) = rest.split_once('/')?;
-    // npm reads the one segment after `tree/` as the ref, so a ref with a `/` is not read.
-    let tree =
-        path.split_once("/tree/").filter(|(_, r)| host.domain == "github.com" && !r.is_empty() && !r.contains('/'));
+    let tree = path.split_once("/tree/").filter(|(_, r)| host.domain == "github.com" && !r.is_empty());
     let (path, tree) = tree.map_or((path, None), |(p, r)| (p, Some(r)));
     (!ends_as_tarball(path) && host.repo(path).is_some()).then(|| (format!("git+https://{authority}/{path}"), tree))
 }
@@ -905,28 +939,67 @@ mod tests {
         assert_eq!(git("gitlab:g/p#main"), "git+https://gitlab.com/g/p.git#main");
         assert_eq!(git("bitbucket:t/p"), "git+https://bitbucket.org/t/p.git#");
         // hosted-git-info's spellings (tests/conformance/hosted-git-info), as npm reads them.
-        assert_eq!(git("github:user:pass@u/r"), hub, "npm drops the user");
+        assert_eq!(git("github:user@u/r"), hub, "npm drops the user");
         assert_eq!(git("https://www.github.com/u/r"), hub);
         assert_eq!(git("https://github.com/u/r/tree/dev"), format!("{hub}dev"));
         assert_eq!(git("gitlab:g/sub/p#x"), "git+https://gitlab.com/g/sub/p.git#x");
         assert_eq!(git("https://gitlab.com/g/sub/p"), "git+https://gitlab.com/g/sub/p.git#");
         assert_eq!(git("sourcehut:~u/r"), "git+https://git.sr.ht/~u/r#");
         assert_eq!(git("https://git.sr.ht/~u/r.git#x"), "git+https://git.sr.ht/~u/r#x");
-        // A hosted host is reached over ssh as `git`, whatever user or password is written.
-        assert_eq!(git("user:pass@github.com:u/r"), "git+ssh://git@github.com:u/r#");
+        // A hosted host is reached over ssh as `git`, whatever user is written.
+        assert_eq!(git("user@github.com:u/r"), "git+ssh://git@github.com:u/r#");
         assert_eq!(git("git+ssh://github.com:u/r"), "git+ssh://git@github.com:u/r#");
         assert_eq!(git("ssh://me@GitLab.com/g/p.git"), "git+ssh://git@gitlab.com/g/p.git#");
         assert_eq!(git("git@git.sr.ht:~u/r"), "git+ssh://git@git.sr.ht:~u/r#");
+        // A gist by its id, however written, over https: anyone with its url reads it.
+        let gist = "git+https://gist.github.com/0a1b.git#";
+        for spec in [
+            "gist:0a1b",
+            "gist:u/0a1b",
+            "gist:/0a1b.git",
+            "https://gist.github.com/0a1b",
+            "https://gist.github.com/u/0a1b",
+            "git+https://gist.github.com/0a1b.git",
+            "git://gist.github.com/u/0a1b.git",
+            "git+ssh://git@gist.github.com/0a1b.git",
+            "git@gist.github.com:u/0a1b",
+        ] {
+            assert_eq!(git(spec), gist, "{spec}");
+        }
         for other in [
             "u/r/",
-            "https://github.com/u/r/tree/a/b",
             "https://gitlab.com/g/-/p",
             "https://bitbucket.org/u/r/get/v1.tar.gz",
+            // npm reads a page below the top as the repository; jpm keeps it a url to download.
+            "https://bitbucket.org/u/r/src/main/x",
+            "https://gist.github.com/u/0a1b/raw/x",
             "ssh://git.sr.ht/~u/r",
             "ssh://host/r",
             "me@host:r",
         ] {
             assert_ne!(parse_dep("x", other).map(|s| s.kind).ok(), Some(Kind::Git), "{other}");
+        }
+        let refusal = |spec: &str| parse_dep("x", spec).unwrap_err().message;
+        // npm reads `feature` of `tree/feature/x`, when the branch may be `feature/x`.
+        assert!(
+            refusal("https://github.com/u/r/tree/feature/x")
+                .ends_with("ambiguous, since a branch name may hold a `/`; write git+https://github.com/u/r#feature/x")
+        );
+        // npm drops a password; jpm refuses it, as it does any user in an https url.
+        for spec in [
+            "github:user:pass@u/r",
+            "gist::pass@0a1b",
+            "user:pass@github.com:u/r",
+            ":pass@gitlab.com:g/p",
+            "git+ssh://user:pass@github.com/u/r",
+            "ssh://user:pass@bitbucket.org/u/r",
+            "https://token@github.com/u/r",
+        ] {
+            assert!(refusal(spec).contains("credentials in package.json would be written to jpm.lock"), "{spec}");
+        }
+        // npm decodes `%` escapes; jpm refuses them, an encoded path segment being anything.
+        for spec in ["github:u%2F../r", "https://github.com/u/r%2fx", "git+https://github.com/u/%2e%2e"] {
+            assert!(parse_dep("x", spec).map_or(true, |s| s.kind != Kind::Git), "{spec}");
         }
         // Over ssh it stays ssh: its keys are how a private repository is reached.
         assert_eq!(git("git+ssh://git@github.com/u/r.git"), "git+ssh://git@github.com/u/r.git#");
@@ -997,7 +1070,7 @@ mod tests {
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in ["catalog:react18", "exec:./gen.js", "gist:11081aaa"] {
+        for spec in ["catalog:react18", "exec:./gen.js"] {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }

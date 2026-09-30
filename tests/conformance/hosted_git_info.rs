@@ -18,10 +18,11 @@ const DOMAINS: [(&str, &str); 5] = [
 ];
 
 /// The differences jpm keeps, each with why. A rule excuses a case it matches only when jpm
-/// reads that case as described, and every rule must excuse at least one case.
-const DELIBERATE: [(&str, &str); 5] = [
-    ("credentials", "a user or token in an https or git:// url would be written to jpm.lock; jpm refuses it"),
-    ("gist", "`gist:` is refused as unsupported, and a gist's url is read as any git url or tarball url"),
+/// reads that case as described, and every rule must excuse at least one case. Two more are
+/// pinned in src/spec.rs's tests, having no case here: jpm reads no page below a repository's
+/// top but github's `tree/<ref>`, and refuses `%` escapes in a hosted repository's path.
+const DELIBERATE: [(&str, &str); 4] = [
+    ("credentials", "a password, or a user in an https or git:// url, would be written to jpm.lock; jpm refuses it"),
     ("space", "git refuses a ref with whitespace, so jpm refuses it when package.json is read"),
     ("bitbucket git://", "a hosted repository is fetched over https however it is written"),
     (
@@ -29,6 +30,15 @@ const DELIBERATE: [(&str, &str); 5] = [
         "no git ref holds a `:`: npm-package-arg reads `key:value` after `#` as an option and skips one it does not know, so npm and jpm take the default branch",
     ),
 ];
+
+/// Whether `input` gives a password (`user:pass@`, `:pass@`) before its host or repository.
+fn password(input: &str) -> bool {
+    let before = input.split('#').next().unwrap_or(input);
+    let Some((auth, _)) = before.rsplit_once('@') else { return false };
+    let auth = auth.split_once("://").map_or(auth, |(_, a)| a);
+    let auth = DOMAINS.iter().find_map(|(t, _)| auth.strip_prefix(t).and_then(|a| a.strip_prefix(':'))).unwrap_or(auth);
+    auth.contains(':')
+}
 
 /// Host, repository path (no `.git`) and ref of a git `fetch_spec`. Over ssh the host is
 /// `user@host` unless the user is `git`, the one npm reaches a hosted host as.
@@ -66,7 +76,9 @@ fn reads_hosted_git_urls_as_hosted_git_info_does() {
             let want = case["expect"].as_object().map(|e| {
                 let s = |k: &str| e[k].as_str().unwrap_or_default().to_string();
                 let domain = DOMAINS.iter().find(|(t, _)| *t == s("type")).unwrap().1;
-                let path = if e["user"].is_null() { s("project") } else { format!("{}/{}", s("user"), s("project")) };
+                // A gist's url is its id alone.
+                let owner = !e["user"].is_null() && s("type") != "gist";
+                let path = if owner { format!("{}/{}", s("user"), s("project")) } else { s("project") };
                 (domain.to_string(), path, s("committish"), !e["auth"].is_null())
             });
             let got = parse_dep("x", input);
@@ -86,15 +98,15 @@ fn reads_hosted_git_urls_as_hosted_git_info_does() {
                 continue;
             }
             let refused = got.is_err();
+            let credentials = got.as_ref().is_err_and(|e| e.message.contains("credentials in package.json"));
             let rule = match &want {
-                Some((.., true)) if refused => Some(0),
-                _ if file == "gist" => Some(1),
-                Some((_, _, c, _)) if refused && c.contains(char::is_whitespace) => Some(2),
-                None if input.starts_with("git://bitbucket.org/") => Some(3),
+                Some((.., auth)) if credentials && (*auth || password(input)) => Some(0),
+                Some((_, _, c, _)) if refused && c.contains(char::is_whitespace) => Some(1),
+                None if input.starts_with("git://bitbucket.org/") => Some(2),
                 Some((d, p, c, _))
                     if c.contains(':') && read.as_ref().is_some_and(|r| (&r.0, &r.1, r.2.as_str()) == (d, p, "")) =>
                 {
-                    Some(4)
+                    Some(3)
                 }
                 _ => None,
             };
