@@ -93,6 +93,13 @@ struct Job {
     peer: bool,
 }
 
+/// What a walk thread takes up: an edge, or the full document of a package that looks to
+/// need one, asked for before its edge does.
+enum Task {
+    Edge(Job),
+    Warm(String),
+}
+
 /// What a job waits on, off its thread: a pick another job is making, or the document another
 /// job is reading. A thread that blocked on either would be one read fewer in flight.
 enum Wait {
@@ -282,7 +289,7 @@ impl Walk<'_> {
     }
 
     fn drain(&self, jobs: Vec<Job>) -> Result<()> {
-        pool::run(self.opts.threads, jobs, |job, queue| self.edge(job, queue));
+        pool::run(self.opts.threads, jobs.into_iter().map(Task::Edge), |task, queue| self.task(task, queue));
         // Whatever is still parked waits on something no job is doing: it runs now, and blocks.
         let left: Vec<Job> = std::mem::take(&mut *self.parked.lock().unwrap_or_else(PoisonError::into_inner))
             .into_iter()
@@ -290,13 +297,21 @@ impl Walk<'_> {
             .collect();
         if !left.is_empty() {
             self.parking.store(false, Ordering::Relaxed);
-            pool::run(self.opts.threads, left, |job, queue| self.edge(job, queue));
+            pool::run(self.opts.threads, left.into_iter().map(Task::Edge), |task, queue| self.task(task, queue));
             self.parking.store(true, Ordering::Relaxed);
         }
         lock(&self.state).fatal.take().map_or(Ok(()), Err)
     }
 
-    fn edge(&self, job: Job, queue: &Queue<Job>) {
+    fn task(&self, task: Task, queue: &Queue<Task>) {
+        match task {
+            Task::Edge(job) => self.edge(job, queue),
+            Task::Warm(name) => self.opts.registry.warm(&name),
+        }
+        self.unpark(queue);
+    }
+
+    fn edge(&self, job: Job, queue: &Queue<Task>) {
         if lock(&self.state).fatal.is_some() {
             return;
         }
@@ -305,7 +320,6 @@ impl Walk<'_> {
             Ok(Some(wait)) => self.park(wait, job, queue),
             Err(error) => self.failed(job, error),
         }
-        self.unpark(queue);
     }
 
     fn failed(&self, job: Job, error: Error) {
@@ -358,18 +372,18 @@ impl Walk<'_> {
 
     /// Set a job aside until what it waits on is in. Checked under the lock `unpark` takes, and
     /// the job doing it unparks once it is done: never missed.
-    fn park(&self, wait: Wait, job: Job, queue: &Queue<Job>) {
+    fn park(&self, wait: Wait, job: Job, queue: &Queue<Task>) {
         let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
         if self.waiting(&wait) {
             parked.push((wait, job));
         } else {
             drop(parked);
-            queue.push_front(job);
+            queue.push_front(Task::Edge(job));
         }
     }
 
     /// Queue again, ahead of the rest, every parked job whose wait is over: it needs no request.
-    fn unpark(&self, queue: &Queue<Job>) {
+    fn unpark(&self, queue: &Queue<Task>) {
         let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
         if parked.is_empty() {
             return;
@@ -379,7 +393,7 @@ impl Walk<'_> {
         *parked = still;
         drop(parked);
         for (_, job) in done {
-            queue.push_front(job);
+            queue.push_front(Task::Edge(job));
         }
     }
 
@@ -390,7 +404,7 @@ impl Walk<'_> {
         range: &str,
         optional: bool,
         fresh: bool,
-        queue: &Queue<Job>,
+        queue: &Queue<Task>,
     ) -> Result<Option<Wait>> {
         let over = self.overridden(from, name, range);
         let range = match &over {
@@ -806,7 +820,7 @@ impl Walk<'_> {
         m: &Manifest,
         source: Option<&str>,
         alias: Option<&str>,
-        queue: &Queue<Job>,
+        queue: &Queue<Task>,
     ) -> Result<bool> {
         let mut found = record(name, m, source);
         found.alias = alias.map(str::to_string);
@@ -850,25 +864,37 @@ impl Walk<'_> {
         crate::ui::count(&crate::ui::RESOLVED, 1);
         for (n, r) in &m.dependencies {
             if !m.optional_dependencies.contains_key(n) && !peers.contains_key(n) {
-                queue.push(Job {
+                queue.push(Task::Edge(Job {
                     from: key.clone(),
                     name: n.clone(),
                     range: r.clone(),
                     optional: false,
                     fresh: false,
                     peer: false,
-                });
+                }));
             }
         }
         for (n, r) in &m.optional_dependencies {
-            queue.push(Job {
+            queue.push(Task::Edge(Job {
                 from: key.clone(),
                 name: n.clone(),
                 range: r.clone(),
                 optional: true,
                 fresh: false,
                 peer: false,
-            });
+            }));
+        }
+        // A package the release cutoff had to date was published since the day before, often
+        // with the packages it depends on, which then need their full documents too: asked for
+        // now, beside the abbreviated ones their edges read, not after them.
+        if self.opts.registry.aged(&m.name) {
+            for (n, r) in m.dependencies.iter().chain(&m.optional_dependencies) {
+                if let Ok(spec) = spec::parse_dep(n, r)
+                    && matches!(spec.kind, Kind::Range | Kind::Version | Kind::Tag)
+                {
+                    queue.push_front(Task::Warm(spec.fetch_name));
+                }
+            }
         }
         settle(&mut s, &key, false, &peers, Some(&m.peer_dependencies), self.overrides());
         Ok(true)

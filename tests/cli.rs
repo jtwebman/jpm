@@ -2366,6 +2366,39 @@ fn a_locked_package_keeps_its_edges_whichever_edge_reaches_it_first() {
     assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["c"], "1.0.0");
 }
 
+/// A package the release cutoff had to date has its dependencies' full documents asked for
+/// beside their abbreviated ones, a guess that they were published with it: the lock is the
+/// same. With no cutoff, nothing is guessed.
+#[test]
+fn a_recent_package_asks_for_its_dependencies_full_documents_ahead() {
+    let soon = json!({ "_published": "2999-01-01T00:00:00.000Z", "dependencies": { "c": "^1.0.0" } });
+    let r = Registry::start(vec![
+        pkg("p", "1.0.0", json!({ "dependencies": { "c": "^1.0.0" } })),
+        pkg("p", "1.1.0", soon),
+        pkg("c", "1.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "p": "^1.0.0" } }));
+    let asked = |args: &[&str]| {
+        let _ = std::fs::remove_dir_all(env.store().join("metadata"));
+        let _ = std::fs::remove_file(env.path("jpm.lock"));
+        let before = r.hits.lock().unwrap().len();
+        env.ok(args);
+        let hits = r.hits.lock().unwrap()[before..].to_vec();
+        (hits.iter().filter(|h| *h == "/c").count(), env.read("jpm.lock"))
+    };
+    // c's abbreviated document for its edge, and its full one ahead of the dates it turned out
+    // not to need; twice, the same lock.
+    let (count, lock) = asked(&["lock", "--min-release-age", "1"]);
+    assert_eq!(count, 2);
+    assert!(lock.contains("package p@1.0.0") && !lock.contains("p@1.1.0"), "{lock}");
+    let (count, again) = asked(&["lock", "--min-release-age", "1"]);
+    assert_eq!((count, &again), (2, &lock));
+    // No cutoff, as the tests have it: nothing is dated, nothing guessed.
+    let (count, _) = asked(&["lock"]);
+    assert_eq!(count, 1);
+}
+
 /// Edges that wait on a document another edge is reading, or on a pick another edge is making,
 /// are set aside rather than holding a thread, and every one is walked once it is in: the lock
 /// is whole, and the same, whichever document comes last.

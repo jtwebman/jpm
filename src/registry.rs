@@ -129,6 +129,9 @@ pub struct Registry {
     /// Names a kept document answered without asking; and names asked about again since.
     unasked: Mutex<HashSet<String>>,
     rechecked: Mutex<HashSet<String>>,
+    /// Names whose packument was touched since the release cutoff, and so was dated by the
+    /// full document.
+    aged: Mutex<HashSet<String>>,
 }
 
 impl Registry {
@@ -152,6 +155,7 @@ impl Registry {
             routes: Mutex::default(),
             unasked: Mutex::default(),
             rechecked: Mutex::default(),
+            aged: Mutex::default(),
         }
     }
 
@@ -275,6 +279,7 @@ impl Registry {
         if doc.modified.as_deref().and_then(parse_date).is_some_and(|m| m <= before) {
             return Ok(Arc::new(doc));
         }
+        self.aged.lock().map_err(|_| poisoned())?.insert(name.to_string());
         let times = self.times(name, &doc)?;
         Ok(Arc::new(doc.until(&times, before)))
     }
@@ -349,6 +354,27 @@ impl Registry {
     /// The abbreviated packument, as of the release cutoff.
     pub fn packument(&self, name: &str) -> Result<Arc<Packument>> {
         memo(&self.corgis, name, || self.load_corgi(name))
+    }
+
+    /// Whether `name`'s packument was touched since the release cutoff.
+    pub fn aged(&self, name: &str) -> bool {
+        self.aged.lock().is_ok_and(|a| a.contains(name))
+    }
+
+    /// Reads `name`'s full document ahead of the release cutoff asking for its dates: a guess
+    /// that it was published since, and a request wasted when wrong. Only where the cutoff
+    /// applies to it, the registry is asked anyway, and no full document is kept, whose dates
+    /// are then read from beside it.
+    pub fn warm(&self, name: &str) {
+        let online = matches!(self.mode(), None | Some(CacheMode::Revalidate));
+        if !online || self.before.is_none() || self.excluded(name) {
+            return;
+        }
+        let kept = |url: String| self.cache.as_ref().is_some_and(|c| c.file(&format!("full {url}")).is_file());
+        if self.path(name).is_ok_and(kept) || self.fulls.lock().is_ok_and(|f| f.contains_key(name)) {
+            return;
+        }
+        let _ = self.full(name);
     }
 
     /// Whether a thread is reading the document `packument` answers for `name` right now.
