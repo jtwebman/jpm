@@ -138,6 +138,21 @@ impl RootManifest {
         })
     }
 
+    /// The root's own required peers install, as npm, pnpm and bun install them: each as a
+    /// dependency (shipped, as theirs are) where no group already names it. package.json is
+    /// left as it is.
+    pub fn install_own_peers(&mut self) {
+        let groups = [&self.dependencies, &self.dev_dependencies, &self.optional_dependencies];
+        let missing: Vec<(String, String)> = self
+            .peer_dependencies
+            .iter()
+            .flatten()
+            .filter(|(n, _)| !groups.iter().any(|g| g.contains_key(*n)) && !self.peer_optional.contains(n))
+            .map(|(n, r)| (n.clone(), r.clone()))
+            .collect();
+        self.dependencies.extend(missing);
+    }
+
     pub fn specs(&self) -> Option<Specs> {
         Specs::declared(&self.dependencies, &self.dev_dependencies, &self.optional_dependencies)
     }
