@@ -417,11 +417,16 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// The version of an entry from a registry: not a link, not git or a file.
+/// The version of an entry from a registry: not a link, not git or a file, and not a tarball
+/// url of some other site (marked's `marked-repo`, a GitHub tarball), which would pass as the
+/// registry's package and its dependency skip `block-exotic-subdeps`. Any mirror's
+/// `…/-/<name>-<version>.tgz` is a registry's.
+// ponytail: GitHub Packages' `/download/…` urls are not recognized; such a lock is resolved again.
 fn npm_version(entry: &Value) -> Option<&str> {
     let version = entry.get("version")?.as_str().filter(|v| !v.is_empty())?;
     let resolved = entry.get("resolved").and_then(Value::as_str).unwrap_or_default();
-    let web = resolved.is_empty() || resolved.starts_with("http:") || resolved.starts_with("https:");
+    let registry = resolved.contains("/-/") && resolved.ends_with(&format!("-{version}.tgz"));
+    let web = resolved.is_empty() || ((resolved.starts_with("http:") || resolved.starts_with("https:")) && registry);
     (web && !truthy(entry.get("link"))).then_some(version)
 }
 
@@ -2157,6 +2162,20 @@ snapshots:
         assert_eq!(source.nodes[0].dependencies.len(), 20);
         // Scoped names are one step.
         assert_eq!(names("a/@s/b/c"), ["a", "@s/b", "c"]);
+    }
+
+    #[test]
+    fn counts_only_registry_tarballs_as_registry_packages() {
+        let at = |resolved: &str| {
+            let entry = json::parse(&format!(r#"{{"version":"18.0.11","resolved":"{resolved}"}}"#)).unwrap();
+            npm_version(&entry).is_some()
+        };
+        assert!(at(""));
+        assert!(at("https://registry.npmjs.org/marked/-/marked-18.0.11.tgz"));
+        assert!(at("https://mirror.example/api/npm/@s/n/-/n-18.0.11.tgz"));
+        assert!(!at("https://codeload.github.com/markedjs/marked/tar.gz/0123abc"));
+        assert!(!at("https://gitlab.com/g/p/-/archive/v18.0.11/p-v18.0.11.tar.gz"));
+        assert!(!at("git+ssh://git@github.com/markedjs/marked.git#0123abc"));
     }
 
     #[test]
