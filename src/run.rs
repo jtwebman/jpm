@@ -125,7 +125,11 @@ fn quote_cmd(arg: &str, batch: bool) -> String {
 
 /// A shell running `line` in `cwd` with `dirs` first on PATH, for the project at `project`.
 pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Command {
-    let (key, path) = with_path(dirs);
+    let (key, mut path) = with_path(dirs);
+    if let Some(dir) = node_from_bun(dirs) {
+        let all = std::env::split_paths(&path).chain(std::iter::once(dir));
+        path = std::env::join_paths(all).unwrap_or(path);
+    }
     #[cfg(windows)]
     let mut command = {
         use std::os::windows::process::CommandExt;
@@ -143,6 +147,36 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Comman
     command.current_dir(cwd).env(key, path);
     hoist_env(&mut command, project);
     command
+}
+
+/// With no `node` on PATH, a project with a bun runtime gets bun by that name, last on PATH, as
+/// `bun run` does: vite, tsc and the other bins start `node`. The link is in the project's own
+/// `node_modules/.jpm`, never through a link there.
+#[cfg(unix)]
+fn node_from_bun(dirs: &[PathBuf]) -> Option<PathBuf> {
+    use std::fs;
+    if which("node").is_some() {
+        return None;
+    }
+    let bun = dirs.iter().map(|d| d.join("bun")).find(|b| b.is_file())?;
+    let real_dir = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+    let jpm = bun.parent()?.parent()?.join(".jpm");
+    let dir = jpm.join("bun-node");
+    let _ = real_dir(&jpm).then(|| fs::create_dir(&dir));
+    if !real_dir(&dir) {
+        return None;
+    }
+    let (link, target) = (dir.join("node"), fs::canonicalize(&bun).ok()?);
+    if fs::read_link(&link).ok() != Some(target.clone()) {
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).ok()?;
+    }
+    Some(dir)
+}
+
+#[cfg(not(unix))]
+fn node_from_bun(_: &[PathBuf]) -> Option<PathBuf> {
+    None
 }
 
 /// Packages in the global store resolve from the store, never reaching the project's hidden
