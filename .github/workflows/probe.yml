@@ -1,9 +1,9 @@
 name: probe
 
-# Throwaway: profiles jpm and bun on ubuntu-latest. Runs on pushes to perf-probe only.
+# Throwaway: profiles jpm and bun on ubuntu-latest. Runs on pushes to perf3-probe only.
 on:
   push:
-    branches: [perf-probe]
+    branches: [perf3-probe]
 
 jobs:
   probe:
@@ -11,11 +11,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - run: sudo apt-get install -y time strace linux-tools-common linux-tools-$(uname -r) || sudo apt-get install -y time strace linux-tools-common linux-tools-generic
       - run: sudo sysctl kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
       - uses: oven-sh/setup-bun@v2
       - run: rustup show active-toolchain || rustup toolchain install
-      - run: cargo build --release
       - run: nproc; cat /proc/cpuinfo | grep -m1 "model name"; grep -o -w "avx2\|sha_ni\|pclmulqdq\|vaes\|avx512f" /proc/cpuinfo | sort -u | tr "\n" " "; bun --version; df -h $RUNNER_TEMP; mount | grep -E " / | /mnt"
       - run: bash bench/probe.sh 2>&1 | tee probe.log
       - run: echo done
