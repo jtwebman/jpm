@@ -729,7 +729,8 @@ impl Walk<'_> {
                     // never a second copy of what the tree has (two Reacts break hooks).
                     let pool = if shipped.contains(&from) { &shipped_have } else { &have };
                     if let Some(best) = self
-                        .settle_on(&s, &from, &name, &range, pool)
+                        .parents_peer(&s, &from, &name, &range, &have)
+                        .or_else(|| self.settle_on(&s, &from, &name, &range, pool))
                         .or_else(|| self.settle_on(&s, &from, &name, &range, &have))
                     {
                         if let Some(list) = s.edges.get_mut(&from) {
@@ -841,6 +842,39 @@ impl Walk<'_> {
         Some(chosen.edge_version())
     }
 
+    /// As pnpm: what the consumer's parents have by that name comes first, dev or not, so tsup
+    /// under a root with typescript 5 gets 5, not a playground's 6.
+    // ponytail: a scan of every edge per peer; an index of parents if big trees slow down.
+    fn parents_peer(
+        &self,
+        s: &State,
+        from: &str,
+        name: &str,
+        range: &str,
+        have: &HashMap<String, Vec<String>>,
+    ) -> Option<String> {
+        let is_from =
+            |e: &Edge| from.strip_prefix(e.name.as_str()).and_then(|r| r.strip_prefix('@')) == Some(&e.version);
+        let parents: HashSet<&str> = s
+            .edges
+            .values()
+            .filter(|l| l.iter().any(is_from))
+            .filter_map(|l| l.iter().find(|e| e.name == name))
+            .map(|e| e.version.as_str())
+            .collect();
+        let near: HashMap<String, Vec<String>> = have
+            .get(name)
+            .map(|keys| {
+                keys.iter()
+                    .filter(|k| s.records.get(*k).is_some_and(|p| parents.contains(p.edge_version().as_str())))
+                    .cloned()
+                    .collect()
+            })
+            .map(|keys| HashMap::from([(name.to_string(), keys)]))
+            .unwrap_or_default();
+        self.settle_on(s, from, name, range, &near)
+    }
+
     /// An optional peer never installs anything, but a consumer sees a version already here.
     fn wire_soft_peers(&self) {
         let mut s = lock(&self.state);
@@ -856,7 +890,9 @@ impl Walk<'_> {
                 if list.iter().any(|e| e.name == name) {
                     continue;
                 }
-                if let Some(best) = self.settle_on(&s, &key, &name, &range, pool)
+                if let Some(best) = self
+                    .parents_peer(&s, &key, &name, &range, &all)
+                    .or_else(|| self.settle_on(&s, &key, &name, &range, pool))
                     && let Some(list) = s.edges.get_mut(&key)
                 {
                     list.push(Edge { name, version: best, optional: true });
