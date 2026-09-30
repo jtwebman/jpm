@@ -514,7 +514,11 @@ direct. They take the place of `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, which
 `.npmrc` names none. https goes through the proxy by CONNECT, so TLS runs end to end.
 
 New versions are held back for one day by default (`min-release-age`). Set it to `0` to
-turn this off.
+turn this off. It holds for an exact version a package pins too, so a compromised package's new
+release cannot come in by a dependency pinning it; `min-release-age-exclude` (or
+`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`) lets a name in however new. A version the
+project pins itself, in a package.json of its own or in its overrides, is taken as asked for.
+The age applies when a version is picked: what a lockfile already holds is kept as it is.
 
 The global virtual store is on by default. Turn it off with `global-store=false` in `.npmrc`,
 `JPM_GLOBAL_STORE=0` or `--no-global-store`. It is off inside containers (`/.dockerenv` or

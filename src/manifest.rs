@@ -189,6 +189,8 @@ pub struct Packument {
     parsed: Mutex<BTreeMap<String, Option<Arc<Manifest>>>>,
     /// Set when a release cutoff hid versions: the cutoff, as an ISO date.
     pub before: Option<String>,
+    /// The versions the cutoff hid, each with its publish date.
+    pub held: Map,
 }
 
 impl Packument {
@@ -252,13 +254,22 @@ impl Packument {
             spans: self.spans.clone(),
             parsed: Mutex::default(),
             before: self.before.clone(),
+            held: self.held.clone(),
         }
     }
 
     /// As the registry stood at `before` (epoch ms): later versions gone, and a tag on one moved to
     /// the highest version at or below it that is left. A version with no date passes.
     pub fn until(mut self, times: &Map, before: i64) -> Self {
-        self.spans.retain(|v, _| times.get(v).and_then(|t| parse_date(t)).is_none_or(|t| t <= before));
+        let mut held = Map::new();
+        self.spans.retain(|v, _| {
+            let date = times.get(v).filter(|t| parse_date(t).is_some_and(|t| t > before));
+            if let Some(date) = date {
+                held.insert(v.clone(), date.clone());
+            }
+            date.is_none()
+        });
+        self.held = held;
         let kept: Vec<String> = self.spans.keys().cloned().collect();
         let mut tags = BTreeMap::new();
         for (tag, v) in &self.tags {
