@@ -325,6 +325,12 @@ fn installs_bun_and_deno_from_their_platform_packages() {
     env.ok(&["install"]);
     assert_eq!(run_in(&env, &env.project(), "b"), "bun 1.2.0", "the locked version still fits");
     assert!(!env.exists("node_modules/.bin/deno"));
+    // No node on PATH: bun answers to that name, as `bun run` has it.
+    #[cfg(unix)]
+    {
+        env.manifest(json!({ "devDependencies": { "bun": "runtime:1" }, "scripts": { "n": "node" } }));
+        assert_eq!(run_in(&env, &env.project(), "n"), "bun 1.2.0");
+    }
 }
 
 /// pnpm-lock.yaml as pnpm writes a devEngines runtime: its builds by url and integrity.
