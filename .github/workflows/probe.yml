@@ -1,0 +1,25 @@
+name: probe
+
+# Throwaway: traces and profiles the resolver walk on ubuntu-latest. Runs on pushes to perf4-probe only.
+on:
+  push:
+    branches: [perf4-probe]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y time linux-tools-common linux-tools-$(uname -r) || sudo apt-get install -y time linux-tools-common linux-tools-generic
+      - run: sudo sysctl kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: nproc; grep -m1 "model name" /proc/cpuinfo; grep -o -w "avx2\|sha_ni\|avx512f\|avx512vl" /proc/cpuinfo | sort -u | tr "\n" " "
+      - run: bash bench/probe.sh 2>&1 | tee probe.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: |
+            probe.log
+            probe-out/*.txt

@@ -125,6 +125,15 @@ pub fn phase(name: &str) {
 
 pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
+pub fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("JPM_TRACE").is_some())
+}
+
+pub fn ms() -> u128 {
+    START.get_or_init(std::time::Instant::now).elapsed().as_micros() / 100
+}
+
 // --- install progress -----------------------------------------------------------------------
 
 /// What an install has done so far, counted as it goes; `Progress` draws it.

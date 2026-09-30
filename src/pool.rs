@@ -103,7 +103,8 @@ pub fn run<T: Send>(threads: usize, seed: impl IntoIterator<Item = T>, work: imp
                 let job = {
                     let mut s = queue.state.lock().unwrap_or_else(PoisonError::into_inner);
                     loop {
-                        if let Some(job) = s.0.pop_front() {
+                        let lifo = std::env::var_os("JPM_LIFO").is_some();
+                        if let Some(job) = if lifo { s.0.pop_back() } else { s.0.pop_front() } {
                             break Some(job);
                         }
                         if s.1 == 0 {

@@ -107,7 +107,12 @@ fn retry<T: Status>(url: &str, mut once: impl FnMut(&str) -> Result<T>) -> Resul
             std::thread::sleep(Duration::from_millis(BACKOFF_MS << (attempt - 1)));
         }
         let t = std::time::Instant::now();
+        let t0 = crate::ui::ms();
         let got = crate::pool::blocking(|| once(url));
+        if crate::ui::trace_on() {
+            let status = got.as_ref().map_or_else(|e| e.code.to_string(), |r| r.status().to_string());
+            eprintln!("http {t0} {} {status} {:?} {url}", crate::ui::ms(), std::thread::current().id());
+        }
         if std::env::var_os("JPM_HTTP_LOG").is_some() {
             let status = got.as_ref().map_or_else(|e| e.code.to_string(), |r| r.status().to_string());
             eprintln!("http {status} {}ms {}", t.elapsed().as_millis(), crate::ui::clean(url));

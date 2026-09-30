@@ -275,7 +275,11 @@ impl Registry {
         if doc.modified.as_deref().and_then(parse_date).is_some_and(|m| m <= before) {
             return Ok(Arc::new(doc));
         }
+        let t0 = crate::ui::ms();
         let times = self.times(name, &doc)?;
+        if crate::ui::trace_on() {
+            eprintln!("cut {t0} {} {name}", crate::ui::ms());
+        }
         Ok(Arc::new(doc.until(&times, before)))
     }
 

@@ -90,6 +90,7 @@ struct Job {
     fresh: bool,
     /// A peer's fetch: with no version to fetch, it may settle on what its scope has.
     peer: bool,
+    t: u128,
 }
 
 /// A peer found in its consumer's scope: an edge to link, or an alias's version to fetch as the
@@ -250,7 +251,7 @@ impl Walk<'_> {
             for (key, top) in &self.tops {
                 s.edges.insert(key.clone(), Vec::new());
                 for (name, range, optional) in top.manifest.edges() {
-                    jobs.push(Job { from: key.clone(), name, range, optional, fresh: false, peer: false });
+                    jobs.push(Job { from: key.clone(), name, range, optional, fresh: false, peer: false, t: crate::ui::ms() });
                 }
                 if key != ROOT {
                     let peers = s.records[key].peers.clone().unwrap_or_default();
@@ -272,11 +273,16 @@ impl Walk<'_> {
     }
 
     fn edge(&self, job: Job, queue: &Queue<Job>) {
-        let Job { from, name, range, optional, fresh, peer } = job;
+        let Job { from, name, range, optional, fresh, peer, t } = job;
         if lock(&self.state).fatal.is_some() {
             return;
         }
-        if let Err(error) = self.try_edge(&from, &name, &range, optional, fresh, queue) {
+        let t1 = crate::ui::ms();
+        let r = self.try_edge(&from, &name, &range, optional, fresh, queue);
+        if crate::ui::trace_on() {
+            eprintln!("job {t} {t1} {} {:?} {from} {name}@{range}", crate::ui::ms(), std::thread::current().id());
+        }
+        if let Err(error) = r {
             // Offline, a skipped optional would be locked out for good, where online it is fetched.
             let mut s = lock(&self.state);
             if peer && matches!(error.code, "ETARGET" | "ENOVERSIONS") {
@@ -776,6 +782,7 @@ impl Walk<'_> {
                     optional: false,
                     fresh: false,
                     peer: false,
+                    t: crate::ui::ms(),
                 });
             }
         }
@@ -787,6 +794,7 @@ impl Walk<'_> {
                 optional: true,
                 fresh: false,
                 peer: false,
+                t: crate::ui::ms(),
             });
         }
         settle(&mut s, &key, false, &peers, Some(&m.peer_dependencies), self.overrides());
@@ -881,7 +889,7 @@ impl Walk<'_> {
                         }
                         // An alias's package, as itself: the same version under its own name.
                         Some(Scoped::Fetch(version)) if !self.opts.legacy_peers => {
-                            aliased.push(Job { from, name, range: version, optional: false, fresh: false, peer: true });
+                            aliased.push(Job { from, name, range: version, optional: false, fresh: false, peer: true, t: crate::ui::ms() });
                             continue;
                         }
                         _ => {}
@@ -901,7 +909,7 @@ impl Walk<'_> {
                     let fresh = again.is_none();
                     let ask = again.map_or_else(|| range.clone(), str::to_string);
                     let ships = shipped.contains(&from);
-                    let job = (range, Job { from, name, range: ask, optional: false, fresh, peer: true });
+                    let job = (range, Job { from, name, range: ask, optional: false, fresh, peer: true, t: crate::ui::ms() });
                     match unmet.iter_mut().find(|(p, g)| *p == ships && g[0].1.name == job.1.name) {
                         Some((_, group)) => group.push(job),
                         None => unmet.push((ships, vec![job])),
@@ -946,7 +954,7 @@ impl Walk<'_> {
                     s.warnings.insert(format!(
                         "{who} needs peer {name}@{range}, which no version satisfies; linked to {name}@{version}"
                     ));
-                    jobs.push(Job { from, name, range: version, optional: false, fresh: false, peer: false });
+                    jobs.push(Job { from, name, range: version, optional: false, fresh: false, peer: false, t: crate::ui::ms() });
                 }
                 None => {
                     let error = Error::new(
