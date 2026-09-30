@@ -32,6 +32,7 @@ impl std::ops::Deref for Secret {
 }
 
 /// The application traffic secrets, kept for KeyUpdate.
+#[derive(Clone)]
 pub(crate) struct Secrets {
     pub(crate) hash: hash::Alg,
     pub(crate) aead: aead::Alg,

@@ -93,11 +93,20 @@ pub(crate) struct Conn<S> {
     wbuf: Vec<u8>,
 }
 
-impl<S: Read + Write> Conn<S> {
+impl<S> Conn<S> {
     pub(crate) fn new(io: S) -> Self {
+        Self::with_buffer(io, vec![0; BUF_LEN].into_boxed_slice())
+    }
+
+    /// A connection that only writes: no read buffer.
+    pub(crate) fn writer(io: S) -> Self {
+        Self::with_buffer(io, Box::default())
+    }
+
+    fn with_buffer(io: S, buf: Box<[u8]>) -> Self {
         Self {
             io,
-            buf: vec![0; BUF_LEN].into_boxed_slice(),
+            buf,
             start: 0,
             end: 0,
             rec_end: 0,
@@ -112,7 +121,9 @@ impl<S: Read + Write> Conn<S> {
             wbuf: Vec::new(),
         }
     }
+}
 
+impl<S: Read + Write> Conn<S> {
     /// The current record's plaintext not yet consumed.
     pub(crate) fn plaintext(&self) -> &[u8] {
         &self.buf[self.pt_start..self.pt_end]
@@ -329,7 +340,9 @@ impl<S: Read + Write> Conn<S> {
             }
         }
     }
+}
 
+impl<S: Write> Conn<S> {
     /// Seal `data` as records of type `typ` into the write buffer. `flush_records` sends them.
     pub(crate) fn push(&mut self, typ: u8, data: &[u8]) -> Result<()> {
         for chunk in data.chunks(MAX_PLAIN) {
