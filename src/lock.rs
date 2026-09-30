@@ -824,7 +824,9 @@ pub fn recorded_keys(lock: &Lockfile) -> Option<std::collections::HashMap<String
         .filter(|(key, _)| !is_link(key))
         .map(|(key, e)| {
             let (name, tail) = split_key(key)?;
-            let version = e.version.as_deref().unwrap_or(tail);
+            // An alias's `npm:<real>@<version>`: its version, as `keys::store_keys` names it.
+            let alias = crate::graph::split_alias(tail).map(|(_, v)| v);
+            let version = e.version.as_deref().or(alias).unwrap_or(tail);
             Some((key.clone(), format!("{}@{version}-{}", name.replace('/', "+"), e.subgraph.as_ref()?)))
         })
         .collect()
