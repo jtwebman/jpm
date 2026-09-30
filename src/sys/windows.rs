@@ -177,7 +177,7 @@ pub fn alive(pid: u32) -> bool {
 }
 
 pub fn exec(command: &mut Command) -> io::Result<i32> {
-    leave_interrupts_to_children();
+    let _children = leave_interrupts_to_children();
     Ok(command.status()?.code().unwrap_or(1))
 }
 
@@ -192,10 +192,21 @@ unsafe extern "system" fn handled(_event: u32) -> i32 {
 
 /// Ctrl+C reaches every process on the console. jpm waits for its child to act on it and exits
 /// with the child's code, as `exec` does on unix, instead of leaving it running behind the prompt.
-/// A handler, not the ignore flag, which children would inherit.
-pub fn leave_interrupts_to_children() {
+/// A handler, not the ignore flag, which children would inherit. Only while the returned value
+/// lives: between children, Ctrl+C ends jpm itself (taking its progress line off first).
+pub fn leave_interrupts_to_children() -> Interrupts {
     // SAFETY: registers a handler that only returns; it touches nothing.
     unsafe { SetConsoleCtrlHandler(Some(handled), 1) };
+    Interrupts
+}
+
+pub struct Interrupts;
+
+impl Drop for Interrupts {
+    fn drop(&mut self) {
+        // SAFETY: removes the handler registered with this value.
+        unsafe { SetConsoleCtrlHandler(Some(handled), 0) };
+    }
 }
 
 #[link(name = "kernel32")]
@@ -237,6 +248,17 @@ pub fn on_interrupt(undo: Option<&'static str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leaves_ctrl_c_to_children_only_while_they_run() {
+        // Removing a handler that is not registered fails: that is how to see it is gone.
+        let remove = || unsafe { SetConsoleCtrlHandler(Some(handled), 0) };
+        let children = leave_interrupts_to_children();
+        assert_ne!(remove(), 0, "registered while children run");
+        unsafe { SetConsoleCtrlHandler(Some(handled), 1) };
+        drop(children);
+        assert_eq!(remove(), 0, "still registered: Ctrl+C would never end jpm again");
+    }
 
     #[test]
     fn reads_file_identity_and_links() {
