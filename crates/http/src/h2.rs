@@ -9,10 +9,9 @@
 //! the connection `CONN_WINDOW` bytes beyond what the readers of the bodies have taken, so no
 //! more than `CONN_WINDOW` waits in memory, however slow the readers are.
 
-use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -67,6 +66,52 @@ enum Event {
     Fail(Error),
 }
 
+/// The events for one stream, from the reader to the stream's body.
+#[derive(Default)]
+struct Chan {
+    events: Mutex<VecDeque<Event>>,
+    ready: Condvar,
+}
+
+impl Chan {
+    fn send(&self, e: Event) {
+        lock(&self.events).push_back(e);
+        self.ready.notify_one();
+    }
+
+    /// The next event, or `None` after `stall` without one.
+    fn recv(&self, stall: Duration) -> Option<Event> {
+        let until = Instant::now() + stall;
+        let mut events = lock(&self.events);
+        loop {
+            if let Some(e) = events.pop_front() {
+                return Some(e);
+            }
+            let left = until.checked_duration_since(Instant::now()).filter(|d| !d.is_zero())?;
+            events = self.ready.wait_timeout(events, left).unwrap_or_else(PoisonError::into_inner).0;
+        }
+    }
+}
+
+/// The open streams by id: a few hundred at most, so a list.
+#[derive(Default)]
+struct Streams(Vec<(u32, Slot)>);
+
+impl Streams {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn get_mut(&mut self, id: u32) -> Option<&mut Slot> {
+        self.0.iter_mut().find(|s| s.0 == id).map(|s| &mut s.1)
+    }
+
+    fn remove(&mut self, id: u32) -> Option<Slot> {
+        let i = self.0.iter().position(|s| s.0 == id)?;
+        Some(self.0.swap_remove(i).1)
+    }
+}
+
 /// One HTTP/2 connection. Clones share it.
 #[derive(Clone)]
 pub struct Conn(Arc<Shared>);
@@ -86,13 +131,15 @@ struct Out {
 }
 
 struct State {
-    streams: HashMap<u32, Slot>,
+    streams: Streams,
     /// The next stream's id: every odd id below it has been used.
     next: u32,
     /// Streams promised to requests that have not opened them yet.
     reserved: usize,
-    /// Streams the server allows at once, at most `MAX_STREAMS`.
+    /// Streams the server allows at once, and the most this client opens (at most
+    /// `MAX_STREAMS`, or fewer when its pool says).
     allowed: usize,
+    cap: usize,
     /// The server's SETTINGS_MAX_FRAME_SIZE, for the header blocks sent.
     max_frame: usize,
     /// The server's SETTINGS_INITIAL_WINDOW_SIZE, and the connection's window for sending.
@@ -110,7 +157,7 @@ struct State {
 }
 
 struct Slot {
-    tx: Sender<Event>,
+    chan: Arc<Chan>,
     /// What the server may still send this stream, and what its reader has taken since the
     /// last WINDOW_UPDATE.
     recv: i64,
@@ -166,10 +213,11 @@ impl Conn {
     /// reader thread.
     pub fn start(r: impl Read + Send + 'static, w: impl Write + Send + 'static, stall: Duration) -> io::Result<Conn> {
         let state = State {
-            streams: HashMap::new(),
+            streams: Streams::default(),
             next: 1,
             reserved: 0,
             allowed: FIRST_STREAMS,
+            cap: MAX_STREAMS,
             max_frame: frame::DEFAULT_MAX_FRAME,
             send_initial: i64::from(DEFAULT_WINDOW),
             send: i64::from(DEFAULT_WINDOW),
@@ -218,7 +266,7 @@ impl Conn {
     /// Promise a stream to a request, when one is free.
     fn reserve(&self) -> bool {
         let mut st = lock(&self.0.state);
-        let free = st.closed.is_none() && st.streams.len() + st.reserved < st.allowed;
+        let free = st.closed.is_none() && st.streams.len() + st.reserved < st.room();
         st.reserved += usize::from(free);
         free
     }
@@ -231,7 +279,7 @@ impl Conn {
     /// `get`, on a stream `reserve` promised.
     fn send(&self, req: &Request, reserved: bool) -> Result<Response, Error> {
         let block = request_block(req);
-        let (tx, rx) = mpsc::channel();
+        let chan = Arc::new(Chan::default());
         let shared = &self.0;
         let mut out = lock(&shared.out);
         let (id, max_frame) = {
@@ -243,7 +291,7 @@ impl Conn {
             if let Some(e) = &st.closed {
                 return Err(Error::unprocessed(e.message.clone()));
             }
-            if st.streams.len() >= st.allowed {
+            if st.streams.len() >= st.room() {
                 return Err(Error::unprocessed("http2: no stream free on the connection"));
             }
             let id = st.next;
@@ -254,8 +302,9 @@ impl Conn {
                 st.next += 2;
             }
             let send = st.send_initial;
-            let slot = Slot { tx, recv: i64::from(STREAM_WINDOW), owed: 0, send, head: false, length: None, got: 0 };
-            st.streams.insert(id, slot);
+            let recv = i64::from(STREAM_WINDOW);
+            let slot = Slot { chan: chan.clone(), recv, owed: 0, send, head: false, length: None, got: 0 };
+            st.streams.0.push((id, slot));
             (id, st.max_frame)
         };
         // HEADERS, then CONTINUATION for what does not fit.
@@ -273,7 +322,7 @@ impl Conn {
             shared.fail(Stop::Other(e.into()));
         }
 
-        let mut body = Body { shared: shared.clone(), id, rx, chunk: Vec::new(), at: 0, done: false };
+        let mut body = Body { shared: shared.clone(), id, chan, chunk: Vec::new(), at: 0, done: false };
         match body.next()? {
             Event::Head(status, headers) => Ok(Response { status, headers, body }),
             _ => Err(Error::new(io::ErrorKind::InvalidData, "http2: a response without a head")),
@@ -353,10 +402,10 @@ impl Shared {
         let (streams, goaway) = {
             let mut st = lock(&self.state);
             st.closed.get_or_insert_with(|| err.clone());
-            (std::mem::take(&mut st.streams), st.goaway)
+            (std::mem::take(&mut st.streams.0), st.goaway)
         };
         for (id, slot) in streams {
-            let _ = slot.tx.send(Event::Fail(Error { unprocessed: id > goaway, ..err.clone() }));
+            slot.chan.send(Event::Fail(Error { unprocessed: id > goaway, ..err.clone() }));
         }
         let mut out = lock(&self.out);
         if let Stop::Violation(v) = why {
@@ -425,7 +474,7 @@ impl Shared {
                 let slot = {
                     let mut st = lock(&self.state);
                     st.opened(stream)?;
-                    st.streams.remove(&stream)
+                    st.streams.remove(stream)
                 };
                 if let Some(slot) = slot {
                     let why = format!("http2: the server reset the stream (error code {code})");
@@ -434,7 +483,7 @@ impl Shared {
                     } else {
                         Error::new(io::ErrorKind::ConnectionReset, why)
                     };
-                    let _ = slot.tx.send(Event::Fail(e));
+                    slot.chan.send(Event::Fail(e));
                     self.changed();
                 }
                 Ok(())
@@ -457,16 +506,17 @@ impl Shared {
             }
             Frame::Ping { ack: true, .. } | Frame::Ignored => Ok(()),
             Frame::GoAway { last, code } => {
-                let refused: Vec<Slot> = {
+                let refused: Vec<(u32, Slot)> = {
                     let mut st = lock(&self.state);
                     st.goaway = st.goaway.min(last);
                     let why = format!("http2: the server is closing the connection (GOAWAY, error code {code})");
                     st.closed.get_or_insert_with(|| Error::unprocessed(why));
-                    let ids: Vec<u32> = st.streams.keys().copied().filter(|&id| id > last).collect();
-                    ids.iter().filter_map(|id| st.streams.remove(id)).collect()
+                    let (refused, kept) = std::mem::take(&mut st.streams.0).into_iter().partition(|s| s.0 > last);
+                    st.streams.0 = kept;
+                    refused
                 };
-                for slot in refused {
-                    let _ = slot.tx.send(Event::Fail(Error::unprocessed(
+                for (_, slot) in refused {
+                    slot.chan.send(Event::Fail(Error::unprocessed(
                         "http2: the server closed the connection before this request (GOAWAY)",
                     )));
                 }
@@ -480,7 +530,7 @@ impl Shared {
                     Some(&mut st.send)
                 } else {
                     st.opened(stream)?;
-                    st.streams.get_mut(&stream).map(|s| &mut s.send)
+                    st.streams.get_mut(stream).map(|s| &mut s.send)
                 };
                 if let Some(w) = window {
                     *w += increment;
@@ -499,7 +549,7 @@ impl Shared {
         let mut st = lock(&self.state);
         st.opened(id)?;
         // A stream reset or given up on: its head was decoded for the table's sake, and is dropped.
-        let Some(slot) = st.streams.get_mut(&id) else { return Ok(()) };
+        let Some(slot) = st.streams.get_mut(id) else { return Ok(()) };
         if !slot.head {
             let (status, headers) = response_head(fields)?;
             if (100..200).contains(&status) {
@@ -510,7 +560,7 @@ impl Shared {
             }
             slot.head = true;
             slot.length = headers.iter().find(|(k, _)| k == "content-length").and_then(|(_, v)| v.parse().ok());
-            let _ = slot.tx.send(Event::Head(status, headers));
+            slot.chan.send(Event::Head(status, headers));
         } else if !end {
             return Err(violation(frame::PROTOCOL_ERROR, "http2: trailers that do not end the stream").into());
         }
@@ -532,7 +582,7 @@ impl Shared {
                 return Err(violation(frame::FLOW_CONTROL_ERROR, "http2: DATA beyond the connection's window").into());
             }
             st.opened(id)?;
-            if let Some(slot) = st.streams.get_mut(&id) {
+            if let Some(slot) = st.streams.get_mut(id) {
                 if !slot.head {
                     return Err(violation(frame::PROTOCOL_ERROR, "http2: DATA before the response head").into());
                 }
@@ -542,7 +592,7 @@ impl Shared {
                 }
                 slot.got += chunk.len() as u64;
                 if !chunk.is_empty() {
-                    let _ = slot.tx.send(Event::Data(chunk));
+                    slot.chan.send(Event::Data(chunk));
                 }
                 // The data is given back as the stream's reader takes it, and the padding now.
                 let updates = st.taken(id, pad);
@@ -564,6 +614,11 @@ impl Shared {
 }
 
 impl State {
+    /// Streams that may be open at once.
+    fn room(&self) -> usize {
+        self.allowed.min(self.cap)
+    }
+
     /// Frames may name only streams this client opened (section 5.1): an even id or one not
     /// used yet is a violation. A stream that has since closed is fine, and ignored.
     fn opened(&self, id: u32) -> Result<(), Violation> {
@@ -578,7 +633,7 @@ impl State {
             frame::ENABLE_PUSH if v != 0 => {
                 return Err(violation(frame::PROTOCOL_ERROR, "http2: the server enabled push"));
             }
-            frame::MAX_CONCURRENT_STREAMS => self.allowed = (v as usize).min(MAX_STREAMS),
+            frame::MAX_CONCURRENT_STREAMS => self.allowed = v as usize,
             frame::INITIAL_WINDOW_SIZE => {
                 let v = i64::from(v);
                 if v > frame::MAX_WINDOW {
@@ -586,7 +641,7 @@ impl State {
                 }
                 let delta = v - self.send_initial;
                 self.send_initial = v;
-                for s in self.streams.values_mut() {
+                for (_, s) in &mut self.streams.0 {
                     s.send += delta;
                     if s.send > frame::MAX_WINDOW {
                         return Err(violation(frame::FLOW_CONTROL_ERROR, "http2: window above 2^31-1"));
@@ -609,7 +664,7 @@ impl State {
     fn taken(&mut self, id: u32, n: usize) -> [(u32, u32); 2] {
         let n = n as u32;
         let mut stream = 0;
-        if let Some(slot) = self.streams.get_mut(&id) {
+        if let Some(slot) = self.streams.get_mut(id) {
             slot.owed += n;
             if slot.owed >= STREAM_WINDOW / 4 {
                 stream = std::mem::take(&mut slot.owed);
@@ -628,7 +683,7 @@ impl State {
     /// The server ended stream `id`: its reader gets the end, or an error when the body's
     /// length is not the one its head gave.
     fn finish(&mut self, id: u32) {
-        if let Some(slot) = self.streams.remove(&id) {
+        if let Some(slot) = self.streams.remove(id) {
             let event = match slot.length {
                 Some(n) if n != slot.got => Event::Fail(Error::new(
                     io::ErrorKind::InvalidData,
@@ -636,7 +691,7 @@ impl State {
                 )),
                 _ => Event::End,
             };
-            let _ = slot.tx.send(event);
+            slot.chan.send(event);
         }
     }
 }
@@ -668,7 +723,7 @@ fn response_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u16, Vec<(String, S
 pub struct Body {
     shared: Arc<Shared>,
     id: u32,
-    rx: Receiver<Event>,
+    chan: Arc<Chan>,
     chunk: Vec<u8>,
     at: usize,
     /// The end has been read.
@@ -678,24 +733,20 @@ pub struct Body {
 impl Body {
     /// The next event, the stall timeout an error.
     fn next(&mut self) -> Result<Event, Error> {
-        match self.rx.recv_timeout(self.shared.stall) {
-            Ok(Event::Fail(e)) => {
+        match self.chan.recv(self.shared.stall) {
+            Some(Event::Fail(e)) => {
                 self.done = true;
                 Err(e)
             }
-            Ok(Event::End) => {
+            Some(Event::End) => {
                 self.done = true;
                 Ok(Event::End)
             }
-            Ok(e) => Ok(e),
-            Err(RecvTimeoutError::Timeout) => Err(Error::new(
+            Some(e) => Ok(e),
+            None => Err(Error::new(
                 io::ErrorKind::TimedOut,
                 format!("http2: nothing heard for {}s", self.shared.stall.as_secs()),
             )),
-            Err(RecvTimeoutError::Disconnected) => {
-                self.done = true;
-                Err(Error::new(io::ErrorKind::UnexpectedEof, "http2: connection closed"))
-            }
         }
     }
 }
@@ -729,17 +780,13 @@ impl Drop for Body {
     /// A body not read to its end: the stream is reset, and what the server sent for it is
     /// given back to the connection.
     fn drop(&mut self) {
-        let open = lock(&self.shared.state).streams.remove(&self.id).is_some();
+        let open = lock(&self.shared.state).streams.remove(self.id).is_some();
         if open {
             let id = self.id;
             self.shared.send(|b| frame::put(b, frame::RST_STREAM, 0, id, &frame::CANCEL.to_be_bytes()));
         }
-        let mut left = 0;
-        while let Ok(e) = self.rx.try_recv() {
-            if let Event::Data(d) = e {
-                left += d.len();
-            }
-        }
+        let left: usize =
+            lock(&self.chan.events).drain(..).map(|e| if let Event::Data(d) = e { d.len() } else { 0 }).sum();
         if left > 0 {
             let updates = lock(&self.shared.state).taken(self.id, left);
             self.shared.give_back(updates);
@@ -757,11 +804,14 @@ impl Drop for Body {
 pub struct Pool {
     hub: Arc<Hub>,
     per_host: usize,
+    /// Streams each connection may carry at once, at most.
+    streams: usize,
     stall: Duration,
 }
 
 struct Hub {
-    hosts: Mutex<HashMap<String, Host>>,
+    /// Each host's connections, by the key the caller gave.
+    hosts: Mutex<Vec<(String, Host)>>,
     changed: Condvar,
 }
 
@@ -786,10 +836,12 @@ pub enum Got<T> {
 const REDO: usize = 3;
 
 impl Pool {
-    /// Up to `per_host` connections to each host; a stream that hears nothing for `stall` fails.
-    pub fn new(per_host: usize, stall: Duration) -> Self {
+    /// Up to `per_host` connections to each host, each carrying up to `streams` streams at once
+    /// (and no more than the server allows, nor `MAX_STREAMS`). A stream that hears nothing for
+    /// `stall` fails.
+    pub fn new(per_host: usize, streams: usize, stall: Duration) -> Self {
         let hub = Arc::new(Hub { hosts: Mutex::default(), changed: Condvar::new() });
-        Self { hub, per_host: per_host.max(1), stall }
+        Self { hub, per_host: per_host.max(1), streams: streams.clamp(1, MAX_STREAMS), stall }
     }
 
     /// A GET to the host `key` names, on a connection `connect` makes when one is needed. A
@@ -815,7 +867,7 @@ impl Pool {
 
     /// Whether the host `key` names is known to speak HTTP/1.1 only.
     pub fn is_h1(&self, key: &str) -> bool {
-        lock(&self.hub.hosts).get(key).is_some_and(|h| h.h1)
+        lock(&self.hub.hosts).iter().any(|h| h.0 == key && h.1.h1)
     }
 
     /// A connection with a stream promised: the least busy one, or a new one while the host
@@ -828,10 +880,14 @@ impl Pool {
         let mut hosts = lock(&self.hub.hosts);
         let until = Instant::now() + self.stall;
         loop {
-            if !hosts.contains_key(key) {
-                hosts.insert(key.to_string(), Host::default());
-            }
-            let host = hosts.get_mut(key).unwrap();
+            let i = match hosts.iter().position(|h| h.0 == key) {
+                Some(i) => i,
+                None => {
+                    hosts.push((key.to_string(), Host::default()));
+                    hosts.len() - 1
+                }
+            };
+            let host = &mut hosts[i].1;
             if host.h1 {
                 return Ok(Err(None));
             }
@@ -850,7 +906,7 @@ impl Pool {
                 let link = connect();
                 hosts = lock(&self.hub.hosts);
                 self.hub.changed.notify_all();
-                let host = hosts.get_mut(key).unwrap();
+                let host = &mut hosts[i].1;
                 host.connecting -= 1;
                 return match link? {
                     Link::H1(t) => {
@@ -859,6 +915,7 @@ impl Pool {
                     }
                     Link::H2(c) => {
                         let _ = c.0.hub.set(self.hub.clone());
+                        lock(&c.0.state).cap = self.streams;
                         let got = c.reserve();
                         host.conns.push(c.clone());
                         if !got {
