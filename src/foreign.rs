@@ -710,8 +710,9 @@ fn read_bun(text: &str) -> Result<Source> {
         let Some(t) = bun_tuple(tuple).filter(|t| !t.bundled) else { continue };
         let (real, version) = split_id(t.id);
         let name = names(path).last().map_or_else(String::new, |n| n.to_string());
-        // bun writes an os or cpu it does not know as "none": unknown, so no restriction.
-        let known = |v: Option<&Value>| list(v).into_iter().filter(|x| x != "none").collect();
+        // bun writes an os or cpu it does not know as "none" (netbsd, loong64): kept, it matches
+        // no platform, where dropping it installed every such build everywhere.
+        let known = |v: Option<&Value>| list(v);
         let node = Node {
             real: (name != real).then(|| real.clone()),
             name,
@@ -1460,7 +1461,7 @@ snapshots:
     },
   },
   "packages": {
-    "@s/native": ["@s/native@1.0.0", "", { "os": "darwin", "cpu": "none" }, "sha512-native"],
+    "@s/native": ["@s/native@1.0.0", "", { "os": "darwin" }, "sha512-native"],
     "dep": ["dep@1.0.0", "https://mirror.example/", {}, "sha512-dep"],
     "tool": ["tool@1.0.0", "", { "dependencies": { "dep": "^1.0.0" }, "optionalDependencies": { "@s/native": "1.0.0" }, "bin": { "tool": "cli.js" } }, "sha512-tool"],
   }
@@ -1519,6 +1520,9 @@ package tool@1.0.0
         assert!(npm.binless.is_empty() && npm.warnings.is_empty());
         let bun = read("bun.lock", BUN, demo()).unwrap();
         assert_eq!(bun.lock, expected);
+        let netbsd = BUN.replace(r#"{ "os": "darwin" }"#, r#"{ "os": "none", "cpu": "arm64" }"#);
+        let native = &read("bun.lock", &netbsd, demo()).unwrap().lock.packages["@s/native@1.0.0"];
+        assert_eq!(native.os, ["none"]);
         // pnpm says only hasBin: bins are left to the store.
         let pnpm = read("pnpm-lock.yaml", PNPM, demo()).unwrap();
         let mut binless = expected.clone();
