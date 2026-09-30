@@ -241,6 +241,30 @@ fn settles_peers_against_the_tree() {
 }
 
 #[test]
+fn a_peer_settles_on_what_its_parent_has() {
+    // tsup under a root with typescript 5 got a playground's typescript 6 (the tree's newest).
+    let r = Registry::start(vec![
+        pkg("bundler", "1.0.0", json!({ "peerDependencies": { "ts": ">=4" } })),
+        pkg(
+            "soft",
+            "1.0.0",
+            json!({ "peerDependencies": { "ts": ">=4" }, "peerDependenciesMeta": { "ts": { "optional": true } } }),
+        ),
+        pkg("play", "1.0.0", json!({ "dependencies": { "ts": "6.0.3" } })),
+        pkg("ts", "5.9.0", json!({})),
+        pkg("ts", "6.0.3", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(
+        json!({ "dependencies": { "bundler": "1", "soft": "1", "play": "1" }, "devDependencies": { "ts": "5.9.0" } }),
+    );
+    env.ok(&["install"]);
+    let lock = env.lock();
+    assert_eq!(lock["packages"]["bundler@1.0.0"]["dependencies"]["ts"], "5.9.0", "{lock}");
+    assert_eq!(lock["packages"]["soft@1.0.0"]["optionalDependencies"]["ts"], "5.9.0", "{lock}");
+}
+
+#[test]
 fn consumers_missing_one_peer_share_a_version_that_fits_them_all() {
     // typescript-eslint caps typescript where ts-api-utils takes any: a copy each gave
     // ts-api-utils a typescript it could not load (unjs/upm#8).
