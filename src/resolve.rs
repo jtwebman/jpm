@@ -14,7 +14,7 @@ use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root};
 use crate::manifest::Manifest;
 use crate::pool::{self, Queue};
 use crate::project::{self, RootManifest, declared_peers, local_path, local_shape};
-use crate::registry::{Registry, tarball_url};
+use crate::registry::Registry;
 use crate::rules::{self, Override};
 use crate::semver;
 use crate::spec::{self, Kind, Spec};
@@ -306,7 +306,7 @@ impl Walk<'_> {
                 self.visit_locked(from, &key);
             } else {
                 let m = self.read(&source, pinned.as_deref())?;
-                self.visit(from, &spec.name, &m, Some(&source), queue)?;
+                self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
             }
             push(source);
             return Ok(());
@@ -339,7 +339,7 @@ impl Walk<'_> {
                 None => {
                     let m = self.read(&spec.fetch_spec, None)?;
                     let source = m.dist.tarball.clone().unwrap_or_default();
-                    self.visit(from, &spec.name, &m, Some(&source), queue)?;
+                    self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
                     source
                 }
             };
@@ -352,17 +352,20 @@ impl Walk<'_> {
             push(ws.edge_version());
             return Ok(());
         }
+        // An alias is keyed by the package it installs, not only by the name it takes.
+        let alias = (spec.fetch_name != spec.name).then_some(spec.fetch_name.as_str());
+        let edge = |version: &str| alias.map_or_else(|| version.to_string(), |a| crate::graph::alias_edge(a, version));
         let kept = if fresh || self.opts.dedupe { None } else { self.kept(&spec) };
         if let Some(version) = kept {
-            self.visit_locked(from, &format!("{}@{version}", spec.name));
-            push(version);
+            self.visit_locked(from, &format!("{}@{}", spec.name, edge(&version)));
+            push(edge(&version));
             return Ok(());
         }
         let m = self.pick(&spec, fresh)?;
         m.integrity()?;
-        let key = format!("{}@{}", spec.name, m.version);
+        let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
-        let first = self.visit(from, &spec.name, &m, None, queue)?;
+        let first = self.visit(from, &spec.name, &m, None, alias, queue)?;
         if libc {
             // The read the walk above needs is this edge's to fail on.
             let read = self.libc_of(&m)?;
@@ -376,7 +379,7 @@ impl Walk<'_> {
                 }
             }
         }
-        push(m.version.clone());
+        push(edge(&m.version));
         Ok(())
     }
 
@@ -552,19 +555,20 @@ impl Walk<'_> {
         Ok(version)
     }
 
-    /// The locked version an edge can keep. Never for a tag; for an alias only when the locked
-    /// entry's tarball is the one the registry serves for the aliased name.
+    /// The locked version an edge can keep: one the lockfile has under this very key, the
+    /// package the spec asks for (an alias's key names it). Never for a tag. For an alias keyed
+    /// before aliases had keys of their own (`name@version`), when its tarball is the one the
+    /// registry serves for the aliased name.
     fn kept(&self, spec: &Spec) -> Option<String> {
         if spec.kind == Kind::Tag {
             return None;
         }
         let locked = self.opts.locked?;
         let versions = self.locked_versions.get(&spec.name)?;
+        let alias = spec.fetch_name != spec.name;
         let same = |v: &&String| {
-            spec.fetch_name == spec.name
-                || locked.packages.get(&format!("{}@{v}", spec.name)).is_some_and(|p| {
-                    p.resolved == tarball_url(self.opts.registry.base_for(&spec.fetch_name), &spec.fetch_name, v)
-                })
+            let own = if alias { crate::graph::alias_edge(&spec.fetch_name, v) } else { v.to_string() };
+            locked.packages.get(&format!("{}@{own}", spec.name)).is_some_and(|p| p.alias.is_none() || alias)
         };
         let list: Vec<&str> = versions.iter().filter(same).map(String::as_str).collect();
         semver::max_satisfying(list, &spec.fetch_spec).map(str::to_string)
@@ -618,8 +622,18 @@ impl Walk<'_> {
     /// Record a picked package and queue its edges, unless it is already being walked. A key
     /// is one package: `x@1.0.0` reached as the real `x` and as `npm:other@1.0.0` under the
     /// name `x` would otherwise let whichever came first stand in for the other everywhere.
-    fn visit(&self, from: &str, name: &str, m: &Manifest, source: Option<&str>, queue: &Queue<Job>) -> Result<bool> {
-        let key = format!("{name}@{}", source.unwrap_or(&m.version));
+    fn visit(
+        &self,
+        from: &str,
+        name: &str,
+        m: &Manifest,
+        source: Option<&str>,
+        alias: Option<&str>,
+        queue: &Queue<Job>,
+    ) -> Result<bool> {
+        let mut found = record(name, m, source);
+        found.alias = alias.map(str::to_string);
+        let key = found.key();
         let mut s = lock(&self.state);
         if !s.started.insert(key.clone()) {
             let integrity = m.integrity().unwrap_or_default();
@@ -633,7 +647,6 @@ impl Walk<'_> {
             return Ok(false);
         }
         s.edges.insert(key.clone(), Vec::new());
-        let mut found = record(name, m, source);
         let peers = declared_peers(&m.dependencies, &m.optional_dependencies, Some(&m.peer_dependencies), &|n| {
             m.is_optional_peer(n)
         });

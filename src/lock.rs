@@ -246,7 +246,8 @@ pub fn to_lockfile(res: &Resolution, base_for: &dyn Fn(&str) -> String) -> Lockf
         let (version, resolved) = if p.source.is_some() {
             (Some(p.version.clone()), None)
         } else {
-            let derivable = p.resolved == tarball_url(&base_for(&p.name), &p.name, &p.version);
+            let real = p.alias.as_deref().unwrap_or(&p.name);
+            let derivable = p.resolved == tarball_url(&base_for(real), real, &p.version);
             (None, (!derivable).then(|| p.resolved.clone()))
         };
         // A runtime's integrity, bins and platform are this machine's: its variants are the facts.
@@ -314,11 +315,20 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
         // A linked directory: where it is, never stored.
         let link = tail.strip_prefix("link:").map(str::to_string);
         let source = e.version.as_ref().filter(|_| link.is_none()).map(|_| tail.to_string());
-        let version = e.version.unwrap_or_else(|| tail.to_string());
+        // An alias: `name@npm:<real>@<version>`, served where the real package is.
+        let alias = crate::graph::split_alias(tail).filter(|_| source.is_none());
+        let version = match (e.version, alias) {
+            (Some(v), _) => v,
+            (None, Some((_, v))) => v.to_string(),
+            (None, None) => tail.to_string(),
+        };
         let resolved = match (&source, e.resolved) {
             (Some(s), _) => s.clone(),
             (None, Some(r)) => r,
-            (None, None) => tarball_url(&base_for(name), name, &version),
+            (None, None) => {
+                let real = alias.map_or(name, |(r, _)| r);
+                tarball_url(&base_for(real), real, &version)
+            }
         };
         let list = |l: Vec<String>| (!l.is_empty()).then_some(l);
         let mut package = Package {
@@ -343,6 +353,7 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             build: e.build,
             patch: e.patch,
             runtime: (!e.variants.is_empty()).then_some(e.variants),
+            alias: alias.map(|(r, _)| r.to_string()),
             ..Package::default()
         };
         if package.runtime.is_some() {
@@ -1093,6 +1104,11 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
             && !asked.iter().any(|s| spec::names_source(s, top.base, version))
         {
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
+        } else if let Some((real, _)) = crate::graph::split_alias(version)
+            && !asked.iter().any(|s| s.fetch_name == real)
+        {
+            // An edit cannot put another package under a name a spec gave to one it names.
+            return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
         }
     }
     Ok(())
@@ -1169,6 +1185,14 @@ fn check_key(key: &str) -> Result<Option<String>> {
             return Err(fail(format!("package key {key:?} is not a runtime at an exact version")));
         }
         return Ok(Some(version.to_string()));
+    }
+    // An alias: `name@npm:<real>@<version>`, both names package names and the version exact.
+    if let Some((real, v)) = crate::graph::split_alias(version) {
+        let named = |n: &str| spec::check_name(n, key).is_ok();
+        if !named(name) || !named(real) || !semver::is_exact(v) {
+            return Err(fail(format!("package key {key:?} is not an alias of a package at an exact version")));
+        }
+        return Ok(None);
     }
     // Almost every key is `name@1.2.3`: checked directly, without building a spec.
     if version.as_bytes()[0].is_ascii_digit() && semver::is_exact(version) {

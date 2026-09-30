@@ -196,6 +196,13 @@ matches, jpm uses the recorded subgraphs instead of hashing the graph again. A h
 merge is fine; the hash no longer matches, so jpm checks everything and writes the file again.
 `jpm lock --json` prints the lockfile as JSON, in upm's format, with `root.overrides` added.
 
+An `npm:` alias is keyed by the package it installs as well as the name it takes:
+`"typescript": "npm:@typescript/typescript6@^6"` is `package typescript@npm:@typescript/typescript6@6.0.2`,
+and an edge to it reads `dep typescript npm:@typescript/typescript6@6.0.2`. The real typescript
+at the same version stays a package of its own. A lockfile written before this keys an alias
+by its name and version, which it could only do where nothing else had that name at that
+version; it installs as it is.
+
 The root records the ranges package.json declares (`spec`, a `catalog:` range as the range it
 stands for) and each override the tree was resolved under (`override`: manager, pnpm-style
 selector, value with `$name` and `catalog:` resolved, in the order they apply). Another range,

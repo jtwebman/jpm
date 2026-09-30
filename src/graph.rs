@@ -148,19 +148,25 @@ pub struct Package {
     /// A runtime (`runtime:`): every platform's build. `integrity`, `resolved` and `bin` are
     /// this platform's.
     pub runtime: Option<Vec<crate::runtime::Variant>>,
+    /// The registry package installed under `name` (`"typescript": "npm:@typescript/typescript6@^6"`).
+    /// Its key is `name@npm:<alias>@<version>`: grafana has that alias and the real typescript at
+    /// one version, two packages that `name@version` would make one.
+    pub alias: Option<String>,
 }
 
 impl Package {
     /// What an edge to this package carries as its version.
     pub fn edge_version(&self) -> String {
-        match (&self.local, &self.source) {
-            (Some(path), _) => format!("link:{path}"),
-            (None, Some(source)) => source.clone(),
+        match (&self.local, &self.source, &self.alias) {
+            (Some(path), ..) => format!("link:{path}"),
+            (None, Some(source), _) => source.clone(),
+            (None, None, Some(real)) => alias_edge(real, &self.version),
             _ => self.version.clone(),
         }
     }
 
-    /// The one identity: `name@version`, `name@link:<path>` or `name@<source>`.
+    /// The one identity: `name@version`, `name@link:<path>`, `name@<source>` or, for an alias,
+    /// `name@npm:<real>@<version>`.
     pub fn key(&self) -> String {
         format!("{}@{}", self.name, self.edge_version())
     }
@@ -192,6 +198,16 @@ pub struct Resolution {
 }
 
 /// Split a key at the first `@` past a scope's: a url or a path may hold one.
+/// An alias's edge: `npm:<real>@<version>`.
+pub fn alias_edge(real: &str, version: &str) -> String {
+    format!("npm:{real}@{version}")
+}
+
+/// The package and version an alias's edge names: `npm:<real>@<version>`.
+pub fn split_alias(edge: &str) -> Option<(&str, &str)> {
+    split_key(edge.strip_prefix("npm:")?)
+}
+
 pub fn split_key(key: &str) -> Option<(&str, &str)> {
     let at = key.get(1..)?.find('@')? + 1;
     Some((&key[..at], &key[at + 1..]))
