@@ -10,5 +10,5 @@ mod client;
 pub mod der;
 pub mod x509;
 
-pub use client::{Config, Stream};
+pub use client::{Config, Stream, Verified};
 pub use x509::Anchor;

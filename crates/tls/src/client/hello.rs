@@ -503,5 +503,16 @@ pub(crate) fn verify_chain<'a>(h: &Hello, chain: &[&'a [u8]]) -> Result<PublicKe
     if h.config.insecure_skip_verify {
         return crate::x509::leaf_key(chain[0]).map_err(|e| Error::Cert(e.0));
     }
-    crate::x509::verify_server(chain, h.host, now(), &h.config.roots).map_err(|e| Error::Cert(e.0))
+    // The same chain for the same host, checked before with these roots and still in its dates,
+    // passes as it did then: the check is a function of exactly these.
+    let (key, now) = (super::Verified::key(h.host, chain), now());
+    h.config
+        .verified
+        .check(
+            key,
+            now,
+            || crate::x509::leaf_key(chain[0]),
+            || crate::x509::verify_server_within(chain, h.host, now, &h.config.roots),
+        )
+        .map_err(|e| Error::Cert(e.0))
 }
