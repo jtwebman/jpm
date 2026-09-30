@@ -7,7 +7,7 @@ ROOT=$(dirname "$BENCH")
 ALL="jpm npm pnpm bun yarn deno aube upm"
 RUNNERS=$ALL
 FIXTURES="nitro nuxt next"
-PHASES="cold warm repeat"
+PHASES="cold warm ci repeat"
 SAMPLES=3
 MIN_FREE=3
 KEEP=0
@@ -24,7 +24,7 @@ usage: bench/bench.sh [options]
   -r, --runners a,b     package managers (default: $ALL)
   -f, --fixtures a,b    fixtures from bench/fixtures (default: nitro,nuxt,next)
   -n, --samples N       runs per phase (default: 3)
-      --phases a,b      cold, warm, repeat (default: all three)
+      --phases a,b      cold, warm, ci, repeat (default: all four)
       --bin name=path   use this binary for a runner (repeatable)
       --installed       use the managers on PATH instead of fetching the latest
       --min-free GB     stop when the work dir has less free space (default: 3)
@@ -76,7 +76,7 @@ report() {
 			for (i = 1; i <= nc; i++) {
 				k = R[r] SUBSEP K[i]
 				if (!cnt[k]) m = fail[k] ? "failed" : "-"
-				else m = col == 1 ? ftime(med[k]) : fmem(med[k])
+				else m = col == 1 || col == 3 ? ftime(med[k]) : fmem(med[k])
 				if (cnt[k] && med[k] == best[i]) m = "**" m "**"
 				line = line " " m " |"
 			}
@@ -92,21 +92,34 @@ report() {
 		runs++
 		k = $1 SUBSEP $3 SUBSEP $4
 		if ($6 != 0) { fail[k]++; nfail++; next }
-		n = ++cnt[k]; v[k, n, 1] = $7; v[k, n, 2] = $9
+		n = ++cnt[k]; v[k, n, 1] = $7; v[k, n, 2] = $9; v[k, n, 3] = $8; v[k, n, 4] = $10; v[k, n, 5] = $11
+		if ($10 != "") disk = 1
 	}
 	END {
 		d["cold"] = "no cache, no lockfile"
-		d["warm"] = "cache and lockfile kept, `node_modules` deleted"
+		d["warm"] = "cache and lockfile kept, `node_modules` deleted: CI with its cache restored"
+		d["ci"] = "lockfile kept, no cache, no `node_modules`: CI without a cache"
 		d["repeat"] = "nothing changed"
 		for (p = 1; p <= np; p++) {
-			print "**" toupper(substr(P[p], 1, 1)) substr(P[p], 2) "** (" d[P[p]] "):\n"
+			title = P[p] == "ci" ? "CI" : toupper(substr(P[p], 1, 1)) substr(P[p], 2)
+			print "**" title "** (" d[P[p]] "):\n"
 			for (f = 1; f <= nf; f++) { C[f] = F[f]; K[f] = F[f] SUBSEP P[p] }
 			table(nf, 1)
 		}
-		print "**Peak memory** (max RSS):\n"
 		nc = 0
 		for (f = 1; f <= nf; f++) for (p = 1; p <= np; p++) { C[++nc] = F[f] " " P[p]; K[nc] = F[f] SUBSEP P[p] }
+		print "**CPU time** (user and system, every process the install starts):\n"
+		table(nc, 3)
+		print "**Peak memory** (max RSS):\n"
 		table(nc, 2)
+		if (disk) {
+			nc = 0
+			for (f = 1; f <= nf; f++) { C[++nc] = F[f]; K[nc] = F[f] SUBSEP "cold" }
+			print "**Disk** after a cold install (`node_modules` and the cache or store, a hardlinked file once):\n"
+			table(nc, 4)
+			print "**Cache** after a cold install (what CI saves and restores):\n"
+			table(nc, 5)
+		}
 		printf "%d runs, %d failed.\n", runs, nfail
 		for (k in fail) { split(k, a, SUBSEP); printf "  failed: %s %s %s (%d)\n", a[1], a[2], a[3], fail[k] }
 	}' "$1"
@@ -133,7 +146,7 @@ done
 case $SAMPLES$MIN_FREE in *[!0-9]*) die "-n and --min-free take whole numbers" ;; esac
 case $W in /*[!/]*) ;; *) die "BENCH_WORK must be an absolute path below /: $W" ;; esac
 case $W in *[[:space:]]*) die "BENCH_WORK must not contain spaces: $W" ;; esac
-for p in $PHASES; do case $p in cold | warm | repeat) ;; *) die "unknown phase: $p" ;; esac; done
+for p in $PHASES; do case $p in cold | warm | ci | repeat) ;; *) die "unknown phase: $p" ;; esac; done
 for f in $FIXTURES; do case $f in */* | .*) die "bad fixture name: $f" ;; esac; [ -f "$BENCH/fixtures/$f/package.json" ] || die "no fixture: $f"; done
 # Windows runs this under Git Bash, timing with measure.exe (built below) in place of GNU time.
 case $(uname -s) in MINGW* | MSYS* | CYGWIN*) WIN=1 ;; *) WIN=0 ;; esac
@@ -365,6 +378,14 @@ check_disk() {
 	STOP=1
 }
 
+# Sets DISK, in KB: the project's node_modules and the runner's home, where every cache and store
+# is (see envs), counted together so a file hardlinked into both counts once; and CACHE: the home
+# alone, what CI would save and restore.
+sizes() {
+	DISK=$(du -sk "$1/proj/node_modules" "$1/home" 2>/dev/null | awk '{ n += $1 } END { print n + 0 }')
+	CACHE=$(du -sk "$1/home" 2>/dev/null | awk '{ print $1 + 0 }')
+}
+
 # A fresh project: no cache, no lockfile, no node_modules.
 fresh() {
 	wipe "$1"
@@ -392,7 +413,7 @@ fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 RES=$BENCH/results/$STAMP.tsv
-[ $DRY = 1 ] || printf 'runner\tversion\tfixture\tphase\tsample\tstatus\twall_ms\tcpu_ms\trss_kb\n' >"$RES"
+[ $DRY = 1 ] || printf 'runner\tversion\tfixture\tphase\tsample\tstatus\twall_ms\tcpu_ms\trss_kb\tdisk_kb\tcache_kb\n' >"$RES"
 STOP=0
 for f in $FIXTURES; do
 	for p in $PHASES; do
@@ -415,10 +436,17 @@ for f in $FIXTURES; do
 					fresh "$d" "$f" && pm_install "$r" "$d" "$r-$f-$p-$s-setup"
 				fi
 				[ "$p" = warm ] && wipe "$d/proj/node_modules"
+				# CI with no cache: the lockfile alone, every cache and store gone.
+				if [ "$p" = ci ]; then
+					wipe "$d/proj/node_modules"
+					wipe "$d/home" && mkdir -p "$d/home"
+				fi
 				pm_install "$r" "$d" "$r-$f-$p-$s"
 				eval "ver=\$VER_$r"
-				printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-					"$r" "$ver" "$f" "$p" "$s" "$ST" "$WALL" "$CPU" "$RSS" >>"$RES"
+				DISK="" CACHE=""
+				if [ "$p" = cold ] && [ "$ST" = 0 ]; then sizes "$d"; fi
+				printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+					"$r" "$ver" "$f" "$p" "$s" "$ST" "$WALL" "$CPU" "$RSS" "$DISK" "$CACHE" >>"$RES"
 				printf '%-6s %-6s %-6s %s  %6s ms  %s\n' "$r" "$f" "$p" "$s" "$WALL" \
 					"$([ "$ST" = 0 ] || echo "FAILED ($ST), see $W/logs/$r-$f-$p-$s.log")"
 			done

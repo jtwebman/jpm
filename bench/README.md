@@ -3,11 +3,18 @@
 `bench.sh` times installs of the projects in `fixtures/` with jpm and other package
 managers, and prints the medians as Markdown tables.
 
-Each fixture is installed in three phases:
+Each fixture is installed in four phases:
 
 - **cold**: no cache, no lockfile, no `node_modules`
-- **warm**: cache and lockfile kept, `node_modules` deleted
+- **warm**: cache and lockfile kept, `node_modules` deleted: CI with its cache restored
+- **ci**: lockfile kept, no cache, no `node_modules`: CI with no cache
 - **repeat**: nothing changed
+
+Besides wall time, each install records the CPU time of every process it starts and its peak
+memory: a CI runner has two to four cores, so CPU time is what an install costs there. After a
+cold install, the bench also records the disk it took: `node_modules` and the manager's cache
+or store together, a hardlinked file counted once, and the cache alone, which is what CI saves
+and restores between runs.
 
 Every phase runs `-n` times. Each round runs every manager once before the next round
 starts, so a slow minute on the network is spread over all of them.
@@ -65,9 +72,16 @@ in its `logs/`.
 ## Results
 
 Every run is one line in `results/<date>-<time>.tsv`: runner, version, fixture, phase,
-sample, exit status, wall time (ms), user+system CPU time (ms) and peak RSS (KB). A failed
+sample, exit status, wall time (ms), user+system CPU time (ms), peak RSS (KB), and after a
+cold install the disk used and the cache's size (KB). A failed
 run is recorded and counted, and left out of the medians. The time taken by the timing
 wrapper itself is measured at the start and taken off every wall time.
+
+## On GitHub's runners
+
+The `bench` workflow runs this on `ubuntu-latest`, the runner most CI pays for: start it from
+the Actions tab (or `gh workflow run bench.yml`), optionally naming runners, fixtures and
+samples. The tables go to the run's summary, and the results file is kept as an artifact.
 
 ## Example
 

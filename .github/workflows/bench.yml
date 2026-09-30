@@ -1,0 +1,48 @@
+name: bench
+
+# bench/bench.sh on the runner most CI pays for, started by hand: the latest release of every
+# manager against jpm built from the chosen ref. The tables go to the run's summary.
+on:
+  workflow_dispatch:
+    inputs:
+      runners:
+        description: package managers (comma-separated)
+        default: jpm,npm,pnpm,bun,yarn,deno,aube,upm
+      fixtures:
+        description: fixtures (comma-separated)
+        default: nitro,nuxt,next
+      samples:
+        description: runs per phase
+        default: "3"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      # GNU time for the timings; Node for npm, yarn and upm.
+      - run: sudo apt-get install -y time
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: bench
+        env:
+          BENCH_WORK: ${{ runner.temp }}/bench
+        run: |
+          bench/bench.sh -r "${{ inputs.runners }}" -f "${{ inputs.fixtures }}" -n "${{ inputs.samples }}" | tee bench.out
+          results=$(ls -t bench/results/*.tsv | head -n 1)
+          {
+            echo "## jpm bench on ubuntu-latest ($(nproc) cores, $(git rev-parse --short HEAD))"
+            echo
+            bench/bench.sh --report "$results"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: |
+            bench/results/*.tsv
+            bench.out
