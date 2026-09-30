@@ -37,12 +37,13 @@ another directory. Each platform has its own build:
 | Windows x64       | `jpm-windows-x64.exe`   | `x86_64-pc-windows-msvc`                     |
 | Windows arm64     | `jpm-windows-arm64.exe` | `aarch64-pc-windows-msvc`                    |
 
-The plain Linux builds link against glibc 2.17, so they run on CentOS 7, Debian 8, Ubuntu 14.04 and
-anything newer, and need nothing else from the system. The `-musl` builds are static, for Alpine
-and other systems without glibc; they run anywhere, but musl's allocator makes a large install
-about a third slower. install.sh takes the glibc build where `getconf` reports glibc 2.17 or later
-and the musl build otherwise; `JPM_LIBC=musl` or `JPM_LIBC=glibc` picks one. Tests run on
-Linux x64, Windows x64 and macOS arm64.
+The plain Linux builds link against glibc 2.17, so they run on CentOS 7, Debian 8, Ubuntu 14.04
+and anything newer, and need nothing else from the system. The `-musl` builds are static, for
+Alpine and other systems without glibc; they run anywhere, but musl's allocator makes a large
+install 12-25% slower, with 14-35% more CPU (nuxt and next, from a lockfile and without one).
+install.sh takes the glibc build where `getconf` reports glibc 2.17 or later and the musl build
+otherwise; `JPM_LIBC=musl` or `JPM_LIBC=glibc` picks one. Tests run on Linux x64, Windows x64
+and macOS arm64.
 
 Or build it:
 
