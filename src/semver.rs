@@ -658,6 +658,12 @@ pub fn satisfies(version: &str, range: &str) -> bool {
     parse(version).is_some_and(|v| satisfies_version(&v, range, false))
 }
 
+/// Whether a peer's range takes the version, prereleases in: pnpm's satisfiesWithPrereleases,
+/// so a workspace's `5.0.0-0` meets `>=3.0.0`. A dependency's range still leaves them out.
+pub fn satisfies_peer(version: &str, range: &str) -> bool {
+    parse(version).is_some_and(|v| satisfies_version(&v, range, true))
+}
+
 /// Whether two comparators leave a version between them: node-semver's Comparator.intersects,
 /// which decides by operators and an exact version's fit rather than by counting versions.
 fn meets(a: &Comparator, b: &Comparator) -> bool {
@@ -699,11 +705,26 @@ pub fn max_satisfying<'a, I>(versions: I, range: &str) -> Option<&'a str>
 where
     I: IntoIterator<Item = &'a str>,
 {
-    let sets = parse_range(range, false)?;
+    max_in(versions, range, false)
+}
+
+/// `max_satisfying` for a peer's range, prereleases in, as `satisfies_peer` takes them.
+pub fn max_satisfying_peer<'a, I>(versions: I, range: &str) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    max_in(versions, range, true)
+}
+
+fn max_in<'a, I>(versions: I, range: &str, inc_pr: bool) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let sets = parse_range(range, inc_pr)?;
     let mut best: Option<(Version, &str)> = None;
     for raw in versions {
         let Some(v) = parse(raw) else { continue };
-        if !sets.iter().any(|s| test_set(&v, s, false)) {
+        if !sets.iter().any(|s| test_set(&v, s, inc_pr)) {
             continue;
         }
         if best.as_ref().is_none_or(|(b, _)| v > *b) {
@@ -857,5 +878,14 @@ mod tests {
         let versions = ["1.0.0", "1.5.0", "2.0.0", "1.9.9-beta", "junk"];
         assert_eq!(max_satisfying(versions, "^1"), Some("1.5.0"));
         assert_eq!(max_satisfying(versions, "^3"), None);
+        assert_eq!(max_satisfying_peer(versions, "^1"), Some("1.9.9-beta"));
+    }
+
+    #[test]
+    fn a_peer_takes_prereleases() {
+        assert!(satisfies_peer("5.0.0-0", ">=3.0.0") && !satisfies("5.0.0-0", ">=3.0.0"));
+        assert!(satisfies_peer("3.0.260903-beta", "^3.0.0-0") && !satisfies("3.0.260903-beta", "^3.0.0-0"));
+        assert!(satisfies_peer("2.0.0-rc.1", "*"));
+        assert!(!satisfies_peer("5.0.0-0", "^3.0.0 || ^4.0.0"));
     }
 }

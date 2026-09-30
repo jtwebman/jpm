@@ -18,7 +18,7 @@ use crate::project::{GROUPS, RootManifest};
 use crate::registry::tarball_url;
 use crate::resolve::Prefer;
 use crate::rules;
-use crate::semver::max_satisfying;
+use crate::semver::{max_satisfying, max_satisfying_peer};
 
 pub const FOREIGN: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock"];
 
@@ -973,7 +973,8 @@ fn build(
                 let pick = if was.is_empty() {
                     version.clone()
                 } else {
-                    max_satisfying([was.as_str(), version.as_str()], peer.map_or("*", String::as_str))
+                    let both = [was.as_str(), version.as_str()];
+                    peer.map_or_else(|| max_satisfying(both, "*"), |r| max_satisfying_peer(both, r))
                         .unwrap_or(&was)
                         .to_string()
                 };

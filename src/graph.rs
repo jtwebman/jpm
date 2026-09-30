@@ -511,7 +511,7 @@ pub fn unmet_peers(res: &Resolution) -> Vec<String> {
             let have = res.packages.get(&format!("{name}@{edge}")).map_or(edge.as_str(), |d| d.version.as_str());
             if !semver::valid_range(range) {
                 out.push(format!("{key} declares peer {name}@{range}, which is not a range we can read"));
-            } else if !semver::satisfies(have, range) {
+            } else if !semver::satisfies_peer(have, range) {
                 out.push(format!("{key} needs peer {name}@{range}, and the tree installs {name}@{have}"));
             }
         }

@@ -399,6 +399,33 @@ fn a_peer_no_version_satisfies_takes_what_its_scope_has() {
 }
 
 #[test]
+fn a_prerelease_meets_a_peer_range_it_is_above() {
+    // pnpm checks a peer's range with prereleases in: 3.0.0-beta.1 meets `>=1` and `^3.0.0-0`,
+    // as a workspace's 5.0.0-0 meets a plugin's `>=3`. A dependency's range still leaves it out.
+    let r = Registry::start(vec![
+        pkg("host", "1.0.0", json!({})),
+        pkg("host", "3.0.0-beta.1", json!({})),
+        pkg("wants3", "1.0.0", json!({ "peerDependencies": { "host": "^3.0.0-0" } })),
+        pkg("wants-any", "1.0.0", json!({ "peerDependencies": { "host": ">=1" } })),
+        pkg("plain", "1.0.0", json!({ "dependencies": { "host": ">=1" } })),
+        pkg(
+            "mid",
+            "1.0.0",
+            json!({ "dependencies": { "wants3": "1.0.0", "wants-any": "1.0.0", "host": "3.0.0-beta.1" } }),
+        ),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "mid": "1.0.0", "plain": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(!out.contains("unmet peer"), "{out}");
+    let lock = env.lock();
+    assert_eq!(lock["packages"]["wants3@1.0.0"]["dependencies"]["host"], "3.0.0-beta.1");
+    assert_eq!(lock["packages"]["wants-any@1.0.0"]["dependencies"]["host"], "3.0.0-beta.1");
+    assert_eq!(lock["packages"]["plain@1.0.0"]["dependencies"]["host"], "1.0.0");
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
+
+#[test]
 fn a_peer_no_version_satisfies_waits_for_the_rounds_fetches() {
     // registry-mock's circular aliased peers: b's c 2.0.0 falls back on the c 1.0.0 that a's
     // peer fetches in the same round. Settled as that fetch landed first or not, the install

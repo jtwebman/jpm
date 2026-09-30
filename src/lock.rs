@@ -1128,7 +1128,7 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
             let peer = || {
                 let ws = lock.workspaces.get(path);
                 top.peers.get(name).is_some_and(|range| {
-                    ws.is_some_and(|w| w.name == *name && (range == "*" || crate::semver::satisfies(&w.version, range)))
+                    ws.is_some_and(|w| w.name == *name && crate::semver::satisfies_peer(&w.version, range))
                 })
             };
             if !named && !aliased() && !peer() {
