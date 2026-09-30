@@ -100,6 +100,7 @@ Notes
   github:u/r, u/r, gitlab:, bitbucket:, git+https://, git+ssh:// and git:// are git
   dependencies, #<commit>, #<branch|tag> or #semver:<range>; locked to a commit (git ls-remote),
   fetched as the host's archive or with git. A git package's prepare script is an install script.
+  jsr:@scope/name@<range> is npm:@jsr/scope__name from npm.jsr.io (or @jsr:registry).
   node@runtime:<range> (bun@, deno@ too) installs that runtime as a package, its binary in
   node_modules/.bin, locked with every platform's build; add saves it to devEngines.runtime
   (--dev) or engines.runtime, as pnpm does. Node comes from nodejs.org or node-mirror:release,

@@ -203,6 +203,10 @@ at the same version stays a package of its own. A lockfile written before this k
 by its name and version, which it could only do where nothing else had that name at that
 version; it installs as it is.
 
+A `jsr:` range is jsr's package from its npm registry, as pnpm reads it: `"fs": "jsr:@std/fs@^1"`
+(or `"@std/fs": "jsr:^1"`) is `npm:@jsr/std__fs@^1`, from `https://npm.jsr.io` unless
+`@jsr:registry` names another.
+
 The root records the ranges package.json declares (`spec`, a `catalog:` range as the range it
 stands for) and each override the tree was resolved under (`override`: manager, pnpm-style
 selector, value with `$name` and `catalog:` resolved, in the order they apply). Another range,
