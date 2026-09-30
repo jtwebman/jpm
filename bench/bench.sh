@@ -238,12 +238,15 @@ if [ $WIN = 1 ]; then
 	TIMER="$MEASURE $(cygpath -w "$W/time")"
 fi
 
-# Deletes a dir under the work dir; stores keep their files read-only.
+# Deletes a dir under the work dir; stores keep their files read-only. Deleting needs only the
+# directories writable: a file under node_modules is often a hardlink to a store's, and making it
+# writable would change the store's copy too, before the next timed run. Files are made writable
+# only if the delete still fails (Windows will not delete a read-only file).
 wipe() {
 	case $1 in "$W"/?*) ;; *) die "refusing to delete $1" ;; esac
 	[ -e "$1" ] || return 0
-	chmod -R u+w "${1:?}"
-	rm -rf "${1:?}"
+	find "${1:?}" -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
+	rm -rf "${1:?}" 2>/dev/null || { chmod -R u+w "${1:?}" && rm -rf "${1:?}"; }
 	[ ! -e "$1" ] || die "could not delete $1"
 }
 
