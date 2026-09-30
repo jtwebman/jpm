@@ -1680,6 +1680,59 @@ fn takes_the_workspaces_of_package_json_and_pnpm_workspace_yaml_both() {
 }
 
 #[test]
+fn installs_workspaces_with_emoji_in_their_names_and_paths() {
+    // A workspace named with an emoji, one in a directory with one, and one with no name in an
+    // emoji directory: linked by name, locked, installed again from the lockfile.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"], "dependencies": { "🎨ui": "workspace:*" } }));
+    env.write(
+        "packages/ui/package.json",
+        r#"{ "name": "🎨ui", "version": "1.0.0", "dependencies": { "b": "1.0.0" } }"#,
+    );
+    env.write(
+        "packages/📦box/package.json",
+        r#"{ "name": "box", "version": "1.0.0", "dependencies": { "🎨ui": "workspace:*" } }"#,
+    );
+    env.write("packages/🧪/package.json", r#"{ "devDependencies": { "b": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+    assert_eq!(real(env.project().join("node_modules/🎨ui")), real(env.project().join("packages/ui")));
+    assert_eq!(real(env.project().join("packages/📦box/node_modules/🎨ui")), real(env.project().join("packages/ui")));
+    assert!(env.read("packages/ui/node_modules/b/index.js").contains("b@1.0.0"));
+    assert!(env.read("packages/🧪/node_modules/b/index.js").contains("b@1.0.0"));
+    let lock = env.lock();
+    assert_eq!(lock["workspaces"]["packages/📦box"]["name"], "box");
+    assert_eq!(lock["workspaces"]["packages/ui"]["name"], "🎨ui");
+    assert_eq!(lock["workspaces"]["packages/🧪"]["name"], "🧪");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    std::fs::remove_dir_all(env.project().join("packages/📦box/node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(real(env.project().join("packages/📦box/node_modules/🎨ui")), real(env.project().join("packages/ui")));
+    // A bin in an emoji directory, and one named with an emoji, run through their shims.
+    env.write(
+        "packages/📦box/package.json",
+        r#"{ "name": "box", "version": "1.0.0", "bin": { "box": "cli.js", "🎁": "cli.js" } }"#,
+    );
+    env.write("packages/📦box/cli.js", "#!/usr/bin/env node\nconsole.log('boxed')\n");
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"], "dependencies": { "box": "workspace:*", "🎨ui": "workspace:*" }, "scripts": { "b": "box", "g": "🎁", "u": "ui-cli" } }));
+    env.write("packages/ui/package.json", r#"{ "name": "🎨ui", "version": "1.0.0", "bin": { "ui-cli": "cli.js" } }"#);
+    env.write(
+        "packages/ui/cli.js",
+        "#!/usr/bin/env node
+console.log('boxed')
+",
+    );
+    env.ok(&["install"]);
+    if std::process::Command::new("node").arg("--version").output().is_ok() {
+        for script in ["b", "g", "u"] {
+            assert!(env.ok(&["run", "-s", script]).contains("boxed"), "{script}");
+        }
+    }
+}
+
+#[test]
 fn installs_a_workspace_with_no_name() {
     // immich lists `.github`, whose package.json has only devDependencies and scripts.
     let r = registry();

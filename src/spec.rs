@@ -489,14 +489,6 @@ pub fn check_name(name: &str, raw: &str) -> Result<()> {
         if part.chars().any(|c| c.is_control() || c.is_whitespace() || "@\\:<>\"|?*".contains(c)) {
             return bad("name has a character a directory or jpm.lock cannot hold");
         }
-        // Emoji and other letters are fine; what makes a name read as another is not: bidi
-        // overrides and marks, zero-width spaces, a byte-order mark (the zero-width joiner of
-        // an emoji sequence stays).
-        let hides = |c: char| {
-            matches!(c, '\u{200B}' | '\u{200C}' | '\u{200E}' | '\u{200F}' | '\u{2060}' | '\u{FEFF}')
-                || ('\u{202A}'..='\u{202E}').contains(&c)
-                || ('\u{2066}'..='\u{2069}').contains(&c)
-        };
         if part.chars().any(hides) {
             return bad("name has a character that hides what it reads as");
         }
@@ -509,6 +501,20 @@ pub fn check_name(name: &str, raw: &str) -> Result<()> {
         return bad("name is reserved");
     }
     Ok(())
+}
+
+/// Whether a name may hold `c` (within a part; `/` and a scope's `@` are the name's shape).
+pub fn name_char(c: char) -> bool {
+    !(c.is_control() || c.is_whitespace() || "/@\\:<>\"|?*".contains(c) || hides(c))
+}
+
+/// Emoji and other letters are fine; what makes a name read as another is not: bidi overrides
+/// and marks, zero-width spaces, a byte-order mark (the zero-width joiner of an emoji sequence
+/// stays).
+pub fn hides(c: char) -> bool {
+    matches!(c, '\u{200B}' | '\u{200C}' | '\u{200E}' | '\u{200F}' | '\u{2060}' | '\u{FEFF}')
+        || ('\u{202A}'..='\u{202E}').contains(&c)
+        || ('\u{2066}'..='\u{2069}').contains(&c)
 }
 
 /// A Windows device name, whatever follows a dot: `CON`, `nul.js`, `COM1`.

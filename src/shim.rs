@@ -44,8 +44,18 @@ pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, S
     let path = target.replace('\\', "/");
     // A lockfile can name the target, and a shim is a script: what its quotes cannot hold would
     // run. Only what every shell's double quotes keep literal is let in: not `"%$`!`, and not the
-    // smart quotes U+2018-U+201F, which PowerShell also reads as quotes.
-    if !path.chars().all(|c| c.is_alphanumeric() || " -_./@+~,=#():'".contains(c)) {
+    // smart quotes U+2018-U+201F, which PowerShell also reads as quotes. Other letters and emoji
+    // are (a workspace named `🎨ui`), bar what hides what a path reads as.
+    let quotable = |c: char| {
+        c.is_ascii_alphanumeric()
+            || " -_./@+~,=#():'".contains(c)
+            || (!c.is_ascii()
+                && !c.is_control()
+                && !c.is_whitespace()
+                && !('\u{2018}'..='\u{201F}').contains(&c)
+                && !crate::spec::hides(c))
+    };
+    if !path.chars().all(quotable) {
         return Err(Error::new("EBIN", format!("refusing to shim a bin at {target:?}: it cannot be quoted")));
     }
     let program = program_of(&path, head);
@@ -57,7 +67,12 @@ pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, S
         ),
         None => format!("{cmd_path} %*"),
     };
-    let cmd = [
+    // cmd.exe reads a batch file in the console's code page (437 on most machines), which turns
+    // a UTF-8 `café` or `🎨` into other letters. Past ASCII, the shim reads its last line as
+    // UTF-8 (65001), and that line puts the code page back before it runs anything.
+    let wide = !path.is_ascii();
+    let cmd_run = if wide { format!(">nul 2>&1 chcp %jpm_cp% & {cmd_run}") } else { cmd_run };
+    let mut cmd = vec![
         "@ECHO off",
         "GOTO start",
         ":find_dp0",
@@ -66,10 +81,12 @@ pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, S
         ":start",
         "SETLOCAL",
         "CALL :find_dp0",
-        &cmd_run,
-        "",
-    ]
-    .join("\r\n");
+    ];
+    if wide {
+        cmd.extend([r#"for /f "tokens=2 delims=:." %%A in ('chcp') do set "jpm_cp=%%A""#, ">nul 2>&1 chcp 65001"]);
+    }
+    cmd.extend([cmd_run.as_str(), ""]);
+    let cmd = cmd.join("\r\n");
     let sh_run = match &run {
         Some(run) => format!("exec {run} \"$basedir_win/{path}\" \"$@\""),
         None => format!("exec \"$basedir/{path}\" \"$@\""),
@@ -108,6 +125,8 @@ pub fn shims_of(target: &str, head: Option<&str>) -> Result<Vec<(&'static str, S
         "",
     ]
     .join("\n");
+    // PowerShell 5.1 reads a script with no byte-order mark as ANSI: past ASCII, it has one.
+    let ps1 = if wide { format!("\u{FEFF}{ps1}") } else { ps1 };
     Ok(vec![("", sh), (".cmd", cmd), (".ps1", ps1)])
 }
 
@@ -182,6 +201,27 @@ mod tests {
         let injected = "../pkg/x\u{201d}; Write-Output INJECTED; & \u{201c}y.js";
         assert!(shims_of(injected, Some("#!/usr/bin/env node")).is_err());
         assert!(shims_of("C:/Users/Jo O'Neil (x86)/.jpm/@s+a@1.0.0/node_modules/a/bin/cli-x_1.js", None).is_ok());
+        // What hides what a path reads as.
+        for bad in ["a\u{202E}b", "a\u{200B}b", "a\u{FEFF}b"] {
+            assert!(shims_of(bad, None).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn shims_a_path_past_ascii_in_every_shell() {
+        // Plain ASCII: the shims npm writes, no code page switch, no byte-order mark.
+        let plain = shims_of("../a/cli.js", None).unwrap();
+        assert!(!plain[1].1.contains("chcp") && !plain[2].1.starts_with('\u{FEFF}'));
+        // A workspace named `🎨ui`, or `café`: cmd.exe reads the path line as UTF-8 and puts its
+        // code page back before it runs; PowerShell 5.1 gets a byte-order mark.
+        for path in ["../\u{1F3A8}ui/cli.js", "../caf\u{e9}/cli.js"] {
+            let shims = shims_of(path, Some("#!/usr/bin/env node")).unwrap();
+            let (cmd, ps1) = (&shims[1].1, &shims[2].1);
+            assert!(cmd.contains("chcp 65001\r\n") && cmd.contains(">nul 2>&1 chcp %jpm_cp% & "), "{cmd}");
+            assert!(cmd.find("chcp 65001").unwrap() < cmd.find(&path.replace('/', "\\")[3..]).unwrap());
+            assert!(ps1.starts_with('\u{FEFF}') && ps1.contains(path), "{ps1}");
+            assert!(shims[0].1.contains(path) && !shims[0].1.starts_with('\u{FEFF}'));
+        }
     }
 
     #[test]
