@@ -39,7 +39,7 @@ jobs:
           # tag=ref,VAR=value runs that ref's build with that environment, through a wrapper.
           bins=(); for v in $REFS; do
             tag=${v%%=*} rest=${v#*=}; ref=${rest%%,*}; bin=$PWD/../target-$(echo $ref | tr / _)/release/jpm
-            case $rest in *,*) w=$PWD/../wrap-$tag; { echo '#!/bin/sh'; echo "export ${rest#*,}"; echo "exec $bin \"\$@\""; } > $w; chmod +x $w; bin=$w ;; esac
+            case $rest in *,*) w=$PWD/../wrap-$tag; { echo '#!/bin/sh'; echo "export $(echo ${rest#*,} | tr , " ")"; echo "exec $bin \"\$@\""; } > $w; chmod +x $w; bin=$w ;; esac
             bins+=("$tag=$bin")
           done
           bash bench/ab.sh $N $PHASES $FIXTURES "${bins[@]}" | tee ab.out
