@@ -93,13 +93,16 @@ pub fn parse_dep(name: &str, spec: &str) -> Result<Spec> {
 /// `@scope/foo` -> `@scope%2ffoo`, the registry path form, after checking the name.
 pub fn escape_name(name: &str) -> Result<String> {
     check_name(name, name)?;
-    Ok(name.replacen('/', "%2f", 1))
+    Ok(match name.strip_prefix('@').and_then(|n| n.split_once('/')) {
+        Some((scope, pkg)) => format!("@{}%2f{}", encode_segment(scope), encode_segment(pkg)),
+        None => encode_segment(name),
+    })
 }
 
 /// Split `name@spec` on the `@` that is not a scope marker.
 fn split_at(arg: &str) -> (&str, &str) {
-    match arg.get(1..).and_then(|s| s.find('@')) {
-        Some(i) => (&arg[..=i], &arg[i + 2..]),
+    match crate::graph::name_end(arg) {
+        Some(at) => (&arg[..at], &arg[at + 1..]),
         None => (arg, ""),
     }
 }
@@ -202,6 +205,13 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         return Ok(make(kind, s));
     }
     if !url_safe(&s) {
+        // `2.0.0-Beata🎉` was meant as a version: say why it is not one.
+        if s.trim_start_matches(['v', '=']).starts_with(|c: char| c.is_ascii_digit()) {
+            return Err(invalid(format!(
+                "Invalid version \"{s}\" of package \"{raw}\": not semver (a prerelease or build takes only \
+                 letters, digits and `-`, in `.`-separated parts), nor a tag (tags are url-safe)"
+            )));
+        }
         return Err(invalid(format!("Invalid tag \"{s}\" of package \"{raw}\": tags must be url-safe")));
     }
     Ok(make(Kind::Tag, s))
@@ -422,7 +432,7 @@ pub fn join_path(base: &str, path: &str) -> String {
 fn workspace(name: &str, rest: &str, raw: &str) -> Result<(String, String)> {
     let mut fetch_name = name.to_string();
     let mut s = rest.trim().to_string();
-    if s.get(1..).is_some_and(|t| t.contains('@')) {
+    if crate::graph::name_end(&s).is_some() {
         let (n, r) = split_at(&s);
         check_name(n, raw)?;
         fetch_name = n.to_string();
@@ -447,40 +457,82 @@ fn url_safe(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b))
 }
 
+/// A name jpm can hold. npm's naming rules are the registry's: a name it does not hold is not
+/// found there. What jpm refuses is what would do harm here, for any name, an alias's own
+/// included (`"my$tool": "npm:real@1"`, babel's `$repo-utils`): a name is a directory under
+/// `node_modules`, a token in jpm.lock, and, percent-encoded, part of a registry url.
 pub fn check_name(name: &str, raw: &str) -> Result<()> {
     let bad = |why: &str| Err(invalid(format!("Invalid package name \"{name}\" of package \"{raw}\": {why}")));
     if name.is_empty() {
         return bad("name is empty");
     }
-    if name.starts_with('.') || name.starts_with('_') {
-        return bad("name starts with . or _");
-    }
-    if name.starts_with('-') {
-        return bad("name starts with a hyphen");
-    }
-    if name == "node_modules" || name == "favicon.ico" {
-        return bad("name is reserved");
+    if name.len() > 214 {
+        return bad("name is longer than 214 characters");
     }
     let (scope, pkg) = match name.strip_prefix('@') {
         Some(rest) => match rest.split_once('/') {
-            Some((s, p)) if !s.is_empty() && !s.contains('/') => (Some(s), p),
+            Some((s, p)) if !s.is_empty() => (Some(s), p),
             _ => return bad("name is malformed"),
         },
         None => (None, name),
     };
-    if pkg.is_empty() || pkg.contains('/') {
-        return bad("name is malformed");
+    for part in scope.into_iter().chain([pkg]) {
+        if part.is_empty() || part.contains('/') {
+            return bad("name is malformed");
+        }
+        // `.`, `..`, and `.bin` or `.jpm` beside the packages in node_modules.
+        if part.starts_with('.') {
+            return bad("name starts with a dot");
+        }
+        // A second `@` would move where name@version splits; the rest a path, the lockfile's
+        // lines or Windows cannot hold.
+        if part.chars().any(|c| c.is_control() || c.is_whitespace() || "@\\:<>\"|?*".contains(c)) {
+            return bad("name has a character a directory or jpm.lock cannot hold");
+        }
+        // Emoji and other letters are fine; what makes a name read as another is not: bidi
+        // overrides and marks, zero-width spaces, a byte-order mark (the zero-width joiner of
+        // an emoji sequence stays).
+        let hides = |c: char| {
+            matches!(c, '\u{200B}' | '\u{200C}' | '\u{200E}' | '\u{200F}' | '\u{2060}' | '\u{FEFF}')
+                || ('\u{202A}'..='\u{202E}').contains(&c)
+                || ('\u{2066}'..='\u{2069}').contains(&c)
+        };
+        if part.chars().any(hides) {
+            return bad("name has a character that hides what it reads as");
+        }
+        // Windows drops a trailing dot or space, and keeps these names for devices.
+        if part.ends_with('.') || device(part) {
+            return bad("name is not a directory Windows can make");
+        }
     }
-    if scope.is_some_and(|s| !url_safe(s)) {
-        return bad("scope has url-unsafe characters");
-    }
-    if !url_safe(pkg) {
-        return bad("name has url-unsafe characters");
-    }
-    if pkg == "." || pkg == ".." {
-        return bad("name is a path segment");
+    if pkg == "node_modules" {
+        return bad("name is reserved");
     }
     Ok(())
+}
+
+/// A Windows device name, whatever follows a dot: `CON`, `nul.js`, `COM1`.
+fn device(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+}
+
+/// A name part as a url path segment: what `encodeURIComponent` leaves alone kept, the rest
+/// percent-encoded byte by byte.
+pub fn encode_segment(part: &str) -> String {
+    let mut out = String::with_capacity(part.len());
+    for b in part.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 fn invalid(message: String) -> Error {
@@ -547,9 +599,75 @@ mod tests {
 
     #[test]
     fn refuses_bad_names() {
-        for bad in ["", ".x", "_x", "-x", "node_modules", "@/x", "a/b", "@s/", "a b", "@s/.."] {
+        // What a directory, jpm.lock or Windows cannot hold, or would read as something else.
+        for bad in [
+            "a\u{202E}b",
+            "a\u{200B}b",
+            "\u{FEFF}a",
+            "",
+            ".x",
+            ".bin",
+            "..",
+            "node_modules",
+            "@/x",
+            "a/b",
+            "@s/",
+            "a b",
+            "@s/..",
+            "a@b",
+            "@s/a@b",
+            "a:b",
+            "a\\b",
+            "a\"b",
+            "a|b",
+            "a*",
+            "x.",
+            "CON",
+            "nul.js",
+            "@s/com1",
+            "a\tb",
+        ] {
             assert!(parse_dep(bad, "1").is_err(), "{bad:?}");
         }
+        // The registry's own rules are not jpm's: babel's `$repo-utils`, an alias's own name.
+        for good in [
+            "$repo-utils",
+            "my$tool",
+            "_x",
+            "-x",
+            "JSONStream",
+            "@s/$x",
+            "com10",
+            "a~b",
+            "a%b",
+            "\u{1F4A9}",
+            "\u{1F468}\u{200D}\u{1F469}",
+        ] {
+            assert!(parse_dep(good, "1").is_ok(), "{good:?}");
+        }
+        assert_eq!(escape_name("$repo-utils").unwrap(), "%24repo-utils");
+        assert_eq!(escape_name("\u{1F4A9}").unwrap(), "%F0%9F%92%A9");
+        // Split by character: a name that begins with an emoji is not cut inside it.
+        assert_eq!(crate::graph::split_key("\u{1F4A9}@1.0.0"), Some(("\u{1F4A9}", "1.0.0")));
+        assert_eq!(parse_spec("\u{1F4A9}@^1").unwrap().fetch_spec, "^1");
+        // A prerelease after it stays whole, an exact version, below its release.
+        assert_eq!(crate::graph::split_key("\u{1F4A9}@1.0.0-alpha1a"), Some(("\u{1F4A9}", "1.0.0-alpha1a")));
+        let pre = parse_spec("\u{1F4A9}@1.0.0-alpha1a").unwrap();
+        assert_eq!((pre.kind, pre.fetch_spec.as_str()), (Kind::Version, "1.0.0-alpha1a"));
+        assert!(semver::parse("1.0.0-alpha1a") < semver::parse("1.0.0"));
+        assert!(!semver::satisfies("1.0.0-alpha1a", "^1.0.0") && semver::satisfies("1.0.0-alpha1a", "^1.0.0-alpha"));
+        // Not semver, and no tag either: said as a version.
+        for bad in ["2.0.0-Beata\u{1F389}", "2.0.0.-Beata\u{1F389}"] {
+            assert!(parse_dep("mypackage", bad).unwrap_err().message.starts_with("Invalid version"), "{bad}");
+        }
+        assert_eq!(parse_dep("mypackage", "2.0.0-Beata").unwrap().kind, Kind::Version);
+        let alias = crate::graph::split_key("\u{1F4A9}@npm:@s/x@1.0.0-alpha1a").unwrap();
+        assert_eq!(crate::graph::split_alias(alias.1), Some(("@s/x", "1.0.0-alpha1a")));
+        assert_eq!(escape_name("@s/a%b").unwrap(), "@s%2fa%25b");
+        assert_eq!(
+            crate::registry::tarball_url("https://r.test", "@s/$x", "1.0.0"),
+            "https://r.test/@s/%24x/-/%24x-1.0.0.tgz"
+        );
         assert!(parse_dep("foo", "not a tag").is_err());
         assert!(parse_dep("foo", "not/a tag").unwrap_err().message.starts_with("Invalid tag"));
     }

@@ -157,13 +157,13 @@ fn read_yarn(text: &str) -> Prefer {
 /// for a plain range, where yarn 1 would mean an alias; `name@npm:real@range` is one in both.
 fn yarn_key(key: &str, berry: bool) -> Option<(String, String)> {
     // A patched package, `name@patch:<source>#<path>`: the range of its source.
-    let at = key.get(1..)?.find('@')? + 1;
+    let at = crate::graph::name_end(key)?;
     if let Some((range, _)) = crate::patch::yarn(&key[..at], &key[at + 1..]) {
         return yarn_key(&format!("{}@{range}", &key[..at]), false);
     }
-    let plain = key.get(1..).and_then(|k| k.find("@npm:")).filter(|&i| berry && !key[i + 6..].contains('@'));
+    let plain = crate::graph::find_after_name(key, "@npm:").filter(|&at| berry && !key[at + 5..].contains('@'));
     let key = match plain {
-        Some(i) => format!("{}@{}", &key[..=i], &key[i + 6..]),
+        Some(at) => format!("{}@{}", &key[..at], &key[at + 5..]),
         None => key.to_string(),
     };
     let spec = crate::spec::parse_spec(&key).ok()?;

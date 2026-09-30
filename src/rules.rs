@@ -202,12 +202,12 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
         // jpm approves each version anyway (`jpm approve`), so a key's name is what counts.
         for (key, allowed) in y.get("allowBuilds").and_then(Value::as_object).into_iter().flatten() {
             let Some(allowed) = allowed.as_bool() else { continue };
-            match key.get(1..).and_then(|k| k.find('@')) {
+            match crate::graph::name_end(key) {
                 None => {
                     rules.builds.insert(key.clone(), allowed);
                 }
                 Some(at) if allowed => {
-                    rules.builds.entry(key[..=at].to_string()).or_insert(true);
+                    rules.builds.entry(key[..at].to_string()).or_insert(true);
                 }
                 Some(_) => {}
             }
@@ -247,8 +247,8 @@ fn under(dir: &str, rel: &str) -> String {
 
 /// `name` or `name@range`.
 fn name_range(s: &str) -> (String, Option<String>) {
-    match s.get(1..).and_then(|t| t.find('@')) {
-        Some(i) => (s[..=i].to_string(), Some(s[i + 2..].trim().to_string())),
+    match crate::graph::name_end(s) {
+        Some(at) => (s[..at].to_string(), Some(s[at + 1..].trim().to_string())),
         None => (s.trim().to_string(), None),
     }
 }

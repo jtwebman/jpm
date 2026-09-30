@@ -1634,8 +1634,8 @@ const PATCHES: &str = ".jpm_patches";
 fn locked_package(ctx: &Ctx, dir: &Path, spec: &str) -> Result<Package> {
     let none = || fail("ELOCK", format!("no {LOCKFILE} in {}: run jpm install first", dir.display()));
     let (lock, _) = lock::read_lockfile(dir)?.ok_or_else(none)?;
-    let (name, range) = match spec.get(1..).and_then(|s| s.find('@')) {
-        Some(i) => (&spec[..=i], Some(&spec[i + 2..])),
+    let (name, range) = match crate::graph::name_end(spec) {
+        Some(at) => (&spec[..at], Some(&spec[at + 1..])),
         None => (spec, None),
     };
     let fits = |p: &Package| range.is_none_or(|r| p.version == r || semver::satisfies(&p.version, r));

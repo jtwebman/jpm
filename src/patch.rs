@@ -97,7 +97,7 @@ pub fn yarn(dep: &str, value: &str) -> Option<(String, Option<(String, String)>)
         };
     }
     let source = String::from_utf8(bytes).ok()?;
-    let at = source.get(1..)?.find('@')? + 1;
+    let at = crate::graph::name_end(&source)?;
     let (name, range) = (&source[..at], &source[at + 1..]);
     // One layer: a `patch:` inside another is none that yarn writes.
     if range.contains("patch:") {
