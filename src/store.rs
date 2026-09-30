@@ -56,9 +56,10 @@ impl Index {
     }
 
     fn render(&self) -> String {
+        use std::fmt::Write as _;
         let mut out = format!("jpm-index {} {}\n", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
         for f in &self.files {
-            out.push_str(&format!("{} {} {}\n", if f.exec { 'x' } else { '-' }, f.size, f.path));
+            let _ = writeln!(out, "{} {} {}", if f.exec { 'x' } else { '-' }, f.size, f.path);
         }
         out
     }
@@ -536,14 +537,21 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
         Box::new(io::BufReader::with_capacity(INFLATED_BUF, raw))
     };
     let mut input = input.take(tar::MAX_ARCHIVE + 1);
-    let mut files: BTreeMap<String, FileEntry> = BTreeMap::new();
+    // Each file's size and whether it runs, by path: its `FileEntry` once the tarball is read.
+    let mut files: BTreeMap<String, (u64, bool)> = BTreeMap::new();
     let mut made: HashSet<PathBuf> = HashSet::new();
     let mut folded: HashMap<String, String> = HashMap::new();
     let mut manifest: Option<Vec<u8>> = None;
     // The buffer the files this thread writes itself pass through, one for the whole tarball:
     // one per file was 65 MB allocated and zeroed on nuxt.
     let mut copy: Vec<u8> = Vec::new();
-    let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
+    let stored = |path: &str| {
+        let mut file = dest.join(path);
+        if suffix {
+            file.as_mut_os_string().push(STORED_SUFFIX);
+        }
+        file
+    };
     // Past the first files, small bodies go to writer threads: one tarball of thousands of files
     // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
     let failed = &Mutex::new(None::<Error>);
@@ -554,13 +562,13 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
                 return Err(e);
             }
-            let file = dest.join(name(path));
+            let file = stored(path);
             if let Some(parent) = file.parent() {
                 make_dirs(dest, parent, &mut made)
                     .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
             }
             let exec = mode & 0o111 != 0;
-            let mut seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
+            let mut seen = files.insert(path.to_string(), (size, exec)).is_some();
             // Foo.js then foo.js: one file where the disk folds case, and the later one wins.
             if crate::sys::FOLDS_CASE
                 && let Some(old) = folded.insert(path.to_lowercase(), path.to_string())
@@ -632,15 +640,17 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
         .map(|v| bin::normalize(v.get("name").and_then(|n| n.as_str()), v.get("bin")))
         .unwrap_or_default();
     for target in declared.values() {
-        if let Some(f) = files.get_mut(target.trim_end_matches('/'))
-            && !f.exec
+        let path = target.trim_end_matches('/');
+        if let Some((_, exec)) = files.get_mut(path)
+            && !*exec
         {
-            f.exec = true;
-            set_mode(&dest.join(name(&f.path)), true);
+            *exec = true;
+            set_mode(&stored(path), true);
         }
     }
-    let unpacked_size = files.values().map(|f| f.size).sum();
-    Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
+    let unpacked_size = files.values().map(|(size, _)| size).sum();
+    let files = files.into_iter().map(|(path, (size, exec))| FileEntry { path, size, exec }).collect();
+    Ok(Index { files, unpacked_size, suffixed: suffix })
 }
 
 /// `dir` and each directory between it and `root` (which is there), made top down, each once:
