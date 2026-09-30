@@ -263,16 +263,18 @@ pub fn stamp_of(file: &Path) -> Option<Stamp> {
 }
 
 /// The one value a warm install compares: the lockfile's content (which decides the graph, its
-/// bins and every store entry), and what this install links out of it, from which store.
+/// bins and every store entry), and what this install links out of it, from which store. The
+/// store's salt (`store::salt`) keeps a state written elsewhere from passing for this store's.
 pub fn state_hash(
     lock_hash: &str,
     production: bool,
     store: &Path,
+    salt: &str,
     global: bool,
     platform: &crate::sys::Platform,
 ) -> String {
     short_hash(&format!(
-        "jpm-state-2\n{lock_hash}\nproduction:{}\nstore:{}\nglobal:{}\n{}",
+        "jpm-state-3\n{lock_hash}\nproduction:{}\nstore:{}\nsalt:{salt}\nglobal:{}\n{}",
         u8::from(production),
         store.display(),
         u8::from(global),

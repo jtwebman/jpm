@@ -1515,7 +1515,14 @@ mod bench {
             let _filtered = crate::graph::filter_platform(res, &platform).unwrap();
             let filter = t.elapsed();
             let t = Instant::now();
-            let _ = crate::state::state_hash(&content_hash(&lock), false, std::path::Path::new("/s"), true, &platform);
+            let _ = crate::state::state_hash(
+                &content_hash(&lock),
+                false,
+                std::path::Path::new("/s"),
+                "salt",
+                true,
+                &platform,
+            );
             let hash = t.elapsed();
             println!(
                 "{} bytes: read {read:?} parse {parse:?} validate {check:?} to-graph {convert:?} platform {filter:?} state-hash {hash:?} store-keys {keys:?}",
