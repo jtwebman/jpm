@@ -468,6 +468,11 @@ fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
     env.ok(&["ci"]);
     assert_eq!(real(env.project().join("a/node_modules/root")), real(env.project()));
+    // A workspace asking for itself links to its own directory, as pnpm links it (mui, pnpm).
+    env.write("c/package.json", r#"{ "name": "c", "devDependencies": { "c": "workspace:*" } }"#);
+    env.ok(&["install"]);
+    assert_eq!(real(env.project().join("c/node_modules/c")), real(env.project().join("c")));
+    assert!(env.ok(&["install"]).contains("up to date"));
     // The root asking for itself is still refused.
     env.manifest(
         json!({ "name": "root", "version": "1.0.0", "workspaces": ["a"], "dependencies": { "root": "workspace:*" } }),

@@ -1004,12 +1004,8 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             [&ws.dependencies, &ws.optional_dependencies],
             &|k| known.contains(k),
         )?;
-        let me = format!("{}@link:{path}", ws.name);
         let mut edges = ws.dependencies.clone();
         edges.extend(ws.optional_dependencies.clone());
-        if edges.iter().any(|(n, v)| format!("{n}@{v}") == me) {
-            return Err(fail(format!("{at} depends on itself")));
-        }
         check_top(ws.specs.as_ref(), &edges, &at, &ws.peer_dependencies)?;
         let link = format!("link:{path}");
         let parent = Some((ws.name.as_str(), link.as_str()));

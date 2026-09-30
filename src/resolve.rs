@@ -584,7 +584,9 @@ impl Walk<'_> {
             let Some(found) = found.or(root) else {
                 return fail(format!("no workspace package named {}", spec.fetch_name));
             };
-            if own || root.is_some() && from == ROOT {
+            // A workspace on itself (mui's `@mui/types`) links to its own directory, as pnpm links
+            // it; the root, which no workspace path names, cannot.
+            if root.is_some() && from == ROOT {
                 return fail(format!("workspace {} cannot depend on itself", spec.name));
             }
             if root.is_some() {
