@@ -3,6 +3,7 @@
 //! npm's and bun's path-keyed maps are walked the way Node resolves and pnpm's peer suffixes are
 //! stripped. Read only when a project has one of these files and no `jpm.lock`.
 
+use crate::graph::alias_edge;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::json::{self, Object as Map, Value};
@@ -350,12 +351,18 @@ fn read_npm(text: &str) -> Result<Source> {
         };
         nodes.push(with_edges(node, &Declared::of(entry), &|dep| match tree.find(from, dep) {
             Some(hit) if truthy(hit.get("inBundle")) => Target::Bundled,
-            hit => hit.and_then(npm_version).map_or(Target::Missing, |v| Target::Version(v.to_string())),
+            hit => hit.and_then(|h| npm_edge(dep, h)).map_or(Target::Missing, Target::Version),
         }));
     }
-    let (specs, root) =
-        root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(npm_version).map(str::to_string));
+    let (specs, root) = root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(|h| npm_edge(name, h)));
     Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null, runtimes: Runtimes::new() })
+}
+
+/// The edge to the entry `dep` finds: its version, or an alias's `npm:<real>@<version>`.
+fn npm_edge(dep: &str, entry: &Value) -> Option<String> {
+    let version = npm_version(entry)?;
+    let real = entry.get("name").and_then(Value::as_str).filter(|r| !r.is_empty() && *r != dep);
+    Some(real.map_or_else(|| version.to_string(), |r| alias_edge(r, version)))
 }
 
 /// npm's and bun's paths as the folders they name, each a list of the packages up to it, so
@@ -550,7 +557,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty);
     let snapshots = doc.get("snapshots").and_then(Value::as_object).unwrap_or(&empty);
     let package_index = packages.index();
-    let mut aliases = BTreeMap::new(); // alias@version -> real name
+    let mut aliases = BTreeSet::new(); // (alias, real, version)
     let mut nodes = Vec::new();
     for (key, snap) in snapshots {
         let id = strip_peers(key);
@@ -629,10 +636,9 @@ fn read_pnpm(text: &str) -> Result<Source> {
     // pnpm keys an alias by the real package; jpm gives the alias a node of its own.
     let by_id: HashMap<String, usize> =
         nodes.iter().enumerate().map(|(i, n)| (format!("{}@{}", n.name, n.version), i)).collect();
-    for (key, real) in &aliases {
-        let (alias, version) = split_id(key);
+    for (alias, real, version) in &aliases {
         let Some(&i) = by_id.get(&format!("{real}@{version}")) else { continue };
-        let node = Node { name: alias, real: Some(real.clone()), ..nodes[i].clone() };
+        let node = Node { name: alias.clone(), real: Some(real.clone()), ..nodes[i].clone() };
         nodes.push(node);
     }
     let (specs, mut root) = root_of(groups, &|name| versions.get(name).cloned());
@@ -649,20 +655,15 @@ fn read_pnpm(text: &str) -> Result<Source> {
     })
 }
 
-/// The version an edge `dep: ref` points at, `""` when not from a registry. An alias is noted:
-/// one node per `name@version`, so two packages under one alias cannot share it.
-fn pnpm_edge(aliases: &mut BTreeMap<String, String>, dep: &str, r: &str) -> Result<String> {
+/// The version an edge `dep: ref` points at, `""` when not from a registry; an alias's
+/// `npm:<real>@<version>`, noted for a node of its own.
+fn pnpm_edge(aliases: &mut BTreeSet<(String, String, String)>, dep: &str, r: &str) -> Result<String> {
     let Some((real, version)) = pnpm_target(dep, r) else { return Ok(String::new()) };
-    if real != dep {
-        let key = format!("{dep}@{version}");
-        if aliases.get(&key).is_some_and(|have| *have != real) {
-            return Err(fail(format!(
-                "pnpm-lock.yaml holds two packages as {key}; jpm keeps one per name and version"
-            )));
-        }
-        aliases.insert(key, real.to_string());
+    if real == dep {
+        return Ok(version.to_string());
     }
-    Ok(version.to_string())
+    aliases.insert((dep.to_string(), real.to_string(), version.to_string()));
+    Ok(alias_edge(real, version))
 }
 
 /// `1.2.3`, `1.2.3(peer@1)`, `real@1.2.3(peer@1)` for an alias; nothing for `link:`, `file:`.
@@ -781,7 +782,10 @@ fn bun_find(tree: &Tree, from: usize, name: &str) -> Target {
     match tree.find(from, name).map(bun_tuple) {
         None | Some(None) => Target::Missing,
         Some(Some(t)) if t.bundled => Target::Bundled,
-        Some(Some(t)) => Target::Version(split_id(t.id).1),
+        Some(Some(t)) => {
+            let (real, version) = split_id(t.id);
+            Target::Version(if real == name { version } else { alias_edge(&real, &version) })
+        }
     }
 }
 
@@ -844,7 +848,10 @@ fn build(
     let mut nodes: HashMap<String, Node> = HashMap::new();
     let mut twice = BTreeSet::new();
     for node in source.nodes {
-        let key = format!("{}@{}", node.name, node.version);
+        let key = match &node.real {
+            Some(real) => format!("{}@{}", node.name, alias_edge(real, &node.version)),
+            None => format!("{}@{}", node.name, node.version),
+        };
         let Some(have) = nodes.get_mut(&key) else {
             nodes.insert(key, node);
             continue;
@@ -939,7 +946,7 @@ fn build(
         }
         let resolved = if derivable(&node) {
             None
-        } else if let Some(real) = &node.real {
+        } else if let Some(real) = node.real.as_deref().filter(|_| node.resolved.is_none()) {
             Some(tarball_url(&base_for(real), real, &node.version))
         } else {
             node.resolved
@@ -1016,14 +1023,12 @@ fn edge_key(nodes: &HashMap<String, Node>, file: &str, from: &str, name: &str, v
 
 /// Whether install rebuilds the url on its own. The registry shape on any host counts: a file
 /// written behind a mirror names the mirror everywhere, and keeping that would pin the install
-/// to it. An alias, or a url of another shape, is kept.
+/// to it. A url of another shape is kept. An alias's is its real package's (its key names it).
 fn derivable(node: &Node) -> bool {
-    if node.real.is_some() {
-        return false;
-    }
     let Some(resolved) = &node.resolved else { return true };
-    let base = node.name.split_once('/').map_or(node.name.as_str(), |(_, b)| b);
-    resolved.ends_with(&format!("/{}/-/{base}-{}.tgz", node.name, node.version))
+    let name = node.real.as_deref().unwrap_or(&node.name);
+    let base = name.split_once('/').map_or(name, |(_, b)| b);
+    resolved.ends_with(&format!("/{name}/-/{base}-{}.tgz", node.version))
 }
 
 fn split_id(id: &str) -> (String, String) {
@@ -1566,10 +1571,7 @@ package tool@1.0.0
                 "package-lock.json settles peer host of plugin@1.0.0 two ways (1.0.0 and 2.0.0); jpm links 2.0.0 for every copy"
             ]
         );
-        assert_eq!(
-            read.lock.packages["str@4.2.3"].resolved.as_deref(),
-            Some("https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz")
-        );
+        assert!(read.lock.packages["str@npm:string-width@4.2.3"].resolved.is_none());
     }
 
     #[test]
@@ -1686,11 +1688,10 @@ snapshots:
             ..Specs::default()
         };
         assert_eq!(lock.root.specs, Some(specs));
-        assert_eq!(lock.root.dependencies, Deps::from([("str".into(), "4.2.3".into())]));
-        assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["str@4.2.3"]);
-        assert!(
-            lock.packages["str@4.2.3"].resolved.as_deref().unwrap().ends_with("/string-width/-/string-width-4.2.3.tgz")
-        );
+        assert_eq!(lock.root.dependencies, Deps::from([("str".into(), "npm:string-width@4.2.3".into())]));
+        assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["str@npm:string-width@4.2.3"]);
+        // Its key names the package, so its url is the registry's own for it: not written.
+        assert!(lock.packages["str@npm:string-width@4.2.3"].resolved.is_none());
     }
 
     #[test]
@@ -1767,7 +1768,29 @@ snapshots:
     }
 
     #[test]
-    fn refuses_two_packages_under_one_pnpm_alias() {
+    fn keeps_an_alias_beside_the_real_package_at_its_version() {
+        // grafana's shape: typescript is @typescript/typescript6 at the top, and a dependency
+        // takes the real typescript at the same version.
+        let text = json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": { "typescript": "npm:@typescript/typescript6@^6", "b": "1" } },
+                "node_modules/typescript": { "name": "@typescript/typescript6", "version": "6.0.2", "integrity": "sha512-t6" },
+                "node_modules/b": { "version": "1.0.0", "integrity": "sha512-b", "dependencies": { "typescript": "6.0.2" } },
+                "node_modules/b/node_modules/typescript": { "version": "6.0.2", "integrity": "sha512-ts" },
+            }
+        })
+        .to_string();
+        let doc = json!({ "dependencies": { "typescript": "npm:@typescript/typescript6@^6", "b": "1" } });
+        let lock = read("package-lock.json", &text, doc).unwrap().lock;
+        assert_eq!(lock.root.dependencies["typescript"], "npm:@typescript/typescript6@6.0.2");
+        assert_eq!(lock.packages["b@1.0.0"].dependencies["typescript"], "6.0.2");
+        assert_eq!(lock.packages["typescript@npm:@typescript/typescript6@6.0.2"].integrity, "sha512-t6");
+        assert_eq!(lock.packages["typescript@6.0.2"].integrity, "sha512-ts");
+    }
+
+    #[test]
+    fn keeps_two_packages_under_one_pnpm_alias() {
         let text = "lockfileVersion: '9.0'
 importers:
   .:
@@ -1789,8 +1812,12 @@ snapshots:
   foo@1.0.0: {}
   bar@1.0.0: {}
 ";
+        // Each alias is keyed by the package it names: `x@npm:foo@1.0.0` and `x@npm:bar@1.0.0`.
         let doc = json!({ "dependencies": { "a": "1", "b": "1" } });
-        assert!(err("pnpm-lock.yaml", text, doc).starts_with("pnpm-lock.yaml holds two packages as x@1.0.0"));
+        let lock = read("pnpm-lock.yaml", text, doc).unwrap().lock;
+        assert_eq!(lock.packages["a@1.0.0"].dependencies["x"], "npm:foo@1.0.0");
+        assert_eq!(lock.packages["b@1.0.0"].dependencies["x"], "npm:bar@1.0.0");
+        assert!(lock.packages.contains_key("x@npm:foo@1.0.0") && lock.packages.contains_key("x@npm:bar@1.0.0"));
     }
 
     fn npm_root(root: Value) -> String {
@@ -2078,7 +2105,8 @@ snapshots:
         })
         .to_string();
         for (file, text) in [("package-lock.json", npm), ("bun.lock", bun)] {
-            assert!(err(file, &text, doc.clone()).contains("package name \"../evil\""), "{file}");
+            let e = err(file, &text, doc.clone());
+            assert!(e.contains("package name \"../evil\""), "{file}: {e}");
         }
         let pnpm = format!(
             "lockfileVersion: '9.0'

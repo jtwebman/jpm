@@ -696,7 +696,8 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
         for (key, e) in &mut lock.packages {
             if e.scripts && crate::graph::split_key(key).is_some_and(|(n, _)| n == name) {
                 // An alias, or a tarball from elsewhere, is not the package the name says.
-                if let Some(from) = &e.resolved {
+                let alias = crate::graph::split_key(key).and_then(|(_, v)| crate::graph::split_alias(v));
+                if let Some(from) = e.resolved.clone().or_else(|| alias.map(|(real, _)| real.to_string())) {
                     return Err(fail(
                         "ENOSCRIPTS",
                         format!("{key} comes from {from}, not the registry; jpm will not approve it"),

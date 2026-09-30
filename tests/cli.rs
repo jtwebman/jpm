@@ -1211,16 +1211,55 @@ fn an_alias_never_takes_another_packages_place() {
         pkg("a", "1.0.0", json!({ "dependencies": { "real": "1.0.0" } })),
         pkg("b", "1.0.0", json!({ "dependencies": { "real": "npm:evil@1.0.0" } })),
     ]);
-    // jpm keeps one package per name and version, so the tree is refused rather than letting
-    // either stand in for the other.
+    // An alias has a key of its own, `real@npm:evil@1.0.0`: both install, each where it was asked
+    // for (grafana has typescript as an alias of @typescript/typescript6 and the real one).
     for order in [["a", "b"], ["b", "a"]] {
         let env = Env::new(&r);
         env.manifest(json!({ "dependencies": { order[0]: "1.0.0", order[1]: "1.0.0" } }));
-        let out = env.jpm(&["install"]);
-        let text = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success() && text.contains("real@1.0.0 is two different packages"), "{order:?}: {text}");
-        assert!(!env.exists("node_modules/a"), "{order:?}: nothing is linked");
+        env.ok(&["install"]);
+        assert!(env.read("node_modules/a/../real/index.js").contains("real@1.0.0"), "{order:?}");
+        assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"), "{order:?}");
+        let lock = env.lock();
+        assert_eq!(lock["packages"]["b@1.0.0"]["dependencies"]["real"], "npm:evil@1.0.0");
+        assert!(lock["packages"]["real@npm:evil@1.0.0"].is_object() && lock["packages"]["real@1.0.0"].is_object());
+        assert!(env.ok(&["install"]).contains("up to date"));
+        std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+        env.ok(&["ci"]);
+        assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"), "{order:?}");
     }
+    // The root's own alias, next to the real package under the same name elsewhere; a lockfile
+    // edit pointing the name at another package is refused.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.0.0", "real": "npm:evil@^1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/real/index.js").contains("evil@1.0.0"));
+    assert!(env.read("node_modules/a/../real/index.js").contains("real@1.0.0"));
+    let text = env.read("jpm.lock");
+    let edited = text.replace("  dep real npm:evil@1.0.0\n", "  dep real npm:a@1.0.0\n");
+    assert_ne!(edited, text, "the edit takes");
+    env.write("jpm.lock", &edited);
+    let out = env.jpm(&["ci"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && err.contains("which its specs do not name"), "{err}");
+    // A lockfile from before aliases had keys of their own (`name@version`, the tarball as its
+    // `resolved`; then only where nothing else had the name at that version) installs as it is.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "real": "npm:evil@^1.0.0" } }));
+    env.ok(&["install"]);
+    let text = env.read("jpm.lock");
+    let old = text
+        .replace(
+            "package real@npm:evil@1.0.0\n",
+            &format!("package real@1.0.0\n  resolved {}/evil/-/evil-1.0.0.tgz\n", r.url),
+        )
+        .replace("  dep real npm:evil@1.0.0\n", "  dep real 1.0.0\n");
+    assert_ne!(old, text);
+    env.write("jpm.lock", &old);
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert!(env.read("node_modules/real/index.js").contains("evil@1.0.0"));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/real/index.js").contains("evil@1.0.0"));
     // An alias under a name nothing else uses is fine.
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
