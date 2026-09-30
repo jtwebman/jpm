@@ -144,6 +144,13 @@ pub fn network_threads() -> usize {
     std::env::var("JPM_CONCURRENCY").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(32)
 }
 
+/// Threads for the resolver's walk: twice `network_threads`. Its requests are small documents,
+/// each answer naming the next ones to ask for, so it waits on round trips, not bandwidth: at 32
+/// in flight, nuxt's 630 documents queue behind one another for longer than they take.
+pub fn resolve_threads() -> usize {
+    network_threads().saturating_mul(2)
+}
+
 /// Threads for disk-bound work: the cores this process may use.
 pub fn disk_threads() -> usize {
     std::thread::available_parallelism().map_or(4, usize::from).max(2)
@@ -205,6 +212,11 @@ mod tests {
         });
         let used = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("every worker waits forever");
         assert_eq!(used, disk_threads() + 2);
+    }
+
+    #[test]
+    fn the_walk_has_twice_the_network_threads() {
+        assert_eq!(resolve_threads(), 2 * network_threads());
     }
 
     #[test]
