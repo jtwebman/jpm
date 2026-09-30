@@ -2230,6 +2230,10 @@ fn install_first(opts: &Opts) -> Result<()> {
     ctx.inside = found.workspace.clone();
     ctx.found = Some(found);
     ctx.opened()?;
+    // The last install's `--no-global-store` holds too, when nothing says otherwise.
+    if ctx.global_setting().is_none() {
+        ctx.opts.flags.global_store = previous.as_ref().map(|s| !s.shared.is_empty());
+    }
     let project = ctx.load_project()?;
     // No lockfile or node_modules for a project that never needed one.
     if previous.is_none() && !project.manifest.declares() && project.workspaces.is_empty() {

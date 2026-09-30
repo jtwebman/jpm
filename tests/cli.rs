@@ -616,6 +616,19 @@ fn shares_entries_through_the_global_store() {
 }
 
 #[test]
+fn run_keeps_the_last_installs_global_store_choice() {
+    // `jpm run` installs first: with nothing saying otherwise, as the last install did.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" }, "scripts": { "s": "echo ran" } }));
+    env.ok(&["install", "--no-global-store"]);
+    let local = link_of(&env.project(), "a");
+    assert!(env.ok(&["run", "s"]).contains("ran"));
+    assert_eq!(link_of(&env.project(), "a"), local);
+    assert_eq!(entries(&env.project()).len(), 2);
+}
+
+#[test]
 fn keeps_entries_missing_an_optional_package_local() {
     let r = registry();
     r.publish(pkg(
