@@ -94,7 +94,7 @@ pub fn load(
         return Err(fail(format!("{file} has workspaces, which jpm reads only for their versions")));
     }
     let mut source = match file {
-        "package-lock.json" | "npm-shrinkwrap.json" => read_npm(text)?,
+        "package-lock.json" | "npm-shrinkwrap.json" => read_npm(file, text)?,
         "pnpm-lock.yaml" => read_pnpm(text)?,
         "bun.lock" => read_bun(text)?,
         "yarn.lock" => return Err(fail("yarn.lock names no peers, platforms or bins")),
@@ -177,7 +177,7 @@ fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     match file {
         "package-lock.json" | "npm-shrinkwrap.json" => {
-            let doc = json::parse(text).map_err(|e| fail(format!("{file} cannot be read: {}", e.message)))?;
+            let doc = json::parse(text).map_err(|e| unreadable(file, text, e))?;
             // v2 and v3 list every path; v1 nests `dependencies`.
             let mut stack: Vec<(String, &Value)> = Vec::new();
             if let Some(packages) = doc.get("packages").and_then(Value::as_object) {
@@ -206,6 +206,8 @@ fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
                     }
                 }
             }
+            // A broken file's empty names and odd versions pin nothing.
+            out.retain(|(name, version)| !name.is_empty() && crate::semver::is_exact(version));
         }
         "pnpm-lock.yaml" => {
             let doc = pnpm_doc(text)?;
@@ -239,6 +241,14 @@ fn pins(file: &str, text: &str) -> Result<Vec<(String, String)>> {
         _ => return Err(fail(format!("jpm does not read {file}"))),
     }
     Ok(out)
+}
+
+/// A lockfile that is not JSON. npm reads one git left mid-merge, taking both sides; jpm says
+/// what it found.
+fn unreadable(file: &str, text: &str, e: Error) -> Error {
+    let merge = text.lines().any(|l| l.starts_with("<<<<<<< ")) && text.lines().any(|l| l.starts_with(">>>>>>> "));
+    let hint = if merge { " (it has git conflict markers left in it)" } else { "" };
+    fail(format!("{file} cannot be read{hint}: {}", e.message))
 }
 
 fn fail(message: impl Into<String>) -> Error {
@@ -317,11 +327,11 @@ fn flat(specs: Option<&Specs>) -> Deps {
 
 const NM: &str = "node_modules/";
 
-fn read_npm(text: &str) -> Result<Source> {
-    let doc = json::parse(text).map_err(|e| fail(format!("package-lock.json cannot be read: {}", e.message)))?;
+fn read_npm(file: &str, text: &str) -> Result<Source> {
+    let doc = json::parse(text).map_err(|e| unreadable(file, text, e))?;
     let Some(listed) = doc.get("packages").and_then(Value::as_object) else {
         let v = doc.get("lockfileVersion").filter(|v| !v.is_null()).map_or_else(|| "1".to_string(), string_of);
-        return Err(fail(format!("package-lock.json v{v} has no packages map; npm 7 and later write one")));
+        return Err(fail(format!("{file} v{v} has no packages map; npm 7 and later write one")));
     };
     let mut nodes = Vec::new();
     let mut tree = Tree::default();
@@ -330,8 +340,8 @@ fn read_npm(text: &str) -> Result<Source> {
         .map(|(path, entry)| Some(tree.add(path.strip_prefix(NM)?.split("/node_modules/"), entry)))
         .collect();
     for ((path, entry), from) in listed.iter().zip(at) {
-        // A bundled copy is inside its parent's tarball; a workspace path was refused before this.
-        let Some(from) = from.filter(|_| !truthy(entry.get("inBundle"))) else { continue };
+        // What a dependency bundles is inside its tarball; a workspace path was refused before this.
+        let Some(from) = from.filter(|&f| !in_dep_bundle(&tree, f)) else { continue };
         let Some(version) = npm_version(entry) else { continue };
         let name = path[NM.len()..].rsplit("/node_modules/").next().unwrap_or_default();
         let real = entry.get("name").and_then(Value::as_str).filter(|n| !n.is_empty());
@@ -349,13 +359,27 @@ fn read_npm(text: &str) -> Result<Source> {
             scripts: truthy(entry.get("hasInstallScript")),
             ..Node::default()
         };
-        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match tree.find(from, dep) {
-            Some(hit) if truthy(hit.get("inBundle")) => Target::Bundled,
-            hit => hit.and_then(|h| npm_edge(dep, h)).map_or(Target::Missing, Target::Version),
+        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match tree.find_at(from, dep) {
+            Some(hit) if in_dep_bundle(&tree, hit) => Target::Bundled,
+            hit => hit.and_then(|h| npm_edge(dep, tree.entry[h]?)).map_or(Target::Missing, Target::Version),
         }));
     }
     let (specs, root) = root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(|h| npm_edge(name, h)));
     Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null, runtimes: Runtimes::new() })
+}
+
+/// Whether the package in folder `at` comes inside a dependency's tarball: bundled, below a
+/// package that is not. What the root bundles npm marks `inBundle` too, and installs as any
+/// other package (arborist's `inDepBundle`).
+fn in_dep_bundle(tree: &Tree, mut at: usize) -> bool {
+    let bundled = |at: usize| tree.entry[at].is_some_and(|e| truthy(e.get("inBundle")));
+    if !bundled(at) {
+        return false;
+    }
+    while at != 0 && bundled(at) {
+        at = tree.up[at];
+    }
+    at != 0
 }
 
 /// The edge to the entry `dep` finds: its version, or an alias's `npm:<real>@<version>`.
@@ -403,10 +427,15 @@ impl<'a> Tree<'a> {
 
     /// The `name` nearest `from` on the walk up, as Node's resolution finds it.
     fn find(&self, from: usize, name: &str) -> Option<&'a Value> {
+        self.find_at(from, name).and_then(|at| self.entry[at])
+    }
+
+    /// The folder `find` finds.
+    fn find_at(&self, from: usize, name: &str) -> Option<usize> {
         let mut at = from;
         loop {
-            let hit = self.children.get(at).and_then(|c| c.get(name)).and_then(|&c| self.entry[c]);
-            if let Some(hit) = hit.filter(|v| truthy(Some(v))) {
+            let hit = self.children.get(at).and_then(|c| c.get(name)).copied();
+            if let Some(hit) = hit.filter(|&c| self.entry[c].is_some_and(|v| truthy(Some(v)))) {
                 return Some(hit);
             }
             if at == 0 {
@@ -880,10 +909,12 @@ fn build(
             nodes.insert(key, node);
             continue;
         };
-        if !same_integrity(&have.integrity, &node.integrity) {
+        // A copy the file gives no integrity is the same registry package (npm/cli#4460).
+        let unknown = have.integrity.is_empty() || node.integrity.is_empty();
+        if !unknown && !same_integrity(&have.integrity, &node.integrity) {
             return Err(fail(format!("{file} holds two packages as {key}; jpm keeps one per name and version")));
         }
-        if strength(&node.integrity) > strength(&have.integrity) {
+        if have.integrity.is_empty() || strength(&node.integrity) > strength(&have.integrity) {
             have.integrity = node.integrity;
         }
         let theirs = [
@@ -938,7 +969,10 @@ fn build(
             .collect();
         let mut next = Vec::new();
         for (name, version) in node.dependencies.iter().chain(&optional) {
-            next.push(edge_key(&nodes, file, &key, name, version)?);
+            // An optional peer brings nothing in: npm prunes a package only such edges reach.
+            if node.peers.get(name) != Some(&PeerKind::Optional) {
+                next.push(edge_key(&nodes, file, &key, name, version)?);
+            }
         }
         if let Some(node) = nodes.get_mut(&key) {
             node.optional_dependencies = optional;
@@ -953,7 +987,11 @@ fn build(
     let mut packages = BTreeMap::new();
     let mut binless = Vec::new();
     for key in &reached {
-        let Some(node) = nodes.remove(key) else { continue };
+        let Some(mut node) = nodes.remove(key) else { continue };
+        // An optional peer stays settled only on a package something else brings in.
+        let peers = &node.peers;
+        node.optional_dependencies
+            .retain(|n, v| peers.get(n) != Some(&PeerKind::Optional) || seen.contains(&format!("{n}@{v}")));
         if node.integrity.is_empty() {
             return Err(fail(format!("{file} gives {key} no integrity")));
         }
@@ -1792,6 +1830,89 @@ snapshots:
     }
 
     #[test]
+    fn installs_what_the_root_bundles() {
+        // npm marks the root's own bundleDependencies inBundle too; only a dependency's bundle
+        // comes in a tarball (arborist's testing-rebuild-bundle/a, testing-bundledeps-sw).
+        let text = json!({
+            "lockfileVersion": 2,
+            "packages": {
+                "": { "dependencies": { "a": "1", "b": "1" }, "bundleDependencies": ["a"] },
+                "node_modules/a": { "version": "1.0.0", "integrity": "sha512-a", "inBundle": true, "dependencies": { "c": "1" } },
+                "node_modules/a/node_modules/c": { "version": "1.0.0", "integrity": "sha512-c", "inBundle": true },
+                "node_modules/b": { "version": "1.0.0", "integrity": "sha512-b", "dependencies": { "d": "1" } },
+                "node_modules/b/node_modules/d": { "version": "1.0.0", "integrity": "sha512-d", "inBundle": true },
+            }
+        })
+        .to_string();
+        let lock = read("package-lock.json", &text, json!({ "dependencies": { "a": "1", "b": "1" } })).unwrap().lock;
+        assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["a@1.0.0", "b@1.0.0", "c@1.0.0"]);
+        assert_eq!(lock.packages["a@1.0.0"].dependencies, Deps::from([("c".into(), "1.0.0".into())]));
+        assert!(lock.packages["b@1.0.0"].dependencies.is_empty());
+    }
+
+    #[test]
+    fn takes_a_copy_with_no_integrity_for_one_that_has_it() {
+        // arborist's dep-missing-resolved: one copy of minimist has neither resolved nor integrity.
+        let text = json!({
+            "lockfileVersion": 2,
+            "packages": {
+                "": { "dependencies": { "a": "1", "m": "1" } },
+                "node_modules/a": { "version": "1.0.0", "integrity": "sha512-a", "dependencies": { "m": "1" } },
+                "node_modules/a/node_modules/m": { "version": "1.0.0" },
+                "node_modules/m": { "version": "1.0.0", "integrity": "sha512-m" },
+            }
+        })
+        .to_string();
+        let lock = read("package-lock.json", &text, json!({ "dependencies": { "a": "1", "m": "1" } })).unwrap().lock;
+        assert_eq!(lock.packages["m@1.0.0"].integrity, "sha512-m");
+    }
+
+    #[test]
+    fn installs_nothing_only_an_optional_peer_reaches() {
+        // npm prunes what only optional peers reach (arborist's calc-dep-flags); a peer another
+        // edge brings in stays settled.
+        let text = json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": { "a": "1", "b": "1" } },
+                "node_modules/a": {
+                    "version": "1.0.0", "integrity": "sha512-a",
+                    "peerDependencies": { "p": "1", "q": "1" },
+                    "peerDependenciesMeta": { "p": { "optional": true }, "q": { "optional": true } }
+                },
+                "node_modules/b": { "version": "1.0.0", "integrity": "sha512-b", "dependencies": { "q": "1" } },
+                "node_modules/p": { "version": "1.0.0", "integrity": "sha512-p", "dependencies": { "r": "1" } },
+                "node_modules/q": { "version": "1.0.0", "integrity": "sha512-q" },
+                "node_modules/r": { "version": "1.0.0", "integrity": "sha512-r" },
+            }
+        })
+        .to_string();
+        let lock = read("package-lock.json", &text, json!({ "dependencies": { "a": "1", "b": "1" } })).unwrap().lock;
+        assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["a@1.0.0", "b@1.0.0", "q@1.0.0"]);
+        assert_eq!(lock.packages["a@1.0.0"].optional_dependencies, Deps::from([("q".into(), "1.0.0".into())]));
+        assert_eq!(lock.packages["a@1.0.0"].peers.len(), 2);
+    }
+
+    #[test]
+    fn names_the_file_it_cannot_read() {
+        assert!(
+            err("npm-shrinkwrap.json", "this isn't json", json!({})).starts_with("npm-shrinkwrap.json cannot be read:")
+        );
+        assert!(
+            err("npm-shrinkwrap.json", r#"{"lockfileVersion":1}"#, json!({})).starts_with("npm-shrinkwrap.json v1")
+        );
+        let merge = "{
+<<<<<<< HEAD
+  \"lockfileVersion\": 2
+=======
+  \"lockfileVersion\": 3
+>>>>>>> other
+}
+";
+        assert!(err("package-lock.json", merge, json!({})).contains("git conflict markers"));
+    }
+
+    #[test]
     fn keeps_an_alias_beside_the_real_package_at_its_version() {
         // grafana's shape: typescript is @typescript/typescript6 at the top, and a dependency
         // takes the real typescript at the same version.
@@ -2160,7 +2281,7 @@ snapshots:
             json!({ "lockfileVersion": 3, "packages": { deep: { "version": "1.0.0", "dependencies": missing } } })
                 .to_string();
         let start = std::time::Instant::now();
-        let source = read_npm(&text).unwrap();
+        let source = read_npm("package-lock.json", &text).unwrap();
         // Quadratic takes seconds here; a debug build on a busy CI runner can take a second.
         assert!(start.elapsed().as_millis() < 2000, "{:?}", start.elapsed());
         assert_eq!(source.nodes[0].name, "a");
@@ -2214,3 +2335,7 @@ snapshots:
         assert_eq!(packages.iter().next().map(|(k, v)| (k.as_str(), v.to_string())), Some(("p0@1.0.0", "{}".into())));
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/conformance/arborist.rs"]
+mod arborist;
