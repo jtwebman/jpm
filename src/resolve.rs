@@ -272,7 +272,7 @@ impl Walk<'_> {
         let range = match &over {
             Some(None) => return Ok(()),
             Some(Some(r)) if !self.tops.contains_key(from) && to_workspace(name, r) => {
-                lock(&self.state).warnings.insert(workspace_override(name));
+                lock(&self.state).warnings.insert(workspace_override(name, r));
                 range
             }
             Some(Some(r)) => r.as_str(),
@@ -948,7 +948,7 @@ impl Walk<'_> {
 
 /// Register a package's peers to settle after the walk: required ones become edges, optional
 /// ones are wired only to what is there. Overrides apply to a peer's range too, but one to a
-/// workspace only for a `top` (see `workspace_override`).
+/// workspace or a directory only for a `top` (see `workspace_override`).
 fn settle(s: &mut State, key: &str, top: bool, peers: &Peers, ranges: Option<&Deps>, overrides: &[Override]) {
     let mut soft = Vec::new();
     for (name, kind) in peers {
@@ -956,7 +956,7 @@ fn settle(s: &mut State, key: &str, top: bool, peers: &Peers, ranges: Option<&De
         match rules::find(overrides, crate::graph::split_key(key), name, &written) {
             Some(None) => continue,
             Some(Some(r)) if !top && to_workspace(name, r) => {
-                s.warnings.insert(workspace_override(name));
+                s.warnings.insert(workspace_override(name, r));
             }
             Some(Some(r)) => written = r.to_string(),
             None => {}
@@ -974,17 +974,18 @@ fn settle(s: &mut State, key: &str, top: bool, peers: &Peers, ranges: Option<&De
     s.soft_peers.insert(key.to_string(), soft);
 }
 
-/// Whether an override's value sends `name` to a workspace.
+/// Whether an override's value sends `name` into the project: a workspace, or a directory
+/// (nitro's `oxc-parser: link:./shims/oxc-parser`).
 fn to_workspace(name: &str, value: &str) -> bool {
-    spec::parse_dep(name, value).is_ok_and(|s| s.kind == Kind::Workspace)
+    spec::parse_dep(name, value).is_ok_and(|s| matches!(s.kind, Kind::Workspace | Kind::Directory))
 }
 
-/// An override to a workspace holds for the root and the workspaces only. No registry package
-/// links to a workspace, as its entry may be shared by every project: there the override gives
+/// An override into the project holds for the root and the workspaces only. No registry package
+/// links into a project, as its entry may be shared by every project: there the override gives
 /// way to the range the package asked for, as a dependency or a peer.
-fn workspace_override(name: &str) -> String {
+fn workspace_override(name: &str, value: &str) -> String {
     format!(
-        "overrides send {name} to its workspace: jpm links only the root and workspaces to it, and packages from the registry get {name} from the registry"
+        "overrides send {name} to {value}: jpm links only the root and workspaces to it, and packages from the registry get {name} from the registry"
     )
 }
 

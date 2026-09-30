@@ -110,9 +110,22 @@ fn an_override_to_a_workspace_leaves_registry_packages_their_range() {
     );
     assert_eq!(dep(&lock, "a@1.1.0", "b"), "1.1.0");
     assert!(env.read("node_modules/b/package.json").contains("1.5.0"), "the root links the workspace");
-    assert!(out.contains("overrides send b to its workspace"), "{out}");
-    assert!(out.contains("overrides send host to its workspace"), "{out}");
+    assert!(out.contains("overrides send b to workspace:*"), "{out}");
+    assert!(out.contains("overrides send host to workspace:*"), "{out}");
     assert!(dep(&lock, "plugin@1.0.0", "host").as_str().is_some_and(|v| v.starts_with("2.")), "{lock}");
+
+    // A directory the same way, as nitro sends oxc-parser to a shim of its own.
+    let (env, lock, out) = installed(
+        &r,
+        json!({ "name": "root", "dependencies": { "a": "1.1.0", "b": "^1.0.0" } }),
+        &[
+            ("pnpm-workspace.yaml", "overrides:\n  b: 'link:./shims/b'\n"),
+            ("shims/b/package.json", r#"{ "name": "b", "version": "9.0.0" }"#),
+        ],
+    );
+    assert_eq!(dep(&lock, "a@1.1.0", "b"), "1.1.0");
+    assert!(env.read("node_modules/b/package.json").contains("9.0.0"), "the root links the shim");
+    assert!(out.contains("overrides send b to link:./shims/b"), "{out}");
 }
 
 #[test]
