@@ -391,6 +391,61 @@ fn installs_local_tarballs() {
     env.ok(&["install", "--frozen-lockfile"]);
 }
 
+/// Unpacking holds a bounded part of a tarball in memory, however big its files or however
+/// often it repeats a path: the old writer queue held every large body, and every repeat, whole.
+#[cfg(target_os = "linux")]
+#[test]
+fn unpacks_big_and_repeated_files_in_bounded_memory() {
+    use std::io::Write;
+    let r = registry();
+    let env = Env::new(&r);
+    std::fs::create_dir_all(env.project().join("vendor")).unwrap();
+    let file = env.project().join("vendor/big.tar");
+    // Plain tar, written a chunk at a time (a child's peak counts what this process held when it
+    // started it): 65 small files, past the ones written inline, the first 12 again at 8 MiB
+    // each, and one 48 MiB file.
+    let mut out = std::io::BufWriter::new(std::fs::File::create(&file).unwrap());
+    let mut add = |path: &str, fill: u8, size: usize| {
+        out.write_all(&common::tar_header(&format!("package/{path}"), 0o644, size)).unwrap();
+        let chunk = [fill; 4096];
+        for at in (0..size).step_by(chunk.len()) {
+            out.write_all(&chunk[..chunk.len().min(size - at)]).unwrap();
+        }
+        out.write_all(&vec![0; size.div_ceil(512) * 512 - size]).unwrap();
+    };
+    let manifest = br#"{"name":"big","version":"1.0.0"}"#;
+    add("package.json", b' ', manifest.len());
+    for i in 0..65 {
+        add(&format!("f{i}"), b's', 5);
+    }
+    for i in 0..12 {
+        add(&format!("f{i}"), b'r', 8 << 20);
+    }
+    add("huge", b'h', 48 << 20);
+    out.write_all(&[0; 1024]).unwrap();
+    drop(out);
+    // The manifest's bytes, over the blanks written for them.
+    let mut tar = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
+    std::io::Seek::seek(&mut tar, std::io::SeekFrom::Start(512)).unwrap();
+    tar.write_all(manifest).unwrap();
+    drop(tar);
+    env.manifest(json!({ "dependencies": { "big": "file:vendor/big.tar" } }));
+    let mut c = env.command(&["install"]);
+    let pid = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap().id();
+    // This child's own peak, not the test process's or another test's.
+    let (mut status, mut usage) = (0, unsafe { std::mem::zeroed::<libc::rusage>() });
+    // SAFETY: waits for the child just spawned, which nothing else waits for.
+    assert_eq!(unsafe { libc::wait4(pid as libc::pid_t, &mut status, 0, &mut usage) }, pid as i32);
+    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0, "install failed");
+    let peak_mib = usage.ru_maxrss / 1024;
+    assert!(peak_mib < 96, "unpacking 144 MiB peaked at {peak_mib} MiB");
+    // The later entry for a repeated path wins, as tar has it.
+    let f3 = std::fs::read(env.path("node_modules/big/f3")).unwrap();
+    assert!(f3.len() == 8 << 20 && f3.iter().all(|b| *b == b'r'));
+    assert_eq!(env.read("node_modules/big/f64"), "sssss");
+    assert_eq!(std::fs::metadata(env.path("node_modules/big/huge")).unwrap().len(), 48 << 20);
+}
+
 #[test]
 fn repairs_a_damaged_tree_under_verify() {
     let r = registry();
