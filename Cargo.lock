@@ -192,6 +192,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "jpm-crypto",
+ "jpm-http",
  "jpm-pk",
  "jpm-tls",
  "junction",

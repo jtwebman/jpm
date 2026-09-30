@@ -2,6 +2,7 @@
 //! TLS-inspecting proxy or on an internal network, trusted through NODE_EXTRA_CA_CERTS or
 //! .npmrc's `cafile` and `ca`; `strict-ssl=false`; and .npmrc's proxy settings. All of these are
 //! the user's to set: a project's own .npmrc cannot, so a cloned repository cannot weaken them.
+//! And HTTP/2, which the registry offers by ALPN, when `JPM_HTTP2` asks for it.
 
 mod common;
 
@@ -9,6 +10,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 
 use common::{Env, Registry, pkg};
@@ -48,10 +50,20 @@ fn project(r: &Registry, corp: &str) -> (Env, PathBuf) {
     (env, pem)
 }
 
-/// `jpm install`, with none of the user's own TLS or proxy settings.
+/// `jpm install`, with none of the user's own TLS, proxy or HTTP/2 settings.
 fn install(env: &Env, vars: &[(&str, &str)]) -> Output {
     let mut c: Command = env.command(&["install"]);
-    for v in ["NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"] {
+    for v in [
+        "NODE_EXTRA_CA_CERTS",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "JPM_HTTP2",
+        "JPM_HTTP2_STREAMS",
+    ] {
         c.env_remove(v);
     }
     c.envs(vars.iter().copied());
@@ -254,6 +266,52 @@ fn npmrc_proxy_settings_win_over_the_environment() {
     env.user_npmrc(&format!("cafile={}\n", pem.display()));
     installed(&env, &install(&env, &[("HTTPS_PROXY", &proxy)]));
     assert!(!seen.lock().unwrap().is_empty());
+}
+
+/// HTTP/2 when `JPM_HTTP2` asks for it and the registry offers it: every request goes over it,
+/// the registry's token with each, straight and through a proxy's tunnel. The certificate is
+/// checked as over HTTP/1.1. Unset or `0`, nothing is HTTP/2.
+#[test]
+fn installs_over_http2_when_asked() {
+    let (r, corp) = tls_registry();
+    let host = r.url.trim_start_matches("https://").to_string();
+    // Counts of requests, and of those over HTTP/2, since `from`.
+    let since = |from: (usize, usize)| (r.requests.load(Relaxed) - from.0, r.h2.load(Relaxed) - from.1);
+    let now = || (r.requests.load(Relaxed), r.h2.load(Relaxed));
+
+    for vars in [&[][..], &[("JPM_HTTP2", "0")]] {
+        let (env, pem) = project(&r, &corp);
+        env.user_npmrc(&format!("cafile={}\n", pem.display()));
+        installed(&env, &install(&env, vars));
+    }
+    assert_eq!(r.h2.load(Relaxed), 0);
+
+    // An unknown CA is refused over HTTP/2 as over HTTP/1.1.
+    let (env, _) = project(&r, &corp);
+    let at = now();
+    failed(&install(&env, &[("JPM_HTTP2", "1")]), "unknown issuer");
+    assert_eq!(since(at), (0, 0));
+
+    let (env, pem) = project(&r, &corp);
+    env.user_npmrc(&format!("cafile={}\n//{host}/:_authToken=h2-token\n", pem.display()));
+    r.hits.lock().unwrap().clear();
+    let at = now();
+    installed(&env, &install(&env, &[("JPM_HTTP2", "1")]));
+    let (all, h2) = since(at);
+    assert!(all >= 4 && h2 == all, "{h2} of {all} requests over HTTP/2");
+    let hits = r.hits.lock().unwrap().clone();
+    assert!(hits.iter().all(|h| h.ends_with(" authorization: Bearer h2-token")), "{hits:?}");
+
+    // Through a proxy's CONNECT tunnel, on two connections.
+    let (proxy, seen) = connect_proxy();
+    let (env, pem) = project(&r, &corp);
+    env.user_npmrc(&format!("cafile={}\nhttps-proxy={proxy}\n", pem.display()));
+    let at = now();
+    installed(&env, &install(&env, &[("JPM_HTTP2", "2"), ("JPM_HTTP2_STREAMS", "3")]));
+    let (all, h2) = since(at);
+    assert!(all >= 4 && h2 == all, "{h2} of {all} requests over HTTP/2");
+    let tunnels = seen.lock().unwrap().clone();
+    assert!(!tunnels.is_empty() && tunnels.len() <= 2 && tunnels.iter().all(|t| *t == host), "{tunnels:?}");
 }
 
 /// A proxy that terminates the TLS it is asked to tunnel, with a certificate `issuer` signed:
