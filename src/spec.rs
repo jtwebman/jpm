@@ -109,6 +109,12 @@ fn dotted_scp(arg: &str) -> bool {
         && host.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty())
 }
 
+/// Whether a range names a path, valid or not: `file:`, `link:` or `portal:`, or bare as npm
+/// reads one (`./x`, `/x`, `~/x`, `C:\x`).
+pub fn names_path(range: &str) -> bool {
+    ["file:", "link:", "portal:", ".", "/", "\\", "~/", "~\\"].iter().any(|p| range.starts_with(p)) || drive(range)
+}
+
 /// `C:`, a Windows drive, which npm reads as the start of a path.
 fn drive(s: &str) -> bool {
     let b = s.as_bytes();

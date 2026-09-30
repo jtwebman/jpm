@@ -32,15 +32,17 @@ pub fn name_version(key: &str) -> Option<(String, &str)> {
 fn line_of(p: &Package) -> String {
     match &p.local {
         Some(path) => format!("{}@link:{path}::local", p.name),
-        // A built or patched package is its own entry: its files are not the store's.
+        // A built or patched package is its own entry: its files are not the store's. A directory
+        // inside a package is the part of its tarball there.
         None => format!(
-            "{}@{}::{}::{}{}{}",
+            "{}@{}::{}::{}{}{}{}",
             p.dir_name(),
             p.version,
             p.integrity,
             edges(&p.all_deps()),
             if p.build { "::build" } else { "" },
-            p.patch.as_ref().map_or(String::new(), |h| format!("::patch:{h}"))
+            p.patch.as_ref().map_or(String::new(), |h| format!("::patch:{h}")),
+            p.within().map_or(String::new(), |(_, at)| format!("::in:{at}"))
         ),
     }
 }

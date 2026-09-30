@@ -352,3 +352,118 @@ fn a_tree_with_a_directory_and_an_alias_installs_once() {
     assert!(!out.contains("repaired") && !out.contains("up to date"), "{out}");
     assert!(env.ok(&["install"]).contains("up to date"));
 }
+
+/// `host` depends on itself, on a directory it ships (which depends on another it ships, and on
+/// itself), and on one its publish left out.
+fn inner_registry() -> Registry {
+    Registry::start(vec![
+        pkg("b", "1.0.0", json!({})),
+        pkg("b", "2.0.0", json!({})),
+        pkg(
+            "host",
+            "1.0.0",
+            json!({ "dependencies": { "host": "link:.", "local": "file:./local", "gone": "link:packages/f", "b": "1.0.0" } }),
+        )
+        .file(
+            "local/package.json",
+            0o644,
+            r#"{ "name": "@x/local", "version": "1.2.0", "bin": { "local-cli": "cli.js" },
+                 "dependencies": { "b": "2.0.0", "other": "file:../other", "local": "link:." } }"#,
+        )
+        .file("local/cli.js", 0o755, "#!/usr/bin/env node\n")
+        .file("other/package.json", 0o644, r#"{ "name": "other", "version": "0.1.0" }"#),
+    ])
+}
+
+#[test]
+fn a_registry_package_links_directories_inside_itself() {
+    let r = inner_registry();
+    for flags in [&["install"][..], &["install", "--no-global-store"]] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { "host": "1.0.0" } }));
+        let out = env.ok(flags);
+        assert!(
+            out.contains("host@1.0.0 depends on gone@link:packages/f, which is not in its tarball; left out"),
+            "{out}"
+        );
+        assert!(!env.exists("node_modules/host/../gone"));
+        // The directory it ships is a package of its own beside it: that subtree's files, and
+        // its own dependencies, not the host's.
+        assert!(env.read("node_modules/host/../local/package.json").contains("\"@x/local\""));
+        assert!(env.exists("node_modules/host/../local/cli.js") && !env.exists("node_modules/host/../local/local"));
+        assert!(env.exists("node_modules/host/local/package.json"), "the host keeps its files");
+        assert!(env.read("node_modules/host/../b/package.json").contains("\"1.0.0\""));
+        assert!(env.read("node_modules/host/../local/../b/package.json").contains("\"2.0.0\""));
+        assert!(env.read("node_modules/host/../local/../other/package.json").contains("\"other\""));
+        assert!(
+            env.exists("node_modules/host/../.bin/local-cli") || env.exists("node_modules/host/../.bin/local-cli.cmd")
+        );
+        let lock = env.lock();
+        let local = &lock["packages"]["local@path:host@1.0.0/local"];
+        assert_eq!(local["version"], "1.2.0");
+        assert_eq!(local["integrity"], lock["packages"]["host@1.0.0"]["integrity"]);
+        assert_eq!(local["dependencies"]["other"], "path:host@1.0.0/other");
+        assert_eq!(lock["packages"]["host@1.0.0"]["dependencies"]["local"], "path:host@1.0.0/local");
+        assert!(lock["packages"]["host@1.0.0"]["dependencies"].get("host").is_none(), "no edge to itself");
+        assert!(local["dependencies"].get("local").is_none());
+        // The lockfile installs the same tree again, and is written back byte for byte.
+        let text = env.read("jpm.lock");
+        std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+        env.ok(&[&["ci"][..], &flags[1..]].concat());
+        assert!(env.read("node_modules/host/../local/../b/package.json").contains("\"2.0.0\""));
+        env.ok(flags);
+        assert_eq!(env.read("jpm.lock"), text);
+        // An edit cannot link a directory from another package's tarball, nor from the project.
+        let refused = |edited: String, why: &str| {
+            env.write("jpm.lock", &edited);
+            let out = env.jpm(&["install", "--frozen-lockfile"]);
+            assert!(!out.status.success() && stderr(&out).contains(why), "{}\n{edited}", stderr(&out));
+        };
+        refused(text.replace("path:host@1.0.0/local", "path:b@1.0.0/local"), "only inside its own tarball");
+        refused(
+            text.replace("  dep host 1.0.0\n", "  dep host 1.0.0\n  dep local path:host@1.0.0/local\n").replace(
+                "  spec dependencies host 1.0.0\n",
+                "  spec dependencies host 1.0.0\n  spec dependencies local 1\n",
+            ),
+            "only the package that ships it links it",
+        );
+        refused(
+            text.replace("path:host@1.0.0/local", "path:host@1.0.0/../local"),
+            "not a directory inside a registry package",
+        );
+        env.write("jpm.lock", &text);
+        env.ok(&["install", "--frozen-lockfile"]);
+    }
+}
+
+#[test]
+fn a_registry_package_path_out_of_itself_is_refused() {
+    let paths = [
+        "link:../x",
+        "file:../../x",
+        "file:sub/../../x",
+        "../x",
+        "file:/etc/x",
+        "/etc/x",
+        "file:~/x",
+        "file:C:/x",
+        r"C:\x",
+        r"link:\\host\share",
+        "file:%2e%2e/x",
+        "link:sub%2fx",
+    ];
+    let r = Registry::start(
+        paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| pkg(&format!("bad{i}"), "1.0.0", json!({ "dependencies": { "x": p } })))
+            .collect(),
+    );
+    let env = Env::new(&r);
+    for (i, path) in paths.iter().enumerate() {
+        env.manifest(json!({ "dependencies": { format!("bad{i}"): "1.0.0" } }));
+        let out = env.jpm(&["install"]);
+        let want = format!("{path} is not a relative path inside the package");
+        assert!(!out.status.success() && stderr(&out).contains(&want), "{path}: {}", stderr(&out));
+    }
+}

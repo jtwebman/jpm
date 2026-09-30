@@ -536,10 +536,11 @@ impl Linker<'_> {
     /// download when there is one: moved there with one rename, not a link and a directory per
     /// file. The store then keeps the entry's copy as its own (see `Store::claim`), so only an
     /// entry whose files are the tarball's may take it: not one built, patched or cut down to a
-    /// runtime's binary. While it holds the claim, this thread reads nothing else of the store.
+    /// runtime's binary or a directory inside the package. While it holds the claim, this thread
+    /// reads nothing else of the store.
     fn move_in(&self, entry: &Entry, temp: &Path) -> Result<Option<PathBuf>> {
         let pkg = entry.pkg;
-        if entry.build || pkg.patch.is_some() || pkg.runtime.is_some() {
+        if entry.build || pkg.patch.is_some() || pkg.runtime.is_some() || pkg.within().is_some() {
             return Ok(None);
         }
         self.ready(pkg)?;
@@ -682,7 +683,17 @@ impl Linker<'_> {
             let unpacked_size = files.iter().map(|f| f.size).sum();
             return Ok(std::sync::Arc::new(Index { files, unpacked_size, suffixed: index.suffixed }));
         }
+        // A directory inside a package is its files under that directory, at their paths there.
+        if let Some((_, at)) = entry.pkg.within() {
+            return Ok(std::sync::Arc::new(index.under(at)));
+        }
         Ok(index)
+    }
+
+    /// Where a package's files are in the store: a directory inside a package is under it.
+    fn files_dir(&self, pkg: &Package) -> Result<PathBuf> {
+        let dir = self.opts.store.pkg_dir(&pkg.integrity)?;
+        Ok(pkg.within().map_or_else(|| dir.clone(), |(_, at)| dir.join(at)))
     }
 
     fn materialize(&self, entry: &Entry, present: bool) -> Result<()> {
@@ -779,7 +790,7 @@ impl Linker<'_> {
                 fs::create_dir(dir)
                     .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
             }
-            let src = self.opts.store.pkg_dir(&pkg.integrity)?;
+            let src = self.files_dir(pkg)?;
             // A runtime's entry is less than its store directory (see `index`): never a clone.
             let cloned = !entry.build
                 && entry.pkg.runtime.is_none()
@@ -912,7 +923,8 @@ impl Linker<'_> {
         let head = match pkg {
             Some(p) if p.local.is_none() => {
                 self.ready(p)?;
-                self.opts.store.file(&p.integrity, target).ok().and_then(|f| crate::shim::read_head(&f))
+                let target = p.within().map_or_else(|| target.to_string(), |(_, at)| format!("{at}/{target}"));
+                self.opts.store.file(&p.integrity, &target).ok().and_then(|f| crate::shim::read_head(&f))
             }
             Some(p) => crate::shim::read_head(&self.opts.dir.join(p.local.as_deref().unwrap_or("")).join(target)),
             None => None,

@@ -7,7 +7,9 @@ use std::path::Path;
 
 use crate::bin;
 use crate::error::{Error, Result};
-use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root, Specs, same_specs, split_key, split_peers};
+use crate::graph::{
+    Deps, Package, PeerKind, Peers, Resolution, Root, Specs, WITHIN, same_specs, split_key, split_peers, split_within,
+};
 use crate::json::{self, Object, Value};
 use crate::project::{RootManifest, Workspace, local_path, local_shape};
 use crate::registry::tarball_url;
@@ -363,6 +365,21 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
             runtime::apply(&mut package, base_for);
         }
         packages.insert(key, package);
+    }
+    // A directory inside a package is fetched as that package is, from its url.
+    let urls: Vec<(String, String)> = packages
+        .iter()
+        .filter_map(|(key, p)| {
+            let (parent, _) = p.within()?;
+            let mut copies = packages.range(parent.to_string()..).take_while(|(k, _)| k.starts_with(parent));
+            let (_, from) = copies.find(|(k, _)| split_peers(k).0 == parent)?;
+            Some((key.clone(), from.resolved.clone()))
+        })
+        .collect();
+    for (key, url) in urls {
+        if let Some(p) = packages.get_mut(&key) {
+            p.resolved = url;
+        }
     }
     let root = Root {
         name: lock.root.name,
@@ -959,6 +976,8 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         {
             return Err(fail(format!("{at} is a copy of {base}, and names another tarball than its other copies")));
         }
+        // The registry package whose tarball this one's files are in, if they are, else its own.
+        let own = split_key(base).and_then(|(_, v)| split_within(v)).map_or(base, |(parent, _)| parent);
         // A linked directory's dependencies are its own; the rest of an entry is not read.
         if is_link(key) {
             let bare = e.dependencies.is_empty() && e.optional_dependencies.is_empty();
@@ -976,6 +995,12 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             if v.starts_with("link:") && !peer() {
                 return Err(fail(format!(
                     "{at}.dependencies[{name:?}] is {v}: a package links a directory only for a peer, to the workspace of its name"
+                )));
+            }
+            // A directory inside a package, only from that package's own tarball.
+            if split_within(crate::graph::edge_base(name, v)).is_some_and(|(parent, _)| parent != own) {
+                return Err(fail(format!(
+                    "{at}.dependencies[{name:?}] is {v}: a package links a directory only inside its own tarball"
                 )));
             }
         }
@@ -1018,6 +1043,15 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         check_edges(&at, &e.bin, &e.peers, &e.peer_dependencies, [&e.dependencies, &e.optional_dependencies], &|k| {
             known.contains(k)
         })?;
+    }
+    // A directory inside a package has that package's integrity: its files are that tarball's.
+    for (key, e) in &lock.packages {
+        let Some((parent, _)) = split_key(split_peers(key).0).and_then(|(_, v)| split_within(v)) else { continue };
+        if !bases.get(parent).is_some_and(|p| p.integrity == e.integrity) {
+            return Err(fail(format!(
+                "packages[{key:?}] is inside {parent}, which packages has with no such integrity"
+            )));
+        }
     }
     for (path, ws) in &lock.workspaces {
         let at = format!("workspaces[{path:?}]");
@@ -1103,6 +1137,11 @@ struct Asks<'a> {
 fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()> {
     for (name, version) in deps {
         let version = &crate::graph::edge_base(name, version).to_string();
+        if version.starts_with(WITHIN) {
+            return Err(fail(format!(
+                "{at}.dependencies[{name:?}] is {version}: only the package that ships it links it"
+            )));
+        }
         let ranges = top.specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
         let asked: Vec<spec::Spec> = ranges
             .chain(top.peers.get(name))
@@ -1268,6 +1307,14 @@ fn check_key(key: &str) -> Result<Option<String>> {
     if let Some(v) = version.strip_prefix(runtime::PROTOCOL) {
         if !runtime::NAMES.contains(&name) || runtime::check_version(name, v).is_err() {
             return Err(fail(format!("package key {key:?} is not a runtime at an exact version")));
+        }
+        return Ok(Some(version.to_string()));
+    }
+    // A directory inside a registry package's tarball: that package's key, and a plain path.
+    if let Some((parent, at)) = split_within(version) {
+        let plain = crate::tar::plain(at) && !at.contains(['%', '(', ')']);
+        if !plain || spec::check_name(name, key).is_err() || !matches!(check_key(parent), Ok(None)) {
+            return Err(fail(format!("package key {key:?} is not a directory inside a registry package")));
         }
         return Ok(Some(version.to_string()));
     }

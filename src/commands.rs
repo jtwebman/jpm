@@ -636,7 +636,10 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     // Installed, and with scripts in the tarball itself, whatever the registry said.
     let ships = |p: &crate::graph::Package| match (store.pkg_dir(&p.integrity), store.index(&p.integrity)) {
-        (Ok(dir), Some(index)) => build::ships_install_scripts(p, &dir, &index),
+        (Ok(dir), Some(index)) => match p.within() {
+            Some((_, at)) => build::ships_install_scripts(p, &dir.join(at), &index.under(at)),
+            None => build::ships_install_scripts(p, &dir, &index),
+        },
         _ => true,
     };
     let installed = |id: &str| {
@@ -875,7 +878,11 @@ fn tarball_of(dir: &Path, resolved: &str, source: Option<&str>) -> Tarball {
 /// A tarball dependency whose bytes are not the ones the lockfile pinned.
 fn stale(e: Error, source: &str) -> Error {
     // A runtime's build is not the project's to replace: its error names the download.
-    if e.code != "EINTEGRITY" || source.starts_with(crate::runtime::PROTOCOL) {
+    // Nor a directory inside a package: the package's own download fails the same way.
+    if e.code != "EINTEGRITY"
+        || source.starts_with(crate::runtime::PROTOCOL)
+        || source.starts_with(crate::graph::WITHIN)
+    {
         return e;
     }
     fail(
@@ -924,7 +931,8 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         }
         // What it ships says, and what the registry says of it: the walk reads the latter.
         store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
-        let text = std::fs::read_to_string(store.file(&p.integrity, "package.json")?).unwrap_or_default();
+        let file = p.within().map_or_else(|| "package.json".into(), |(_, at)| format!("{at}/package.json"));
+        let text = std::fs::read_to_string(store.file(&p.integrity, &file)?).unwrap_or_default();
         let shipped = Manifest::from_json(&text).ok();
         let listed = || {
             let name = shipped.as_ref().map_or(p.name.as_str(), |m| m.name.as_str());
@@ -1022,7 +1030,7 @@ fn plan(
         };
     }
     let existing = if ctx.opts.frozen { lock::read_lockfile(dir)?.map(|(l, _)| l) } else { current_lock(dir) };
-    let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
+    let reader = |source: &str, pinned: Option<&str>, at: &str| read_tarball(ctx, store, dir, source, pinned, at);
     let moved = match &existing {
         Some(l) => moved_tarballs(ctx, dir, l, &reader, recorded.unwrap_or_default())?,
         None => Vec::new(),
@@ -1100,7 +1108,8 @@ fn import(
                 legacy_peers: yarn_1(file, &text),
                 ..foreign::prefer(file, &text).unwrap_or_default()
             };
-            let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, dir, source, pinned);
+            let reader =
+                |source: &str, pinned: Option<&str>, at: &str| read_tarball(ctx, store, dir, source, pinned, at);
             let registry = ctx.registry(store);
             let lock = resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], true, Some(&prefer))?;
             info(&format!("{file} is no longer read; it can be deleted"));
@@ -1315,8 +1324,18 @@ fn tops(project: &Project) -> Result<Vec<Workspace>> {
 }
 
 /// A tarball or git dependency's package.json, with `dist` naming the source (a git ref resolved
-/// to its commit) and its integrity.
-fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Option<&str>) -> Result<Arc<Manifest>> {
+/// to its commit) and its integrity. `at` reads a directory in it instead (see `resolve::within`).
+fn read_tarball(
+    ctx: &Ctx,
+    store: &Store,
+    dir: &Path,
+    source: &str,
+    pinned: Option<&str>,
+    at: &str,
+) -> Result<Arc<Manifest>> {
+    if !at.is_empty() {
+        return read_within(store, source, pinned.unwrap_or_default(), at);
+    }
     let git = spec::is_git(source);
     let resolved =
         if git { crate::git::resolve(source, ctx.config().offline, &store.tmp_dir())? } else { source.to_string() };
@@ -1361,6 +1380,30 @@ fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Opti
     Ok(Arc::new(m))
 }
 
+/// The package.json of the directory `at` in a registry package's tarball, as a package fetched
+/// with it: `dist` names the package's tarball and integrity. A directory without one is a
+/// package with no dependencies, versioned `0.0.0`, as a linked directory is.
+fn read_within(store: &Store, url: &str, integrity: &str, at: &str) -> Result<Arc<Manifest>> {
+    let index = store.ensure(&Tarball::Url(url.to_string()), integrity)?;
+    let prefix = format!("{at}/");
+    if !index.files.iter().any(|f| f.path.starts_with(&prefix)) {
+        return Err(fail(resolve::NO_DIR, format!("{url} has no {at}")));
+    }
+    let file = format!("{at}/package.json");
+    let mut m = if index.files.iter().any(|f| f.path == file) {
+        let text = std::fs::read_to_string(store.file(integrity, &file)?)
+            .map_err(|e| Error::io(&e, format!("cannot read {file} of {url}")))?;
+        Manifest::from_json(&text).map_err(|e| e.context(format!("{file} of {url}")))?
+    } else {
+        Manifest::default()
+    };
+    m.version = semver::parse(&m.version).map_or_else(|| "0.0.0".into(), |v| v.text);
+    m.dist.tarball = Some(url.to_string());
+    m.dist.integrity = Some(integrity.to_string());
+    m.full = true;
+    Ok(Arc::new(m))
+}
+
 /// The lockfile's local tarballs whose file no longer holds the bytes it pinned.
 fn moved_tarballs(
     ctx: &Ctx,
@@ -1376,7 +1419,7 @@ fn moved_tarballs(
             ctx.stamped.lock().unwrap_or_else(PoisonError::into_inner).insert(source.clone(), stamp);
             continue;
         }
-        let read = read(&source, None)?;
+        let read = read(&source, None, "")?;
         if read.dist.integrity.as_deref() != Some(lock.packages[&key].integrity.as_str()) {
             info(&format!("{source} changed since {LOCKFILE} locked it"));
             moved.push(key);
@@ -1403,7 +1446,8 @@ fn foreign_lock(
         // gets the version yarn gave it, and a range it does not name means it is out of date.
         let prefer = resolve::Prefer { only: true, legacy_peers: yarn_1(file, &text), ..foreign::prefer(file, &text)? };
         let ctx = &*ctx;
-        let reader = |source: &str, pinned: Option<&str>| read_tarball(ctx, store, &project.dir, source, pinned);
+        let reader =
+            |source: &str, pinned: Option<&str>, at: &str| read_tarball(ctx, store, &project.dir, source, pinned, at);
         let registry = ctx.registry(store);
         return resolve_lock(ctx, project, None, &registry, &reader, on_pick, &[], false, Some(&prefer)).map_err(|e| {
             if e.code == "ELOCK" {
@@ -1553,7 +1597,7 @@ pub fn add(specs: &[String], opts: Opts) -> Result<AddResult> {
                         let file = edit.project.dir.join(&source[5..]).join("package.json");
                         project::read_manifest(&file)?.name.unwrap_or_default()
                     } else {
-                        read_tarball(&ctx, &store, &edit.project.dir, &source, None)?.name.clone()
+                        read_tarball(&ctx, &store, &edit.project.dir, &source, None, "")?.name.clone()
                     };
                     if name.is_empty() {
                         return Err(fail(
@@ -1678,7 +1722,7 @@ fn locked_package(ctx: &Ctx, dir: &Path, spec: &str) -> Result<Package> {
 /// The package as published, from the store, copied into `to` under its files' own names.
 fn pristine(store: &Store, dir: &Path, p: &Package, to: &Path) -> Result<()> {
     store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
-    store.copy_out(&p.integrity, to)
+    store.copy_out(&p.integrity, p.within().map_or("", |(_, at)| at), to)
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
@@ -1859,7 +1903,7 @@ pub fn lock_command(opts: Opts, write: bool) -> Result<Lockfile> {
         };
     }
     let existing = current_lock(&dir);
-    let reader = |source: &str, pinned: Option<&str>| read_tarball(&ctx, &store, &dir, source, pinned);
+    let reader = |source: &str, pinned: Option<&str>, at: &str| read_tarball(&ctx, &store, &dir, source, pinned, at);
     let moved = match &existing {
         Some(l) => moved_tarballs(&ctx, &dir, l, &reader, BTreeMap::new())?,
         None => Vec::new(),
