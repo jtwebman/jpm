@@ -1158,6 +1158,34 @@ impl Yaml<'_> {
                 continue;
             }
             self.i += 1;
+            // `? key` and then `: value`, as js-yaml writes a key over 1024 characters (pnpm's
+            // snapshot of a package whose peers nest deep, in bluesky's lockfile).
+            if let Some(key) = line.strip_prefix('?').filter(|k| k.is_empty() || k.starts_with(' ')) {
+                json::quote(out, &unquote(key.trim()));
+                out.push(':');
+                match self.lines.get(self.i) {
+                    Some(&(at, value)) if at == indent && (value == ":" || value.starts_with(": ")) => {
+                        let rest = value[1..].trim_start();
+                        if rest.is_empty() {
+                            self.i += 1;
+                            match self.lines.get(self.i) {
+                                Some(&(next, _)) if next > indent => self.block(next, depth + 1, out)?,
+                                _ => out.push_str("null"),
+                            }
+                        } else if is_pair(rest) || item(rest) {
+                            // A map or a list, starting at the column its first entry stands in.
+                            let col = at + value.len() - rest.len();
+                            self.lines[self.i] = (col, rest);
+                            self.block(col, depth + 1, out)?;
+                        } else {
+                            self.i += 1;
+                            scalar(rest, depth + 1, out)?;
+                        }
+                    }
+                    _ => out.push_str("null"),
+                }
+                continue;
+            }
             let colon = key_end(line);
             json::quote(out, &unquote(&line[..colon]));
             out.push(':');
@@ -1927,6 +1955,19 @@ snapshots:
         // A scalar with a colon in it is no map.
         let doc = read_yaml("l:\n- 'a: b'\n- npm:x@1\n- https://x\n").unwrap();
         assert_eq!(doc.get("l").and_then(crate::json::Value::as_array).map(Vec::len), Some(3));
+        // An explicit key, as js-yaml writes one over 1024 characters: a map under it, whose
+        // first entry shares the `:` line; a scalar; nothing.
+        let long = format!("drawer@4.2.3({})", "x".repeat(1100));
+        let text = format!(
+            "snapshots:\n  a@1: {{}}\n\n  ? {long}\n  : dependencies:\n      color: 4.2.3\n    transitivePeerDependencies:\n      - y\n\n  ? 'q: r'\n  : 1.0.0\n  ? bare\n  b@2: {{}}\n"
+        );
+        let doc = read_yaml(&text).unwrap();
+        let snaps = doc.get("snapshots").unwrap();
+        let entry = snaps.get(&long).unwrap_or_else(|| panic!("{doc}"));
+        assert_eq!(entry.get("dependencies").and_then(|d| d.get("color")).map(string_of).as_deref(), Some("4.2.3"));
+        assert_eq!(list(entry.get("transitivePeerDependencies")), vec!["y".to_string()]);
+        assert_eq!(snaps.get("q: r").map(string_of).as_deref(), Some("1.0.0"));
+        assert!(snaps.get("bare").is_some_and(|v| matches!(v, crate::json::Value::Null)) && snaps.get("b@2").is_some());
         // A line with no place is an error, not the end of the file.
         for bad in ["a:\n  b: 1\n    c: 2\nd: 3\n", "a: 1\n  b: 2\n", "- x\n    y: 1\n"] {
             assert!(read_yaml(bad).is_err(), "{bad}");
