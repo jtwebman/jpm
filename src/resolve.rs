@@ -325,14 +325,15 @@ impl Walk<'_> {
         queue: &Queue<Job>,
     ) -> Result<()> {
         let over = self.overridden(from, name, range);
-        let range = match &over {
+        // Whether the range is an override's: the project's own spec, as a top's edge is.
+        let (range, overridden) = match &over {
             Some(None) => return Ok(()),
             Some(Some(r)) if !self.tops.contains_key(from) && to_workspace(name, r) => {
                 lock(&self.state).warnings.insert(workspace_override(name, r));
-                range
+                (range, false)
             }
-            Some(Some(r)) => r.as_str(),
-            None => range,
+            Some(Some(r)) => (r.as_str(), true),
+            None => (range, false),
         };
         let spec = spec::parse_dep(name, range)
             .map_err(|e| if self.tops.contains_key(from) || !spec::names_path(range) { e } else { outside(range) })?;
@@ -424,7 +425,7 @@ impl Walk<'_> {
             return Ok(());
         }
         let top = self.tops.contains_key(from);
-        let m = self.pick(&spec, fresh, top, top || over.is_some())?;
+        let m = self.pick(&spec, fresh, top, top || overridden)?;
         m.integrity()?;
         let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
