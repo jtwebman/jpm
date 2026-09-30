@@ -1,6 +1,8 @@
 //! `.npmrc`: where packages come from and what to send to get them. The global file, the user
 //! file over it, the project file over that, `npm_config_*` over all three, then the flags.
-//! Only what jpm uses is read; npm ignores keys it does not know, and so does this.
+//! Only what jpm uses is read; npm ignores keys it does not know, and so does this. The project's
+//! file comes with the repository, so it cannot weaken what the others check: TLS, proxies,
+//! signature checks and the release cutoff are the user's to set (`restrict_project`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -327,7 +329,22 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
         None => global_file(from_env.get("prefix").or(user.get("prefix")).map(|p| path(p))),
     };
     let global = parse_npmrc(&read(&global_file), &env)?;
-    let project = parse_npmrc(&read(&dir.join(".npmrc")), &env)?;
+    let project_file = dir.join(".npmrc");
+    let mut project = parse_npmrc(&read(&project_file), &env)?;
+    // The user's own file, when the project is the home directory, is the user's to say.
+    if project_file != user_file && project_file != global_file {
+        let dropped = restrict_project(&mut project, &[global.clone(), user.clone()])?;
+        if !dropped.is_empty() {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| {
+                crate::ui::warn(&format!(
+                    "{} sets {}, which only ~/.npmrc, the global npmrc, npm_config_* or a flag may set; ignored",
+                    project_file.display(),
+                    dropped.join(", ")
+                ));
+            });
+        }
+    }
     let mut cli = Layer::new();
     if let Some(age) = flags.min_release_age {
         cli.insert("min-release-age".into(), age.to_string());
@@ -359,6 +376,38 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     crate::http::configure(&config)?;
     crate::runtime::configure(config.node_mirror.as_deref(), config.verify_node_signature);
     Ok(config)
+}
+
+/// What a project's .npmrc may not set: a cloned repository could route every request, and the
+/// user's tokens with it, through a proxy of its choosing and have jpm trust its certificate.
+const USER_ONLY: [&str; 5] = ["ca", "cafile", "proxy", "https-proxy", "http-proxy"];
+
+/// Take out of a project's layer what would weaken the checks the layers `below` it (global,
+/// user) make: the settings above, `strict-ssl=false`, `verify-node-signature=false`, and a
+/// release cutoff laxer than theirs. The keys taken out, as written.
+fn restrict_project(project: &mut Layer, below: &[Layer]) -> Result<Vec<String>> {
+    let mut dropped = Vec::new();
+    let mut take_out = |project: &mut Layer, key: &str, when: &dyn Fn(&str) -> bool| {
+        if project.remove(key).is_some_and(|v| when(&v)) {
+            dropped.push(key.to_string());
+        }
+    };
+    for key in USER_ONLY {
+        take_out(project, key, &|v| !matches!(v, "" | "null" | "false"));
+    }
+    take_out(project, "strict-ssl", &|v| v == "false");
+    if project.get("verify-node-signature").is_some_and(|v| v == "false") {
+        take_out(project, "verify-node-signature", &|_| true);
+    }
+    let theirs = cutoff(below)?;
+    let with = cutoff(&[below, std::slice::from_ref(project)].concat())?;
+    // A second's slack: `min-release-age` is counted from now, read twice.
+    if theirs.is_some_and(|t| with.is_none_or(|w| w > t + 1000)) {
+        for key in ["min-release-age", "before"] {
+            take_out(project, key, &|_| true);
+        }
+    }
+    Ok(dropped)
 }
 
 /// npm's global file is `<prefix>/etc/npmrc`, the prefix being where node is installed.
@@ -480,6 +529,44 @@ mod tests {
         let c = to_config(&[off, env], None).unwrap();
         assert!(c.insecure_tls);
         assert_eq!(c.https_proxy.as_deref(), Some("http://e.test"));
+    }
+
+    #[test]
+    fn a_project_npmrc_cannot_weaken_checks() {
+        let restricted = |rc: &str, user: &str| {
+            let mut project = parse_npmrc(rc, &no_env).unwrap();
+            let dropped = restrict_project(&mut project, &[parse_npmrc(user, &no_env).unwrap()]).unwrap();
+            (project, dropped)
+        };
+        let (left, dropped) = restricted(
+            "strict-ssl=false\nca=x\ncafile=/c.pem\nproxy=http://p\nhttps-proxy=http://p\nhttp-proxy=http://p\nverify-node-signature=false\nmin-release-age=0\nregistry=https://r.test\n@s:registry=https://s.test\nnoproxy=a.test\nnode-mirror:release=https://m.test",
+            "",
+        );
+        assert_eq!(
+            dropped,
+            [
+                "ca",
+                "cafile",
+                "proxy",
+                "https-proxy",
+                "http-proxy",
+                "strict-ssl",
+                "verify-node-signature",
+                "min-release-age"
+            ]
+        );
+        let kept: Vec<&str> = left.keys().map(String::as_str).collect();
+        assert_eq!(kept, ["@s:registry", "node-mirror:release", "noproxy", "registry"]);
+        // What only makes the checks stricter stays, and says nothing.
+        let (left, dropped) =
+            restricted("strict-ssl=true\nverify-node-signature=true\nmin-release-age=3\nproxy=false", "");
+        assert!(dropped.is_empty(), "{dropped:?}");
+        assert_eq!(to_config(&[left], None).unwrap().before.unwrap() / DAY, (now_ms() - 3 * DAY) / DAY);
+        // A cutoff laxer than the user's goes, a date past it too; the user's own 0 leaves it be.
+        assert_eq!(restricted("min-release-age=1", "min-release-age=7").1, ["min-release-age"]);
+        assert_eq!(restricted("before=2999-01-01", "").1, ["before"]);
+        assert!(restricted("min-release-age=0", "min-release-age=0").1.is_empty());
+        assert!(restricted("before=2000-01-01", "").1.is_empty());
     }
 
     #[test]

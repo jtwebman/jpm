@@ -330,6 +330,11 @@ impl Env {
         std::fs::write(file, text).unwrap();
     }
 
+    /// The user's own `~/.npmrc`, where settings a project's .npmrc may not make go.
+    pub fn user_npmrc(&self, text: &str) {
+        std::fs::write(self.root.join("home/.npmrc"), text).unwrap();
+    }
+
     pub fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.path(rel)).unwrap_or_default()
     }
