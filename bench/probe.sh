@@ -16,7 +16,7 @@ run() { # run <fixture> <cmd> <tag> [VAR=value...]
 for f in nuxt next nitro; do run $f lock warmup >/dev/null; done
 for c in 32 64 32 64; do
   d=$W/nuxt; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/nuxt/package.json $d/proj/
-  (cd $d/proj && env HOME=$d/home JPM_STORE=$d/home/store JPM_CONCURRENCY=$c perf stat -e task-clock,context-switches,cpu-migrations,page-faults,instructions,cycles -o $OUT/stat-$c.txt -a --append $JPM lock >/dev/null 2>&1)
+  (cd $d/proj && env HOME=$d/home JPM_STORE=$d/home/store JPM_CONCURRENCY=$c perf stat -e task-clock,context-switches,cpu-migrations,page-faults,instructions,cycles -o $OUT/stat-$c.txt --append $JPM lock >/dev/null 2>&1)
 done
 cat $OUT/stat-*.txt
 prof() { # prof <fixture> <cmd> <tag> [VAR=value]
