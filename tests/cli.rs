@@ -547,6 +547,84 @@ fn never_builds_or_prunes_through_a_committed_symlink() {
     }
 }
 
+/// Directories inside node_modules a checkout ships as symlinks out of the project: nothing is
+/// linked there, and nothing there swept away.
+#[cfg(unix)]
+#[test]
+fn never_links_or_sweeps_through_a_symlink_in_node_modules() {
+    let r = Registry::start(vec![
+        pkg("top", "1.0.0", json!({ "dependencies": { "b": "1.0.0", "@s/c": "1.0.0" } })),
+        pkg("b", "1.0.0", json!({})),
+        pkg("@s/c", "1.0.0", json!({ "bin": { "c": "c.js" } })).file("c.js", 0o755, "#!/bin/sh\n"),
+        pkg("tool", "1.0.0", json!({ "bin": { "tool": "t.js" } })).file("t.js", 0o755, "#!/bin/sh\n"),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "top": "1.0.0", "tool": "1.0.0" } }));
+    let victim = env.root.join("victim");
+    let plant = |at: &std::path::Path| {
+        let _ = std::fs::remove_dir_all(&victim);
+        std::fs::create_dir_all(&victim).unwrap();
+        std::os::unix::fs::symlink("/", victim.join("keep")).unwrap();
+        let _ = std::fs::remove_dir_all(at);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&victim, at).unwrap();
+    };
+    let untouched = |what: &str| {
+        let names: Vec<String> =
+            std::fs::read_dir(&victim).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
+        assert_eq!(names, ["keep"], "{what}: written or swept outside the project");
+    };
+    // The bins' directory, the hidden hoist, and a scope in the hoist.
+    for rel in ["node_modules/.bin", "node_modules/.jpm/node_modules", "node_modules/.jpm/node_modules/@s"] {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        plant(&env.project().join(rel));
+        let out = env.jpm(&["install"]);
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && text.contains("leads outside the project"), "{rel}: {text}");
+        untouched(rel);
+    }
+    // An entry's own node_modules, or its bins, in the project layout.
+    for rel in ["node_modules", "node_modules/.bin"] {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        env.ok(&["install", "--no-global-store"]);
+        let entries = env.project().join("node_modules/.jpm");
+        let entry = std::fs::read_dir(&entries)
+            .unwrap()
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().starts_with("top@"));
+        plant(&entry.unwrap().path().join(rel));
+        std::fs::remove_file(env.project().join("node_modules/.jpm.json")).unwrap();
+        let out = env.jpm(&["install", "--no-global-store"]);
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && text.contains("leads outside the project"), "entry {rel}: {text}");
+        untouched(rel);
+    }
+}
+
+/// An install script's log and marker are new files: never written through a link left there.
+#[cfg(unix)]
+#[test]
+fn writes_a_build_log_through_no_link() {
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" }, "trustedDependencies": ["bld"] }));
+    env.ok(&["install"]);
+    env.ok(&["approve", "bld"]);
+    let victim = env.root.join("victim.txt");
+    std::fs::write(&victim, "precious").unwrap();
+    let entries = env.project().join("node_modules/.jpm");
+    let entry =
+        std::fs::read_dir(&entries).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("bld@"));
+    let entry = entry.unwrap().path();
+    std::fs::remove_file(entry.join(".built")).unwrap();
+    std::fs::remove_file(entry.join(".build.log")).unwrap();
+    std::os::unix::fs::symlink(&victim, entry.join(".build.log")).unwrap();
+    std::fs::remove_file(env.project().join("node_modules/.jpm.json")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious");
+    assert!(entry.join(".built").is_file());
+}
+
 /// package.json names one tarball url, and an edited jpm.lock another in its place.
 #[test]
 fn a_lockfile_cannot_move_a_tarball_dependency_to_another_url() {

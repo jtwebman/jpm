@@ -239,6 +239,10 @@ A lockfile edge to a directory must match the spec package.json gives it, and an
 alone must reach a workspace, not a `file:` directory that shares its name, so an edit to the
 lockfile alone cannot point a name at another directory.
 
+A checkout can ship `node_modules`, or a directory in it (`.bin`, `.jpm`, the hidden hoist, a
+scope in it, an entry's own `node_modules`), as a symlink out of the project. jpm refuses to
+link, write or sweep through one.
+
 ## Git dependencies
 
 ```json

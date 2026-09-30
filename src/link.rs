@@ -237,6 +237,8 @@ struct Linker<'a> {
     opts: &'a Options<'a>,
     res: &'a Resolution,
     entries_dir: PathBuf,
+    /// The project, symlinks resolved: nothing is written or swept outside it.
+    real_root: PathBuf,
     wanted: HashMap<String, Entry<'a>>,
     counts: Counts,
     copy_only: AtomicBool,
@@ -360,6 +362,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         opts,
         res,
         entries_dir: entries_dir.clone(),
+        real_root: real_root.clone(),
         wanted,
         counts: Counts::default(),
         copy_only: AtomicBool::new(false),
@@ -559,6 +562,10 @@ impl Linker<'_> {
     fn materialize(&self, entry: &Entry, present: bool) -> Result<()> {
         let fin = self.entries_dir.join(&entry.key);
         if present {
+            // Swept below: a checkout could ship the entry, or a directory in it, as a symlink out.
+            let nm = fin.join("node_modules");
+            inside(&nm, &self.real_root)?;
+            inside(&nm.join(".bin"), &self.real_root)?;
             if self.intact(entry)? {
                 Counts::add(&self.counts.reused, 1);
                 // Touched, so a prune reads "still wanted" off its mtime.
@@ -775,7 +782,7 @@ impl Linker<'_> {
         let nm = &top.nm;
         fs::create_dir_all(nm)
             .map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())).with_code("ELINK"))?;
-        let real_root = fs::canonicalize(self.opts.dir).unwrap_or_else(|_| self.opts.dir.to_path_buf());
+        let real_root = &self.real_root;
         let mut direct: Vec<(String, &Package)> = Vec::new();
         let mut links = BTreeMap::new();
         for (name, version) in &top.dependencies {
@@ -789,7 +796,7 @@ impl Linker<'_> {
             let at = nm.join(name);
             let parent = at.parent().unwrap_or(nm);
             if name.contains('/') {
-                inside(parent, &real_root)?;
+                inside(parent, real_root)?;
                 fs::create_dir_all(parent)
                     .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
             }
@@ -806,6 +813,8 @@ impl Linker<'_> {
                 bins.insert(bin.clone(), (name.clone(), target.clone(), pkg));
             }
         }
+        // Made, written and swept below: never through a symlink out of the project.
+        inside(&bin_dir, real_root)?;
         if !bins.is_empty() {
             fs::create_dir_all(&bin_dir).map_err(|e| Error::io(&e, "cannot create .bin").with_code("ELINK"))?;
         }
@@ -873,6 +882,7 @@ impl Linker<'_> {
     /// dependency), and the root's `node_modules` is the next place Node looks anyway. Links
     /// that are already right stay; the rest converge.
     fn hoist(&self, dir: &Path) -> Result<()> {
+        let real_root = &self.real_root;
         let linked = |name: &str, version: &String| {
             let id = format!("{name}@{version}");
             self.wanted.get(&id).is_some_and(|e| self.present(e))
@@ -894,6 +904,9 @@ impl Linker<'_> {
                 pick.insert(&e.pkg.name, e);
             }
         }
+        // A checkout can ship it, or a scope in it, as a symlink out of the project: the links
+        // would be made, and others swept, there.
+        inside(dir, real_root)?;
         fs::create_dir_all(dir)
             .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
         let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
@@ -904,8 +917,10 @@ impl Linker<'_> {
             let real = self.root_of(e).join(&e.home);
             let target = if e.shared { real } else { relative(parent, &real) };
             let made = if name.contains('/') {
-                fs::create_dir_all(parent)
-                    .map_err(|err| Error::io(&err, "cannot create a scope directory").with_code("ELINK"))
+                inside(parent, real_root).and_then(|()| {
+                    fs::create_dir_all(parent)
+                        .map_err(|err| Error::io(&err, "cannot create a scope directory").with_code("ELINK"))
+                })
             } else {
                 Ok(())
             }
@@ -1051,7 +1066,7 @@ fn replace_link(at: &Path, target: &str, within: &Path, dir: bool) -> Result<()>
 
 /// A top whose directory, `node_modules` or scope directory is a symlink out of the project,
 /// as a hostile checkout can arrange, would have the sweep delete there.
-fn inside(path: &Path, real_root: &Path) -> Result<()> {
+pub fn inside(path: &Path, real_root: &Path) -> Result<()> {
     match fs::canonicalize(path) {
         Ok(real) if real.starts_with(real_root) => Ok(()),
         Ok(real) => Err(fail(format!(
