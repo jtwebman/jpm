@@ -1255,6 +1255,9 @@ fn an_alias_never_takes_another_packages_place() {
         std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
         env.ok(&["ci"]);
         assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"), "{order:?}");
+        // Its entry in the project too, named by jpm.lock's recorded subgraphs (shadcn's next).
+        env.ok(&["install", "--no-global-store"]);
+        assert!(env.read("node_modules/b/../real/index.js").contains("evil@1.0.0"), "{order:?}");
     }
     // The root's own alias, next to the real package under the same name elsewhere; a lockfile
     // edit pointing the name at another package is refused.
