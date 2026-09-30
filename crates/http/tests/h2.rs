@@ -642,6 +642,34 @@ fn keeps_to_its_pools_stream_cap() {
     assert_eq!(most_streams_open(100, 2), 2);
 }
 
+/// Many more requests than streams: each stream that ends wakes one waiting request, and every
+/// request gets a stream long before its wait runs out.
+#[test]
+fn requests_waiting_for_a_stream_each_get_one() {
+    let addr = listen(|s, _| {
+        let mut p = Peer::new(s, &[(frame::MAX_CONCURRENT_STREAMS, 3)]);
+        while let Some((id, _)) = p.request() {
+            p.respond(id, 200, &id.to_be_bytes());
+        }
+    });
+    let pool = Pool::new(1, MAX_STREAMS, Duration::from_secs(5));
+    let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req("/")).unwrap() else { panic!() };
+    assert_eq!(body(r).unwrap().len(), 4);
+    let again = || -> io::Result<Link<()>> { panic!("a second connection") };
+    let started = std::time::Instant::now();
+    thread::scope(|s| {
+        for _ in 0..64 {
+            s.spawn(|| {
+                for _ in 0..5 {
+                    let Got::H2(r) = pool.get("r.test", again, &req("/")).unwrap() else { panic!() };
+                    assert_eq!(body(r).unwrap().len(), 4);
+                }
+            });
+        }
+    });
+    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+}
+
 #[test]
 fn refuses_a_header_with_a_line_break_and_keeps_its_stream() {
     let addr = listen(|s, _| {
