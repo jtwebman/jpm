@@ -317,22 +317,14 @@ impl Registry {
             return Ok(times);
         }
         // A kept full document older than the abbreviated one lacks the newest dates: ask again.
-        let bytes = self.document(name, &self.path(name)?, FULL, true)?;
-        let fresh = Packument::parse(bytes)?;
-        let times = fresh.time.clone();
-        if let Ok(mut m) = self.fulls.lock() {
-            let cell = OnceLock::new();
-            let _ = cell.set(Ok(Arc::new(fresh)));
-            m.insert(name.to_string(), Arc::new(cell));
-        }
-        Ok(times)
+        self.dates(name, true)
     }
 
     /// The full document's `time`. It is kept beside the document too, stamped with the file it
     /// was read from: kilobytes read instead of megabytes (typescript's is 16 MB) for every name
     /// the release cutoff has to date.
     fn kept_times(&self, name: &str) -> Result<Map> {
-        let Some(cache) = &self.cache else { return Ok(self.full(name)?.time.clone()) };
+        let Some(cache) = &self.cache else { return self.dates(name, false) };
         let file = cache.file(&format!("full {}", self.path(name)?));
         let side = file.with_file_name("_full.times");
         let stamp = || crate::state::stamp_of(&file).map(|s| s.join(" "));
@@ -345,12 +337,29 @@ impl Registry {
         {
             return Ok(doc.time);
         }
-        let full = self.full(name)?;
+        let time = self.dates(name, false)?;
         if let Some(now) = stamp() {
-            let body = crate::json::to_string(&crate::json::obj([("time", crate::json::str_map(&full.time))]));
+            let body = crate::json::to_string(&crate::json::obj([("time", crate::json::str_map(&time))]));
             let _ = crate::util::write_atomic(&side, format!("{now}\n{body}").as_bytes());
         }
-        Ok(full.time.clone())
+        Ok(time)
+    }
+
+    /// The full document's `time`, the rest of it dropped once read: the release cutoff wants
+    /// only the dates, kilobytes of a document that can run to megabytes. A full document this
+    /// run holds whole answers; asked for again, it gives way to the registry's.
+    fn dates(&self, name: &str, ask: bool) -> Result<Map> {
+        {
+            let mut fulls = self.fulls.lock().map_err(|_| poisoned())?;
+            if ask {
+                fulls.remove(name);
+            } else if let Some(Ok(full)) = fulls.get(name).and_then(|c| c.get()) {
+                return Ok(full.time.clone());
+            }
+        }
+        let url = self.path(name)?;
+        let bytes = self.document(name, &url, FULL, ask)?;
+        Ok(Packument::parse(bytes).map_err(|e| e.context(&url))?.time)
     }
 
     fn full(&self, name: &str) -> Result<Arc<Packument>> {
@@ -971,6 +980,33 @@ mod tests {
         let pick = |c: &Config| Registry::new(c, None).pick(&parse_dep(name, "*").unwrap(), None, false).unwrap();
         assert_eq!(pick(&excluded).version, "2.0.0");
         assert_eq!(pick(&Config { before: None, ..config }).version, "2.0.0");
+    }
+
+    #[test]
+    fn keeps_only_the_dates_of_a_full_document_read_for_them() {
+        let versions = [("1.0.0", "2000-01-01T00:00:00.000Z"), ("2.0.0", "2999-01-01T00:00:00.000Z")];
+        let docs = [("/tool".to_string(), platform_docs("tool", "darwin", &versions))];
+        let dir = std::env::temp_dir().join(format!("jpm-dates-{}", std::process::id()));
+        // Without a cache, and with one: the document is kept on disk, never in memory.
+        for metadata in [None, Some(dir.as_path())] {
+            let _ = std::fs::remove_dir_all(&dir);
+            let (base, asked) = registry_of(docs.clone().into_iter().collect());
+            let config = Config { registry: base, before: Some(now_ms()), ..Config::default() };
+            let registry = Registry::new(&config, metadata);
+            let doc = registry.packument("tool").unwrap();
+            assert_eq!(doc.versions().collect::<Vec<_>>(), ["1.0.0"], "{metadata:?}");
+            assert!(registry.fulls.lock().unwrap().is_empty(), "{metadata:?}");
+            let kinds: Vec<String> = asked.lock().unwrap().iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(kinds, ["corgi", "full"], "{metadata:?}");
+            if metadata.is_some() {
+                assert!(
+                    DocCache { dir: dir.clone(), mode: CacheMode::Only }
+                        .get(&format!("full {}/tool", config.registry))
+                        .is_some()
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
