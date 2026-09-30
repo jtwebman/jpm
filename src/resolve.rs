@@ -206,7 +206,7 @@ impl Walk<'_> {
                 }
                 if key != ROOT {
                     let peers = s.records[key].peers.clone().unwrap_or_default();
-                    settle(&mut s, key, &peers, top.manifest.peer_dependencies.as_ref(), self.overrides());
+                    settle(&mut s, key, true, &peers, top.manifest.peer_dependencies.as_ref(), self.overrides());
                 }
             }
         }
@@ -260,6 +260,10 @@ impl Walk<'_> {
         let over = self.overridden(from, name, range);
         let range = match &over {
             Some(None) => return Ok(()),
+            Some(Some(r)) if !self.tops.contains_key(from) && to_workspace(name, r) => {
+                lock(&self.state).warnings.insert(workspace_override(name));
+                range
+            }
             Some(Some(r)) => r.as_str(),
             None => range,
         };
@@ -626,7 +630,7 @@ impl Walk<'_> {
         for (n, r) in &m.optional_dependencies {
             queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: true, fresh: false });
         }
-        settle(&mut s, &key, &peers, Some(&m.peer_dependencies), self.overrides());
+        settle(&mut s, &key, false, &peers, Some(&m.peer_dependencies), self.overrides());
         Ok(true)
     }
 
@@ -663,7 +667,8 @@ impl Walk<'_> {
                 }
             }
             s.edges.insert(key.clone(), list);
-            settle(&mut s, &key, &peers, pkg.peer_dependencies.as_ref(), self.overrides());
+            let top = self.tops.contains_key(&key);
+            settle(&mut s, &key, top, &peers, pkg.peer_dependencies.as_ref(), self.overrides());
         }
     }
 
@@ -921,13 +926,17 @@ impl Walk<'_> {
 }
 
 /// Register a package's peers to settle after the walk: required ones become edges, optional
-/// ones are wired only to what is there. Overrides apply to a peer's range too.
-fn settle(s: &mut State, key: &str, peers: &Peers, ranges: Option<&Deps>, overrides: &[Override]) {
+/// ones are wired only to what is there. Overrides apply to a peer's range too, but one to a
+/// workspace only for a `top` (see `workspace_override`).
+fn settle(s: &mut State, key: &str, top: bool, peers: &Peers, ranges: Option<&Deps>, overrides: &[Override]) {
     let mut soft = Vec::new();
     for (name, kind) in peers {
         let mut written = ranges.and_then(|r| r.get(name)).cloned().unwrap_or_default();
         match rules::find(overrides, crate::graph::split_key(key), name, &written) {
             Some(None) => continue,
+            Some(Some(r)) if !top && to_workspace(name, r) => {
+                s.warnings.insert(workspace_override(name));
+            }
             Some(Some(r)) => written = r.to_string(),
             None => {}
         }
@@ -942,6 +951,20 @@ fn settle(s: &mut State, key: &str, peers: &Peers, ranges: Option<&Deps>, overri
         }
     }
     s.soft_peers.insert(key.to_string(), soft);
+}
+
+/// Whether an override's value sends `name` to a workspace.
+fn to_workspace(name: &str, value: &str) -> bool {
+    spec::parse_dep(name, value).is_ok_and(|s| s.kind == Kind::Workspace)
+}
+
+/// An override to a workspace holds for the root and the workspaces only. No registry package
+/// links to a workspace, as its entry may be shared by every project: there the override gives
+/// way to the range the package asked for, as a dependency or a peer.
+fn workspace_override(name: &str) -> String {
+    format!(
+        "overrides send {name} to its workspace: jpm links only the root and workspaces to it, and packages from the registry get {name} from the registry"
+    )
 }
 
 /// A peer range as written, or the `||` alternatives of it that are ranges (`>=3 || insiders`
