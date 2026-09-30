@@ -113,7 +113,7 @@ for peers too. jpm reads each manager's field:
 A value is a range, an `npm:` alias, `$name` for the root's own range of `name`, `catalog:`, or
 for pnpm `-`, which takes the edge out. A `name@range` key matches as its manager does: npm's
 where the two ranges meet, pnpm's where the edge's range is inside it, yarn's where they are
-the same. jpm keeps one copy of each version of a package, so a nested rule applies to the
+the same. jpm resolves each version of a package once, so a nested rule applies to the
 parent's own dependencies wherever the parent is; a rule nested deeper applies to its nearest
 parent's, with a warning. When two rules match, the one with a parent wins, then one with a
 range, then a name alone; pnpm's rules go before npm's, and npm's before yarn's.
@@ -402,7 +402,11 @@ does not use, so they are not compared.
   from the registry's abbreviated document, fetched once per run and kept on disk between
   runs (revalidated by ETag). Peer dependencies are settled against the tree after the walk,
   so a plugin uses the host version the tree already has. Consumers that miss the same peer
-  share one version when one fits them all.
+  share one version when one fits them all. A package takes its peers from where it is
+  installed, so one reached with two sets of peers is two copies, as under pnpm: a library
+  that workspaces on two Reacts share is `ui-lib@1.0.0(react@17.0.2)` and
+  `ui-lib@1.0.0(react@18.2.0)` in `jpm.lock`, each linked to its React. A package with one set
+  keeps its plain key.
 - **Store.** Each tarball is checked against its integrity and unpacked once into a shared
   store (`~/.jpm/store`, or `JPM_STORE`). Files there are read-only.
 - **Link.** Each package gets an entry, `<name>@<version>-<hash>/`, named by a hash of the

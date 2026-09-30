@@ -5,6 +5,7 @@ mod build;
 mod cli;
 mod commands;
 mod config;
+mod copies;
 mod error;
 mod foreign;
 mod gc;

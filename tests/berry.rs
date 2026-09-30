@@ -725,7 +725,6 @@ fn pnp_identical_packages_share_one_copy_of_a_dependency() {
 }
 
 #[test]
-#[ignore = "known gap: jpm keeps one copy of each name@version, so a package's peers are one set; pnpm and yarn make a copy per set of peers"]
 fn pnp_identical_packages_with_different_peers_are_different_copies() {
     let r = berry();
     let env = install(
