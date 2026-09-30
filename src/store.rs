@@ -117,6 +117,38 @@ const INLINE_FILES: usize = 64;
 const WRITERS: usize = 8;
 /// File bodies read ahead of the writers.
 const WRITE_QUEUE: usize = 64;
+/// The largest body handed to a writer; a bigger one streams to disk from the reader.
+const QUEUED_MAX: u64 = 8 * 1024 * 1024;
+/// Bytes of bodies read but not yet written, at most: what a tarball may hold in memory, however
+/// big or repetitive its files. The reader waits for the writers past it.
+const QUEUED_BYTES: u64 = 32 * 1024 * 1024;
+
+/// A file body for a writer thread: where, whether it runs, the bytes, and what they took of the
+/// budget.
+type Queued = (PathBuf, bool, Vec<u8>, u64);
+
+/// Bytes queued to `extract`'s writers and not yet written.
+#[derive(Default)]
+struct Budget {
+    used: Mutex<u64>,
+    freed: std::sync::Condvar,
+}
+
+impl Budget {
+    /// Room for `n` more bytes, waiting for the writers while the queue holds too much.
+    fn take(&self, n: u64) {
+        let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
+        while *used > 0 && *used + n > QUEUED_BYTES {
+            used = self.freed.wait(used).unwrap_or_else(PoisonError::into_inner);
+        }
+        *used += n;
+    }
+
+    fn give(&self, n: u64) {
+        *self.used.lock().unwrap_or_else(PoisonError::into_inner) -= n;
+        self.freed.notify_all();
+    }
+}
 
 pub struct Store {
     pub dir: PathBuf,
@@ -478,14 +510,12 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     let mut made: HashSet<PathBuf> = HashSet::new();
     let mut manifest: Option<Vec<u8>> = None;
     let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
-    // Past the first files, bodies go to writer threads: one tarball of thousands of files
+    // Past the first files, small bodies go to writer threads: one tarball of thousands of files
     // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
-    let (send, recv) = mpsc::sync_channel::<(PathBuf, bool, Vec<u8>)>(WRITE_QUEUE);
-    let (recv, failed) = (&Mutex::new(recv), &Mutex::new(None::<Error>));
-    // A path a later entry repeats once writers run: written last, so the later one wins.
-    let mut again: BTreeMap<PathBuf, (bool, Vec<u8>)> = BTreeMap::new();
+    let failed = &Mutex::new(None::<Error>);
+    let budget = &Budget::default();
     std::thread::scope(|scope| {
-        let mut writers = 0;
+        let mut writers: Option<Writers<'_>> = None;
         let read = tar::read_entries(&mut input, |path, mode, size, body| {
             if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
                 return Err(e);
@@ -499,26 +529,31 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             let exec = mode & 0o111 != 0;
             let seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
             let corrupt = |e: io::Error| Error::new("EBADTAR", format!("Corrupt tarball: {e}"));
-            if path != "package.json" && (writers > 0 || files.len() > INLINE_FILES) {
-                let mut data = Vec::with_capacity(size.min(1 << 24) as usize);
-                body.read_to_end(&mut data).map_err(corrupt)?;
-                if seen {
-                    again.insert(file, (exec, data));
-                    return Ok(());
-                }
-                if writers == 0 {
-                    writers = crate::pool::disk_threads().min(WRITERS);
-                    for _ in 0..writers {
-                        scope.spawn(move || write_queued(recv, failed));
-                    }
-                }
-                let _ = send.send((file, exec, data));
-                return Ok(());
-            }
-            // A later entry for the path wins, as tar has it.
             if seen {
+                // A later entry for the path wins, as tar has it: any queued write of it first.
+                finish(&mut writers);
                 let _ = make_writable(&file);
                 let _ = fs::remove_file(&file);
+            } else if path != "package.json" && size <= QUEUED_MAX && files.len() > INLINE_FILES {
+                budget.take(size);
+                let mut data = Vec::with_capacity(size as usize);
+                if let Err(e) = body.read_to_end(&mut data) {
+                    budget.give(size);
+                    return Err(corrupt(e));
+                }
+                let (send, _) = writers.get_or_insert_with(|| {
+                    let (send, recv) = mpsc::sync_channel::<Queued>(WRITE_QUEUE);
+                    let recv = Arc::new(Mutex::new(recv));
+                    let spawn = |_| {
+                        let recv = recv.clone();
+                        scope.spawn(move || write_queued(&recv, failed, budget))
+                    };
+                    (send, (0..crate::pool::disk_threads().min(WRITERS)).map(spawn).collect())
+                });
+                if send.send((file, exec, data, size)).is_err() {
+                    budget.give(size);
+                }
+                return Ok(());
             }
             let mut out = create(&file, exec).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
             if path == "package.json" {
@@ -534,19 +569,11 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
             }
             Ok(())
         });
-        // The writers stop once the queue is empty; the scope waits for them.
-        drop(send);
+        finish(&mut writers);
         read
     })?;
     if let Some(e) = failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
         return Err(e);
-    }
-    for (file, (exec, data)) in again {
-        let _ = make_writable(&file);
-        let _ = fs::remove_file(&file);
-        create(&file, exec)
-            .and_then(|mut out| out.write_all(&data))
-            .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
     }
     if input.limit() == 0 {
         return Err(Error::new("EBADTAR", format!("Tarball inflates past {} bytes", tar::MAX_ARCHIVE)));
@@ -693,12 +720,27 @@ impl<R: Read> Read for Hashing<R> {
     }
 }
 
+/// `extract`'s queue to its writer threads, and the threads.
+type Writers<'scope> = (mpsc::SyncSender<Queued>, Vec<std::thread::ScopedJoinHandle<'scope, ()>>);
+
+/// Everything queued written: the queue closed and its writers joined.
+fn finish(writers: &mut Option<Writers<'_>>) {
+    if let Some((send, handles)) = writers.take() {
+        drop(send);
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+}
+
 /// A writer thread of `extract`: queued files until the queue closes, the first error kept.
-fn write_queued(recv: &Mutex<mpsc::Receiver<(PathBuf, bool, Vec<u8>)>>, failed: &Mutex<Option<Error>>) {
+fn write_queued(recv: &Mutex<mpsc::Receiver<Queued>>, failed: &Mutex<Option<Error>>, budget: &Budget) {
     loop {
         let job = recv.lock().unwrap_or_else(PoisonError::into_inner).recv();
-        let Ok((file, exec, data)) = job else { return };
-        if let Err(e) = create(&file, exec).and_then(|mut out| out.write_all(&data)) {
+        let Ok((file, exec, data, taken)) = job else { return };
+        let written = create(&file, exec).and_then(|mut out| out.write_all(&data));
+        budget.give(taken);
+        if let Err(e) = written {
             failed
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)

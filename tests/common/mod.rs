@@ -57,19 +57,24 @@ impl Pkg {
     }
 }
 
+/// A ustar header for a regular file of `size` bytes.
+pub fn tar_header(path: &str, mode: u32, size: usize) -> [u8; 512] {
+    let mut h = [0u8; 512];
+    h[..path.len()].copy_from_slice(path.as_bytes());
+    h[100..107].copy_from_slice(format!("{mode:07o}").as_bytes());
+    h[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
+    h[156] = b'0';
+    h[257..263].copy_from_slice(b"ustar\0");
+    h[148..156].copy_from_slice(b"        ");
+    let sum: u32 = h.iter().map(|b| u32::from(*b)).sum();
+    h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+    h
+}
+
 pub fn tar(entries: &[(String, u32, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (path, mode, data) in entries {
-        let mut h = [0u8; 512];
-        h[..path.len()].copy_from_slice(path.as_bytes());
-        h[100..107].copy_from_slice(format!("{mode:07o}").as_bytes());
-        h[124..135].copy_from_slice(format!("{:011o}", data.len()).as_bytes());
-        h[156] = b'0';
-        h[257..263].copy_from_slice(b"ustar\0");
-        h[148..156].copy_from_slice(b"        ");
-        let sum: u32 = h.iter().map(|b| u32::from(*b)).sum();
-        h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
-        out.extend_from_slice(&h);
+        out.extend_from_slice(&tar_header(path, *mode, data.len()));
         out.extend_from_slice(data);
         out.resize(out.len().div_ceil(512) * 512, 0);
     }
