@@ -631,12 +631,18 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
             Ok(picked
                 .iter()
                 .map(|m| {
+                    // The registry's text, which may be anything: cut by characters, not bytes.
                     let digest = m.integrity().unwrap_or_default();
-                    let digest = if digest.len() > 24 { format!("{}…", &digest[..24]) } else { digest };
+                    let digest = if digest.chars().count() > 24 {
+                        format!("{}…", digest.chars().take(24).collect::<String>())
+                    } else {
+                        digest
+                    };
                     let line =
                         [format!("{}@{}", m.name, m.version), m.dist.tarball.clone().unwrap_or_default(), digest]
-                            .into_iter()
+                            .iter()
                             .filter(|s| !s.is_empty())
+                            .map(|s| ui::clean(s).into_owned())
                             .collect::<Vec<_>>()
                             .join("  ");
                     if m.deprecated { format!("{line}\n  {}", paint(YELLOW, "! deprecated", true)) } else { line }
@@ -682,8 +688,8 @@ fn fetched(cli: &Cli, list: &[commands::Fetched], lock: bool) -> Result<String, 
         .map(|f| {
             format!(
                 "{}@{}  {} files  {}  {}",
-                f.name,
-                f.version,
+                ui::clean(&f.name),
+                ui::clean(&f.version),
                 f.files,
                 size(f.bytes),
                 if f.cached { "cache hit" } else { "downloaded" }
@@ -780,7 +786,7 @@ fn run_command(cli: &Cli) -> Result<i32, Error> {
             ui::out(&format!("{}\n", pretty(&all.into())));
         } else {
             for top in &lists {
-                ui::out(&format!("{}\n{}", top.name, render(&top.manifest.scripts(&top.file)?, "  ")));
+                ui::out(&format!("{}\n{}", ui::clean(&top.name), render(&top.manifest.scripts(&top.file)?, "  ")));
             }
         }
         return Ok(0);

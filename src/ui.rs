@@ -36,7 +36,38 @@ fn color(stream_is_tty: bool) -> bool {
 
 pub fn paint(code: &str, text: &str, stdout: bool) -> String {
     let tty = if stdout { std::io::stdout().is_terminal() } else { std::io::stderr().is_terminal() };
-    if color(tty) { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() }
+    let text = clean(text);
+    if color(tty) { format!("\x1b[{code}m{text}\x1b[0m") } else { text.into_owned() }
+}
+
+/// Text from a registry or a package, safe for a terminal: each control character but a line
+/// break and a tab (C0, DEL and C1) written out as `\u{1b}`, so none can set the clipboard, the
+/// title or a link, or move the cursor over what jpm printed.
+pub fn clean(text: &str) -> std::borrow::Cow<'_, str> {
+    let bad = |c: char| c.is_control() && c != '\n' && c != '\t';
+    if !text.chars().any(bad) {
+        return text.into();
+    }
+    // A script's `\r\n` is a line break.
+    let text = text.replace("\r\n", "\n");
+    text.chars().map(|c| if bad(c) { c.escape_unicode().to_string() } else { c.to_string() }).collect()
+}
+
+/// `clean`, keeping the colors `paint` writes (`ESC [ digits m`): stdout's text is built with them.
+fn clean_keeping_color(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('\x1b') {
+        out.push_str(&clean(&rest[..at]));
+        let sgr = rest[at + 1..]
+            .strip_prefix('[')
+            .and_then(|a| a.find(|c: char| !c.is_ascii_digit() && c != ';').filter(|end| a[*end..].starts_with('m')));
+        let len = sgr.map_or(0, |end| end + 3); // ESC, `[`, the digits, `m`
+        out.push_str(if len > 0 { &rest[at..at + len] } else { "\\u{1b}" });
+        rest = &rest[at + len.max(1)..];
+    }
+    out.push_str(&clean(rest));
+    out
 }
 
 pub const GRAY: &str = "90";
@@ -49,7 +80,7 @@ pub const BOLD: &str = "1";
 pub fn note(message: &str, level: Level) {
     let line = match level {
         Level::Info if quiet() => return,
-        Level::Info => format!("{} {message}", paint(GRAY, "jpm:", false)),
+        Level::Info => format!("{} {}", paint(GRAY, "jpm:", false), clean(message)),
         Level::Warn => format!("{} {}", paint(YELLOW, "jpm:", false), paint(YELLOW, message, false)),
     };
     let mut screen = screen();
@@ -71,10 +102,11 @@ pub fn error(message: &str) {
     let _ = writeln!(std::io::stderr(), "{} {}", paint(RED_BOLD, "jpm:", false), paint("31", message, false));
 }
 
-/// Print to stdout; a reader that left (`| head`) is not a failure.
+/// Print to stdout; a reader that left (`| head`) is not a failure. No escape sequence but
+/// `paint`'s colors gets through.
 pub fn out(text: &str) {
     let mut stdout = std::io::stdout().lock();
-    let _ = stdout.write_all(text.as_bytes());
+    let _ = stdout.write_all(clean_keeping_color(text).as_bytes());
     let _ = stdout.flush();
 }
 
@@ -305,6 +337,19 @@ mod tests {
         assert_eq!(osc(Some(Some(42))), "\x1b]9;4;1;42\x1b\\");
         assert_eq!(osc(Some(None)), "\x1b]9;4;3\x1b\\");
         assert_eq!(osc(None), "\x1b]9;4;0\x1b\\");
+    }
+
+    #[test]
+    fn writes_control_characters_out() {
+        assert_eq!(clean("plain\tline\n"), "plain\tline\n");
+        assert_eq!(clean("a\x1b]52;c;eA==\x07b"), "a\\u{1b}]52;c;eA==\\u{7}b");
+        assert_eq!(clean("del\x7f c1\u{9b}2J ok\r\nnext\rover"), "del\\u{7f} c1\\u{9b}2J ok\nnext\\u{d}over");
+        // stdout keeps paint's colors, and only those.
+        let text = "\x1b[32mInstalled\x1b[0m x\x1b]8;;http://e\x1b\\y\x1b[2J\x1b[";
+        assert_eq!(
+            clean_keeping_color(text),
+            "\x1b[32mInstalled\x1b[0m x\\u{1b}]8;;http://e\\u{1b}\\y\\u{1b}[2J\\u{1b}["
+        );
     }
 
     #[test]
