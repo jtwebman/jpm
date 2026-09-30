@@ -275,8 +275,17 @@ fn answer(path: &str, pkgs: &[Pkg], base: &str) -> (&'static str, Vec<u8>) {
             time.insert(p.version.clone(), at.to_string());
         }
         let latest = versions.iter().map(|p| p.version.clone()).max_by(|a, b| cmp(a, b)).unwrap();
+        // A manifest's own `dist-tags`, as berry's fixtures carry them, win over the newest.
+        let mut tags = json!({ "latest": latest });
+        for p in &versions {
+            if let Some(Value::Object(own)) = p.manifest.get("dist-tags") {
+                for (tag, v) in own {
+                    tags[tag] = v.clone();
+                }
+            }
+        }
         let modified = time.values().max().cloned().unwrap();
-        let body = json!({ "name": path, "dist-tags": { "latest": latest }, "versions": doc, "time": time, "modified": modified });
+        let body = json!({ "name": path, "dist-tags": tags, "versions": doc, "time": time, "modified": modified });
         return ("200 OK", serde_json::to_vec(&body).unwrap());
     }
     // A version's own route: `name/version`.
@@ -296,7 +305,12 @@ fn cmp(a: &str, b: &str) -> std::cmp::Ordering {
 fn manifest(p: &Pkg, base: &str) -> Value {
     let mut m = p.package_json();
     let short = p.name.rsplit('/').next().unwrap();
-    m["dist"] = json!({ "tarball": format!("{base}/{}/-/{short}-{}.tgz", p.name, p.version), "integrity": sha512(&p.tarball()) });
+    // A manifest may name its tarball's path, served with `Registry::serve`.
+    let tarball = match p.manifest.pointer("/dist/tarball").and_then(Value::as_str) {
+        Some(path) => format!("{base}{path}"),
+        None => format!("{base}/{}/-/{short}-{}.tgz", p.name, p.version),
+    };
+    m["dist"] = json!({ "tarball": tarball, "integrity": sha512(&p.tarball()) });
     m
 }
 

@@ -14,7 +14,7 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
     packages
         .iter()
         .filter(|(_, p)| p.local.is_none())
-        .map(|(k, p)| (k.clone(), format!("{}@{}-{}", p.name.replace('/', "+"), p.version, digests[k])))
+        .map(|(k, p)| (k.clone(), format!("{}@{}-{}", p.dir_name().replace('/', "+"), p.version, digests[k])))
         .collect()
 }
 
@@ -27,14 +27,15 @@ pub fn name_version(key: &str) -> Option<(String, &str)> {
 }
 
 /// Identity, content and what it resolves its deps to. Integrity, not the url: a republished
-/// tarball is new content, and a mirror serving the same bytes is not.
+/// tarball is new content, and a mirror serving the same bytes is not. An alias is its real
+/// package: two names for one package with the same deps are one entry, as under pnpm.
 fn line_of(p: &Package) -> String {
     match &p.local {
         Some(path) => format!("{}@link:{path}::local", p.name),
         // A built or patched package is its own entry: its files are not the store's.
         None => format!(
             "{}@{}::{}::{}{}{}",
-            p.name,
+            p.dir_name(),
             p.version,
             p.integrity,
             edges(&p.all_deps()),
@@ -60,6 +61,19 @@ fn hash(mut lines: Vec<String>) -> String {
 fn digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
     let ids: Vec<&String> = packages.keys().collect();
     let index: HashMap<&str, usize> = ids.iter().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
+    // An alias with the content and edges of the real package at its version is that package:
+    // a peer on the real name, met below the alias (it depends on something that peers on it),
+    // is then the same copy, not a twin in a cycle of its own.
+    let twin: HashMap<usize, usize> = ids
+        .iter()
+        .enumerate()
+        .filter_map(|(i, k)| {
+            let p = &packages[*k];
+            let real = format!("{}@{}", p.alias.as_deref()?, p.version);
+            let &j = index.get(real.as_str())?;
+            (packages[ids[j]].local.is_none() && line_of(&packages[ids[j]]) == line_of(p)).then_some((i, j))
+        })
+        .collect();
     let graph: Vec<Vec<usize>> = ids
         .iter()
         .map(|k| {
@@ -67,7 +81,9 @@ fn digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
             if p.local.is_some() {
                 return Vec::new();
             }
-            p.all_deps().iter().filter_map(|(n, v)| index.get(format!("{n}@{v}").as_str()).copied()).collect()
+            let child =
+                |n: &String, v: &String| index.get(format!("{n}@{v}").as_str()).map(|i| *twin.get(i).unwrap_or(i));
+            p.all_deps().iter().filter_map(|(n, v)| child(n, v)).collect()
         })
         .collect();
     let mut digest: Vec<Option<String>> = vec![None; ids.len()];
@@ -84,6 +100,9 @@ fn digests(packages: &BTreeMap<String, Package>) -> HashMap<String, String> {
         for &n in &group {
             digest[n] = Some(h.clone());
         }
+    }
+    for (&i, &j) in &twin {
+        digest[i] = digest[j].clone();
     }
     ids.into_iter().zip(digest).map(|(k, d)| (k.clone(), d.unwrap_or_default())).collect()
 }
@@ -175,6 +194,24 @@ mod tests {
         let tail = |k: &str| keys[k].rsplit('-').next().unwrap().to_string();
         assert_eq!(tail("a@1.0.0"), tail("b@1.0.0"));
         assert_ne!(tail("a@1.0.0"), tail("c@1.0.0"));
+    }
+
+    #[test]
+    fn an_alias_is_its_real_package() {
+        // `a` is an alias of `r`, whose `b` peers on `r`: alias and real are one entry, named `r`.
+        let mut g = graph(&[("r", &["b"]), ("b", &["r"])]);
+        let mut alias = pkg("r", &["b"]);
+        alias.name = "a".into();
+        alias.alias = Some("r".into());
+        g.insert("a@npm:r@1.0.0".into(), alias);
+        let keys = store_keys(&g);
+        assert_eq!(keys["a@npm:r@1.0.0"], keys["r@1.0.0"]);
+        assert!(keys["r@1.0.0"].starts_with("r@1.0.0-"));
+        // With other edges it is an entry of its own, still under the real name.
+        g.get_mut("a@npm:r@1.0.0").unwrap().dependencies.clear();
+        let keys = store_keys(&g);
+        assert_ne!(keys["a@npm:r@1.0.0"], keys["r@1.0.0"]);
+        assert!(keys["a@npm:r@1.0.0"].starts_with("r@1.0.0-"));
     }
 
     #[test]

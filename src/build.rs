@@ -88,7 +88,7 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
         if !root.is_dir() || marker.exists() {
             continue;
         }
-        let pkg_dir = root.join("node_modules").join(&p.name);
+        let pkg_dir = root.join("node_modules").join(p.dir_name());
         let file = pkg_dir.join("package.json");
         let scripts = read_scripts(&file);
         let mut events: Vec<(&str, String)> =
