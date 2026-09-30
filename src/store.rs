@@ -155,6 +155,49 @@ impl Budget {
     }
 }
 
+/// Downloads a store has on the network at once. A download holds its slot until its body is
+/// read: a small tarball's is read whole before it is unpacked, so its slot passes to another
+/// download while it unpacks, and the connections stay busy with more threads than slots.
+struct Slots {
+    free: Mutex<usize>,
+    freed: std::sync::Condvar,
+}
+
+impl Slots {
+    fn new(n: usize) -> Self {
+        Self { free: Mutex::new(n.max(1)), freed: std::sync::Condvar::new() }
+    }
+
+    /// A slot, waiting for one while every one is taken.
+    fn take(&self) -> Slot<'_> {
+        let mut free = self.free.lock().unwrap_or_else(PoisonError::into_inner);
+        while *free == 0 {
+            free = self.freed.wait(free).unwrap_or_else(PoisonError::into_inner);
+        }
+        *free -= 1;
+        Slot(Some(self))
+    }
+}
+
+/// A slot of `Slots`, given back when released or dropped. `Slot(None)` holds nothing: a read
+/// that never goes to the network.
+struct Slot<'a>(Option<&'a Slots>);
+
+impl Slot<'_> {
+    fn release(&mut self) {
+        if let Some(slots) = self.0.take() {
+            *slots.free.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+            slots.freed.notify_one();
+        }
+    }
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 pub struct Store {
     pub dir: PathBuf,
     root: PathBuf,
@@ -166,6 +209,8 @@ pub struct Store {
     loaded: Mutex<HashMap<String, Arc<Index>>>,
     /// Entries this process fetched, to tell a download from a cache hit.
     fetched: Mutex<HashSet<String>>,
+    /// Downloads on the network at once: `pool::network_threads`.
+    slots: Slots,
 }
 
 /// `dir`, else `JPM_STORE`, else `~/.jpm/store`.
@@ -217,6 +262,7 @@ impl Store {
             pending: Mutex::default(),
             loaded: Mutex::default(),
             fetched: Mutex::default(),
+            slots: Slots::new(crate::pool::network_threads()),
         }
     }
 
@@ -330,10 +376,16 @@ impl Store {
         let mut last = None;
         for _ in 0..3 {
             let temp = tmp_root.join(temp_suffix());
+            let mut slot = if matches!(tarball, Tarball::Url(_)) { self.slots.take() } else { Slot(None) };
             let (source, length) = self.open(tarball)?;
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
-            let unpacked = match small_head(&mut input, length) {
+            let head = small_head(&mut input, length);
+            // Read whole: its connection is back in the pool, for another download to take.
+            if head.as_ref().is_ok_and(|(_, whole)| *whole) {
+                slot.release();
+            }
+            let unpacked = match head.map(|(head, _)| head) {
                 Ok(head) if tarball.to_string().ends_with(".exe") => {
                     store_exe(&mut head.as_slice().chain(&mut input), &temp, &tarball.to_string())
                 }
@@ -760,14 +812,16 @@ fn tree_digest(dir: &Path, index: &Index) -> Result<Vec<u8>> {
 /// A small tarball is read whole first: its connection goes back to the pool at network speed,
 /// not at the pace of its writes. The length is only a hint (a chunked or gzipped body can
 /// run past it), so at most `STREAM_MIN + 1` bytes are held; the rest unpacks as it downloads,
-/// as a big tarball does whole.
-fn small_head(input: &mut impl Read, length: Option<u64>) -> io::Result<Vec<u8>> {
+/// as a big tarball does whole. Also whether that was the whole body.
+fn small_head(input: &mut impl Read, length: Option<u64>) -> io::Result<(Vec<u8>, bool)> {
     let mut head = Vec::new();
     if let Some(n) = length.filter(|n| *n < STREAM_MIN) {
         head.reserve(n as usize);
         input.take(STREAM_MIN + 1).read_to_end(&mut head)?;
+        let whole = head.len() as u64 <= STREAM_MIN;
+        return Ok((head, whole));
     }
-    Ok(head)
+    Ok((head, false))
 }
 
 /// Passes bytes through while hashing them, and remembers a read error: the connection
@@ -977,13 +1031,18 @@ pub mod tests {
     fn holds_little_of_a_body_longer_than_its_length() {
         // A chunked or gzipped body can run past its Content-Length: only a small head is held.
         let mut long = io::repeat(0).take(4 * STREAM_MIN);
-        assert_eq!(small_head(&mut long, Some(10)).unwrap().len() as u64, STREAM_MIN + 1);
-        assert!(small_head(&mut io::repeat(0).take(10), None).unwrap().is_empty());
+        let (head, whole) = small_head(&mut long, Some(10)).unwrap();
+        assert_eq!((head.len() as u64, whole), (STREAM_MIN + 1, false));
+        assert_eq!(small_head(&mut io::repeat(0).take(10), None).unwrap(), (vec![], false));
+        // A body no longer than its length is read whole.
+        assert_eq!(small_head(&mut io::repeat(0).take(10), Some(10)).unwrap(), (vec![0; 10], true));
+        let mut exact = io::repeat(0).take(STREAM_MIN);
+        assert!(small_head(&mut exact, Some(STREAM_MIN - 1)).unwrap().1);
         // What was held unpacks with the rest.
         let big = vec![b'x'; 2 * STREAM_MIN as usize];
         let tar = build(&[("package/big.js", 0o644, &big), ("package/a.js", 0o644, b"a")]);
         let mut input = tar.as_slice();
-        let head = small_head(&mut input, Some(100)).unwrap();
+        let (head, _) = small_head(&mut input, Some(100)).unwrap();
         assert_eq!(head.len() as u64, STREAM_MIN + 1);
         let dir = scratch("head");
         let index = extract(&mut head.as_slice().chain(input), &dir.join("x"), false).unwrap();
@@ -1083,5 +1142,176 @@ pub mod tests {
         assert!(Index::parse("jpm-index 1 1\n- 1 ../x\n").is_none());
         assert!(Index::parse("jpm-index 1 1\n- 1 a/b\n").is_some());
         assert!(Index::parse("garbage").is_none());
+    }
+
+    /// What `tarball_server` saw: the most requests it held unanswered at once, and its events
+    /// in order.
+    #[derive(Default)]
+    struct Seen {
+        waiting: usize,
+        most: usize,
+        events: Vec<String>,
+    }
+
+    /// A server of tarballs by path, each answered after `ms`. A path starting `/cut` sends half
+    /// its body and hangs up; `/slow` sends half, waits for `go`, then the rest.
+    fn tarball_server(
+        tarballs: HashMap<String, Vec<u8>>,
+        ms: u64,
+        go: Option<mpsc::Receiver<()>>,
+    ) -> (String, Arc<Mutex<Seen>>) {
+        use std::io::BufRead;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let (tarballs, go) = (Arc::new(tarballs), Arc::new(Mutex::new(go)));
+        let s = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let (tarballs, seen, go) = (tarballs.clone(), s.clone(), go.clone());
+                std::thread::spawn(move || {
+                    let mut reader = io::BufReader::new(stream);
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                        line.clear();
+                        while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                            line.clear();
+                        }
+                        {
+                            let mut s = seen.lock().unwrap();
+                            s.waiting += 1;
+                            s.most = s.most.max(s.waiting);
+                            s.events.push(format!("asked {path}"));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(ms));
+                        seen.lock().unwrap().waiting -= 1;
+                        let body = tarballs.get(&path).cloned().unwrap_or_default();
+                        let head = match tarballs.contains_key(&path) {
+                            true => format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len()),
+                            false => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_string(),
+                        };
+                        let out = reader.get_mut();
+                        let half = body.len() / 2;
+                        if out.write_all(head.as_bytes()).and_then(|()| out.write_all(&body[..half])).is_err() {
+                            return;
+                        }
+                        if path.starts_with("/cut") {
+                            return;
+                        }
+                        if path.starts_with("/slow") {
+                            seen.lock().unwrap().events.push(format!("half of {path}"));
+                            if let Some(go) = go.lock().unwrap().take() {
+                                let _ = go.recv();
+                            }
+                            seen.lock().unwrap().events.push(format!("rest of {path}"));
+                        }
+                        if out.write_all(&body[half..]).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (base, seen)
+    }
+
+    /// A small gzipped tarball of its own content, and its integrity.
+    fn tarball_of(tag: &str) -> (Vec<u8>, String) {
+        let manifest = format!(r#"{{"name":"{tag}"}}"#);
+        let tgz = gzip(&build(&[("package/package.json", 0o644, manifest.as_bytes())]));
+        let integrity = sha512(&tgz);
+        (tgz, integrity)
+    }
+
+    #[test]
+    fn downloads_no_more_at_once_than_the_store_has_slots() {
+        let made: Vec<(String, Vec<u8>, String)> = (0..8)
+            .map(|i| {
+                let (tgz, integrity) = tarball_of(&format!("p{i}"));
+                (format!("/p{i}.tgz"), tgz, integrity)
+            })
+            .collect();
+        let (base, seen) = tarball_server(made.iter().map(|(p, t, _)| (p.clone(), t.clone())).collect(), 20, None);
+        let dir = scratch("slots");
+        let mut store = Store::new(dir.join("store"), BTreeMap::new(), false, false);
+        store.slots = Slots::new(2);
+        std::thread::scope(|s| {
+            for (path, _, integrity) in &made {
+                let (store, url) = (&store, format!("{base}{path}"));
+                s.spawn(move || store.ensure(&Tarball::Url(url), integrity).unwrap());
+            }
+        });
+        assert!(made.iter().all(|(_, _, i)| store.has(i)));
+        assert_eq!(seen.lock().unwrap().most, 2, "eight downloads, two slots");
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn holds_a_slot_while_a_large_tarball_streams() {
+        // Past STREAM_MIN it unpacks as it downloads: its connection is busy until the end, and
+        // the next download waits for the slot.
+        let mut noise = 1u32;
+        let big: Vec<u8> = (0..2 * STREAM_MIN)
+            .map(|_| {
+                noise = noise.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                (noise >> 16) as u8
+            })
+            .collect();
+        let large = gzip(&build(&[("package/big.bin", 0o644, &big)]));
+        assert!(large.len() as u64 > STREAM_MIN);
+        let large_integrity = sha512(&large);
+        let (small, small_integrity) = tarball_of("small");
+        let (go, wait) = mpsc::channel();
+        let files = [("/slow.tgz".to_string(), large), ("/small.tgz".to_string(), small)].into();
+        let (base, seen) = tarball_server(files, 0, Some(wait));
+        let dir = scratch("stream-slot");
+        let mut store = Store::new(dir.join("store"), BTreeMap::new(), false, false);
+        store.slots = Slots::new(1);
+        std::thread::scope(|s| {
+            let store = &store;
+            let large = s.spawn(|| store.ensure(&Tarball::Url(format!("{base}/slow.tgz")), &large_integrity));
+            while !seen.lock().unwrap().events.iter().any(|e| e.starts_with("half")) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let small = s.spawn(|| store.ensure(&Tarball::Url(format!("{base}/small.tgz")), &small_integrity));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            go.send(()).unwrap();
+            large.join().unwrap().unwrap();
+            small.join().unwrap().unwrap();
+        });
+        let events = seen.lock().unwrap().events.clone();
+        assert_eq!(events, ["asked /slow.tgz", "half of /slow.tgz", "rest of /slow.tgz", "asked /small.tgz"]);
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn a_failed_download_gives_its_slot_back() {
+        // Cut short on every try, and missing: each fails, and leaves the one slot free.
+        let (ok, ok_integrity) = tarball_of("ok");
+        let (cut, cut_integrity) = tarball_of("cut");
+        let files = [("/cut.tgz".to_string(), cut), ("/ok.tgz".to_string(), ok)].into();
+        let (base, _) = tarball_server(files, 0, None);
+        let dir = scratch("slot-back");
+        let mut store = Store::new(dir.join("store"), BTreeMap::new(), false, false);
+        store.slots = Slots::new(1);
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let cut = store.ensure(&Tarball::Url(format!("{base}/cut.tgz")), &cut_integrity);
+                let missing = store.ensure(&Tarball::Url(format!("{base}/missing.tgz")), &sha512(b"x"));
+                let ok = store.ensure(&Tarball::Url(format!("{base}/ok.tgz")), &ok_integrity);
+                tx.send((cut.map(|_| ()), missing.map(|_| ()), ok.map(|_| ()))).unwrap();
+            });
+            let got = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("a slot was never given back");
+            assert_eq!(got.0.unwrap_err().code, "ENETWORK");
+            assert_eq!(got.1.unwrap_err().code, "E404");
+            got.2.unwrap();
+        });
+        assert_eq!(*store.slots.free.lock().unwrap(), 1);
+        remove_tree(&dir);
     }
 }

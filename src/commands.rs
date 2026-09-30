@@ -443,8 +443,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let platform = Platform::current();
     let prefetching = !ctx.opts.production && !ctx.dedupe;
     // Downloads start as the walk picks each package and go on past the plan: linking starts
-    // once the plan is made, each entry waiting only for the packages it reads.
-    let fetcher = Fetcher::start(&store, if prefetching { pool::network_threads() } else { 0 });
+    // once the plan is made, each entry waiting only for the packages it reads. A thread per
+    // core more than the store lets onto the network: those unpack what has arrived while the
+    // rest keep every connection asking.
+    let workers = pool::network_threads() + pool::disk_threads();
+    let fetcher = Fetcher::start(&store, if prefetching { workers } else { 0 });
     let skipped: Mutex<BTreeMap<String, bool>> = Mutex::default();
     let on_pick = |pkg: &Package, from: &str| {
         let mut skipped = skipped.lock().unwrap_or_else(PoisonError::into_inner);
