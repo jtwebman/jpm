@@ -376,10 +376,11 @@ impl Client {
     }
 }
 
-/// The HTTP/2 pool, or `None` for HTTP/1.1 only. `JPM_HTTP2=0` turns HTTP/2 off, and
-/// `JPM_HTTP2=n` turns it on with `n` connections per host (at most 8). Off when unset, for now.
-/// `JPM_HTTP2_STREAMS` caps the streams in flight to a host, split evenly between its
-/// connections; unset, each connection carries as many as the server allows.
+/// The HTTP/2 pool, or `None` for HTTP/1.1 only. `JPM_HTTP2=n` turns it on with `n` connections
+/// per host (at most 8); unset or 0, it is off: measured on npm's registry, HTTP/2 was no faster
+/// than 32 to 64 HTTP/1.1 connections. `JPM_HTTP2_STREAMS` caps the streams in flight to a
+/// host, split evenly between its connections; unset, each carries as many as the server allows.
+/// How many requests are in flight is still up to the callers (`JPM_CONCURRENCY`).
 fn http2(env: &dyn Fn(&str) -> Option<String>) -> Option<jpm_http::Pool> {
     let number = |name| env(name).and_then(|v| v.trim().parse::<usize>().ok());
     let n = number("JPM_HTTP2").filter(|n| *n > 0)?.min(8);
