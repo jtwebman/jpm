@@ -1051,14 +1051,21 @@ fn nm_a_workspace_peer_with_a_dev_default_takes_the_default() {
 }
 
 #[test]
-fn nm_a_required_dependency_for_another_platform_fails() {
-    // Yarn skips linking it. npm (EBADPLATFORM) and pnpm refuse a required one; an optional one
-    // is left out.
+fn nm_a_required_dependency_for_another_platform_is_skipped() {
+    // Yarn skips linking it, and so does jpm, with a warning; npm refuses it (EBADPLATFORM) and
+    // pnpm installs it with a warning. An optional one is left out.
     let r = berry();
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "native": "1.0.0" } }));
-    let out = fails(&env, &["install"]);
-    assert!(out.contains("EBADPLATFORM"), "{out}");
+    let out = env.ok(&["install"]);
+    // native runs anywhere; its builds, for the os `bar` and `foo`, run nowhere real.
+    assert_eq!(id(&env, "", &["native"]), "native@1.0.0");
+    for name in ["native-bar-x64", "native-foo-x64", "native-foo-x86"] {
+        assert!(env.lock()["packages"].get(format!("{name}@1.0.0")).is_some(), "the lockfile keeps every platform");
+        assert!(out.contains(&format!("skipped {name}@1.0.0: does not run on")), "{out}");
+        assert_eq!(id(&env, "", &["native", name]), "missing");
+    }
+    assert!(out.contains("though native@1.0.0 needs it"), "{out}");
     let env = install(&r, json!({ "dependencies": { "optional-native": "1.0.0" } }), &[]);
     for name in ["native-bar-x64", "native-foo-x64", "native-foo-x86"] {
         assert_eq!(id(&env, "", &["optional-native", name]), "missing");

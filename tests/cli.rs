@@ -1798,7 +1798,7 @@ fn yarn_1_lockfiles_install_no_peers() {
 }
 
 #[test]
-fn skips_a_dev_dependency_for_another_platform() {
+fn skips_a_dependency_for_another_platform() {
     let r = registry();
     let env = Env::new(&r);
     env.manifest(json!({ "name": "root", "workspaces": ["packages/*"] }));
@@ -1812,11 +1812,13 @@ fn skips_a_dev_dependency_for_another_platform() {
     assert!(out.contains("native-mars@1.0.0"), "{out}");
     assert!(env.lock()["packages"].get("native-mars@1.0.0").is_some(), "the lockfile keeps every platform");
     assert!(env.exists("packages/core/node_modules/b") && !env.exists("packages/core/node_modules/native-mars"));
-    // One that ships cannot be left out; the error says who needs it.
+    // One that ships is left out too, with a warning that says who needs it: a team on several
+    // platforms shares one lockfile.
     core("dependencies");
-    let out = env.jpm(&["install"]);
-    let text = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && text.contains("EBADPLATFORM") && text.contains("packages/core"), "{text}");
+    let out = env.ok(&["install"]);
+    assert!(out.contains("skipped native-mars@1.0.0") && out.contains("though packages/core needs it"), "{out}");
+    assert!(env.lock()["packages"].get("native-mars@1.0.0").is_some(), "the lockfile keeps every platform");
+    assert!(env.exists("packages/core/node_modules/b") && !env.exists("packages/core/node_modules/native-mars"));
 }
 
 #[test]
