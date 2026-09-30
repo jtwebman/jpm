@@ -326,6 +326,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true });
     }
     state::clear(opts.dir);
+    crate::ui::trace(|| "l-cleared".into());
 
     let keys = &opts.keys;
     let mut wanted = HashMap::new();
@@ -402,6 +403,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
 
+    crate::ui::trace(|| "l-present".into());
     let linker = Linker {
         opts,
         res,
@@ -421,12 +423,14 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     crate::ui::count(&crate::ui::TO_LINK, ids.len());
     pool::run(pool::disk_threads() * 2, ids, |id, _| {
         let entry = &linker.wanted[id];
+        crate::ui::trace(|| format!("e+ {}", entry.key));
         let placed = match linker.global_of(entry) {
             _ if !linker.present(entry) => Ok(()),
             Some(global) => linker.materialize_global(entry, global),
             None => linker.materialize(entry, present.contains(&entry.key)),
         };
         crate::ui::count(&crate::ui::LINKED, 1);
+        crate::ui::trace(|| format!("e- {}", entry.key));
         if let Err(e) = placed {
             failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
         }
@@ -435,7 +439,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         return Err(e);
     }
     // Downloads no entry took whole, into the store as they are.
+    crate::ui::trace(|| "l-entries".into());
     opts.store.flush()?;
+    crate::ui::trace(|| "l-flushed".into());
     linker.hoist(&entries_dir.join(HOIST))?;
     let hook = entries_dir.join(HOOK);
     if linker.wanted.values().any(|e| e.shared) {
@@ -443,6 +449,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     } else {
         let _ = fs::remove_file(&hook);
     }
+    crate::ui::trace(|| "l-hoisted".into());
     for top in &tops {
         if let Some(parent) = top.nm.parent() {
             inside(parent, &real_root)?;
@@ -453,7 +460,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let links: Vec<RootLinks> = pool::map(pool::disk_threads(), tops.iter().collect(), |top| linker.link_top(top))
         .into_iter()
         .collect::<Result<_>>()?;
+    crate::ui::trace(|| "l-tops".into());
     linker.sweep_temp();
+    crate::ui::trace(|| "l-swept".into());
     let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
     dropped.extend(settled.iter().filter(|(_, arrived)| !**arrived).map(|(id, _)| id.clone()));
     dropped.sort();

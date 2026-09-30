@@ -41,8 +41,11 @@ mod util;
 fn main() {
     ui::START.get_or_init(std::time::Instant::now);
     sys::cap_malloc_arenas();
+    ui::trace(|| "main".into());
     let mut args = std::env::args();
     let argv0 = args.next().unwrap_or_default();
     let code = cli::main(&argv0, args.collect());
+    ui::trace(|| "exit".into());
+    ui::trace_flush();
     std::process::exit(code);
 }

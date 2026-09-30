@@ -121,9 +121,45 @@ pub fn phase(name: &str) {
             START.get_or_init(std::time::Instant::now).elapsed().as_millis()
         );
     }
+    trace(|| format!("phase {name}"));
+    if false {}
 }
 
 pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Throwaway: `JPM_TRACE=1`: timestamped events (us since start, thread), kept in memory and
+/// written to stderr by `trace_flush`.
+pub fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("JPM_TRACE").is_some())
+}
+
+static TRACE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn us() -> u128 {
+    START.get_or_init(std::time::Instant::now).elapsed().as_micros()
+}
+
+pub fn tid() -> u64 {
+    thread_local!(static ID: u64 = { static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) });
+    ID.with(|i| *i)
+}
+
+pub fn trace(what: impl FnOnce() -> String) {
+    if trace_on() {
+        let line = format!("T {} {} {}", us(), tid(), what());
+        TRACE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(line);
+    }
+}
+
+pub fn trace_flush() {
+    if trace_on() {
+        let mut out = std::io::stderr().lock();
+        for l in TRACE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
+            let _ = writeln!(out, "{l}");
+        }
+    }
+}
 
 // --- install progress -----------------------------------------------------------------------
 

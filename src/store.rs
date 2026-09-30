@@ -386,7 +386,9 @@ impl Store {
         let mut last = None;
         for _ in 0..3 {
             let temp = tmp_root.join(temp_suffix());
+            let t0 = crate::ui::us();
             let (source, length) = self.open(tarball)?;
+            let t1 = crate::ui::us();
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
             let unpacked = match small_head(&mut input, length) {
@@ -401,6 +403,7 @@ impl Store {
                 0 => Err(io::Error::other("tarball larger than 1 GiB")),
                 _ => Ok(()),
             });
+            crate::ui::trace(|| format!("dl {t0} {t1} {} {tarball}", length.unwrap_or(0)));
             if let Some(dropped) = input.failed.take() {
                 remove_tree(&temp);
                 last = Some(dropped);

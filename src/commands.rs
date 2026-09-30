@@ -391,6 +391,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ),
     };
     ctx.framework = framework_of(&project);
+    crate::ui::trace(|| "loaded".into());
     let dir = project.dir.clone();
     let previous = if ctx.opts.verify { None } else { state::read(&dir) };
     // The same inputs, with the tree still standing: a no-op that never reads the graph.
@@ -481,8 +482,10 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     ui::phase("planned");
     // A failed plan drops the fetcher, and with it what is still waiting.
     let ((workspaces, locked, lock_hash, tarballs), keys, mut resolution) = planned?;
+    crate::ui::trace(|| "plan-taken".into());
     let block = ctx.config().block_exotic_subdeps;
     check_sourced(&store, &ctx.registry(&store), &dir, &resolution, block)?;
+    crate::ui::trace(|| "sourced".into());
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
@@ -514,6 +517,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     if !ctx.binless.is_empty() {
         read_bins(&mut resolution, &store, &ctx.binless, &dir)?;
     }
+    crate::ui::trace(|| "keys".into());
     let wanted: Vec<&Package> =
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
     // No salt (a store that cannot be written): a hash no state holds, so none vouches for the tree.
@@ -554,7 +558,9 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     ui::phase("filled");
     let fetch = |p: &Package| -> Result<()> {
+        crate::ui::trace(|| format!("w+ {}", p.key()));
         pool::blocking(|| fetcher.arrivals.wait(&p.integrity));
+        crate::ui::trace(|| format!("w- {}", p.key()));
         match store.ensure(&tarball_of(&dir, &p.resolved, p.source.as_deref()), &p.integrity) {
             Err(e) if p.source.is_some() => Err(stale(e, p.source.as_deref().unwrap_or(""))),
             other => other.map(|_| ()),
@@ -794,9 +800,20 @@ impl Fetcher {
                         }
                     };
                     let Some((tarball, integrity)) = job else { break };
+                    crate::ui::trace(|| format!("f+ {}", &integrity[..20.min(integrity.len())]));
                     if !stop.load(Ordering::Relaxed) && !store.has(&integrity) {
                         let _ = store.ensure(&tarball, &integrity);
                     }
+                    crate::ui::trace(|| {
+                        format!(
+                            "f- {} {}",
+                            &integrity[..20.min(integrity.len())],
+                            match &tarball {
+                                Tarball::Url(u) => u.as_str(),
+                                _ => "-",
+                            }
+                        )
+                    });
                     arrivals.arrive(&integrity);
                     ui::count(&ui::FETCHED, 1);
                 }
