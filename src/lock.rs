@@ -1115,7 +1115,7 @@ fn check_key(key: &str) -> Result<Option<String>> {
     let bad = || fail(format!("package key {key:?} is not name@version"));
     let (name, version) = split_key(key).filter(|(_, v)| !v.is_empty()).ok_or_else(bad)?;
     if let Some(v) = version.strip_prefix(runtime::PROTOCOL) {
-        if !runtime::NAMES.contains(&name) || !semver::is_exact(v) {
+        if !runtime::NAMES.contains(&name) || runtime::check_version(name, v).is_err() {
             return Err(fail(format!("package key {key:?} is not a runtime at an exact version")));
         }
         return Ok(Some(version.to_string()));
