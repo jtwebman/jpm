@@ -217,7 +217,8 @@ fn edge_cases(pss: bool, verify: Verify) {
 
     // A signature whose top byte is zero still takes its full length.
     let rng = ring::rand::SystemRandom::new();
-    let mut short_sig = sig.clone();
+    // Nonzero to start, so msg is always the one signed (a PSS `sig` can already start with 0).
+    let mut short_sig = vec![1; sig.len()];
     let mut msg = [0u8; 16];
     while short_sig[0] != 0 {
         rng.fill(&mut msg).unwrap();
