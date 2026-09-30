@@ -82,7 +82,8 @@ pub fn pick<'a>(variants: &'a [Variant], p: &Platform) -> Option<&'a Variant> {
     found.or_else(|| emulated.then(|| variants.iter().find(|v| v.platform == format!("{}-x64", p.os))).flatten())
 }
 
-/// The bins a runtime links, as pnpm does: its binary alone.
+/// The bins a runtime links, as pnpm does: its binary alone. Bun's is `bunx` too, which it is
+/// when run by that name (its own installs link it so); a Windows shim runs `bun.exe` by its own.
 pub fn bins(name: &str, os: &str) -> Bins {
     let win = os == "win32";
     let target = match name {
@@ -93,7 +94,11 @@ pub fn bins(name: &str, os: &str) -> Bins {
         "deno" if win => "deno.exe",
         _ => "deno",
     };
-    Bins::from([(name.to_string(), target.to_string())])
+    let mut bins = Bins::from([(name.to_string(), target.to_string())]);
+    if name == "bun" && !win {
+        bins.insert("bunx".to_string(), target.to_string());
+    }
+    bins
 }
 
 /// Fill in what installs here: this platform's integrity, url and bins. With no build for this
@@ -571,6 +576,12 @@ mod tests {
         // Rosetta and Windows on arm run the x64 build when there is no arm64 one.
         assert_eq!(at("darwin", "arm64", None).as_deref(), Some("darwin-x64"));
         assert_eq!(at("win32", "arm64", None).as_deref(), Some("win32-x64"));
+    }
+
+    #[test]
+    fn links_bunx_beside_bun() {
+        assert_eq!(bins("bun", "darwin").get("bunx").map(String::as_str), Some("bin/bun"));
+        assert!(!bins("bun", "win32").contains_key("bunx") && bins("node", "linux").len() == 1);
     }
 
     #[test]
