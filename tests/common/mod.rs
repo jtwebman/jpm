@@ -120,6 +120,8 @@ pub struct Registry {
     pub requests: Arc<AtomicUsize>,
     /// Milliseconds each tarball takes to start.
     delay: Arc<AtomicUsize>,
+    /// Milliseconds a package's documents take to start, by name.
+    slow: Arc<Mutex<BTreeMap<String, u64>>>,
 }
 
 impl Registry {
@@ -131,20 +133,30 @@ impl Registry {
         let hits = Arc::new(Mutex::new(Vec::new()));
         let requests = Arc::new(AtomicUsize::new(0));
         let delay = Arc::new(AtomicUsize::new(0));
-        let (p, f, h, r, u, d) =
-            (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone());
+        let slow = Arc::new(Mutex::new(BTreeMap::new()));
+        let (p, f, h, r, u, d, w) =
+            (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone(), slow.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (p, f, h, r, u, d) = (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone());
-                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d));
+                let (p, f, h, r, u, d, w) =
+                    (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone());
+                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d, &w));
             }
         });
-        Self { url, pkgs, files, hits, requests, delay }
+        Self { url, pkgs, files, hits, requests, delay, slow }
     }
 
     /// Every tarball from now on starts `ms` late: downloads outlast the plan.
     pub fn slow_tarballs(&self, ms: usize) {
         self.delay.store(ms, Ordering::Relaxed);
+    }
+
+    /// From now on each of these packages' documents starts `ms` late, and every other one
+    /// on time: the walk sees them arrive in the order the test picks.
+    pub fn slow_documents(&self, names: &[&str], ms: u64) {
+        let mut slow = self.slow.lock().unwrap();
+        slow.clear();
+        slow.extend(names.iter().map(|n| (format!("/{}", n.replace('/', "%2f")), ms)));
     }
 
     /// Answers `path` with `body` from now on.
@@ -181,20 +193,23 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
     let hits = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::new(AtomicUsize::new(0));
     let delay = Arc::new(AtomicUsize::new(0));
-    let (p, f, h, r, u, d) = (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone());
+    let slow = Arc::new(Mutex::new(BTreeMap::new()));
+    let (p, f, h, r, u, d, w) =
+        (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone(), slow.clone());
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let (p, f, h, r, u, d, c) =
-                (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), config.clone());
+            let (p, f, h, r, u, d, w, c) =
+                (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone(), config.clone());
             std::thread::spawn(move || {
                 let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
-                serve(tls, &p, &f, &h, &r, &u, &d)
+                serve(tls, &p, &f, &h, &r, &u, &d, &w)
             });
         }
     });
-    Registry { url, pkgs, files, hits, requests, delay }
+    Registry { url, pkgs, files, hits, requests, delay, slow }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve(
     stream: impl Read + Write,
     pkgs: &Mutex<Vec<Pkg>>,
@@ -203,6 +218,7 @@ fn serve(
     requests: &AtomicUsize,
     base: &str,
     delay: &AtomicUsize,
+    slow: &Mutex<BTreeMap<String, u64>>,
 ) {
     let mut reader = BufReader::new(stream);
     loop {
@@ -233,6 +249,10 @@ fn serve(
         let ms = delay.load(Ordering::Relaxed);
         if ms > 0 && path.contains("/-/") {
             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        }
+        let late = slow.lock().unwrap().get(path.split('?').next().unwrap_or(&path)).copied();
+        if let Some(ms) = late {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
         }
         let file = files.lock().unwrap().get(&path).cloned();
         let (status, bytes) = match file {

@@ -471,3 +471,62 @@ snapshots:
     assert_eq!(node_require(&env, "packages/app", "wrap"), "schema@1.2.0");
     assert!(env.ok(&["install"]).contains("up to date"));
 }
+
+/// gutenberg's shape: `prompts` and `inquirer`, which depends on it, both take an optional peer
+/// the tree has at two versions, and a workspace reaches `prompts` with none in its scope.
+fn optional_peer_registry() -> Registry {
+    let soft = || json!({ "types-node": { "optional": true } });
+    Registry::start(vec![
+        pkg("types-node", "1.0.0", json!({})),
+        pkg("types-node", "2.0.0", json!({})),
+        pkg("prompts", "1.0.0", json!({ "peerDependencies": { "types-node": ">=1" }, "peerDependenciesMeta": soft() })),
+        pkg(
+            "inquirer",
+            "1.0.0",
+            json!({
+                "dependencies": { "prompts": "^1.0.0" },
+                "peerDependencies": { "types-node": ">=1" },
+                "peerDependenciesMeta": soft(),
+            }),
+        ),
+    ])
+}
+
+#[test]
+fn a_lock_is_the_same_whatever_order_the_registry_answers_in() {
+    let r = optional_peer_registry();
+    let env = Env::new(&r);
+    monorepo(
+        &env,
+        json!({}),
+        &[
+            ("bare", json!({ "prompts": "^1.0.0" })),
+            ("cli", json!({ "inquirer": "^1.0.0" })),
+            ("newer", json!({ "types-node": "2.0.0" })),
+            ("rel", json!({ "prompts": "^1.0.0", "types-node": "1.0.0" })),
+        ],
+    );
+    // Each run a fresh process (its maps ordered afresh) and a cold metadata cache, the
+    // documents arriving in another order each time.
+    let orders: [&[&str]; 4] = [&[], &["inquirer"], &["prompts", "types-node"], &["types-node", "inquirer"]];
+    let mut first: Option<String> = None;
+    for (i, slow) in orders.iter().cycle().take(12).enumerate() {
+        r.slow_documents(slow, 100);
+        let _ = std::fs::remove_dir_all(env.store().join("metadata"));
+        let _ = std::fs::remove_file(env.path("jpm.lock"));
+        env.ok(&["lock"]);
+        let lock = env.read("jpm.lock");
+        match &first {
+            None => first = Some(lock),
+            Some(f) => assert!(lock == *f, "run {i}, {slow:?} slow:\n{lock}\nnot\n{f}"),
+        }
+    }
+    r.slow_documents(&[], 0);
+    // An optional peer settles on what its parents have from the walk: rel's types-node, not the
+    // 2.0.0 that inquirer, a parent too, was only wired to.
+    let lock = env.lock();
+    assert_eq!(lock["workspaces"]["packages/bare"]["dependencies"]["prompts"], "1.0.0");
+    assert_eq!(lock["workspaces"]["packages/rel"]["dependencies"]["prompts"], "1.0.0");
+    assert_eq!(lock["packages"]["prompts@1.0.0"]["optionalDependencies"]["types-node"], "1.0.0");
+    assert_eq!(keys(&lock, "prompts"), ["prompts@1.0.0", "prompts@1.0.0(types-node@2.0.0)"]);
+}
