@@ -421,7 +421,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let ids: Vec<&String> =
         res.packages.keys().filter(|id| linker.wanted.get(*id).is_some_and(|e| keys_seen.insert(&e.key))).collect();
     crate::ui::count(&crate::ui::TO_LINK, ids.len());
-    pool::run(pool::disk_threads() * 2, ids, |id, _| {
+    pool::run(std::env::var("JPM_LINK_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(pool::disk_threads() * 2), ids, |id, _| {
         let entry = &linker.wanted[id];
         crate::ui::trace(|| format!("e+ {}", entry.key));
         let placed = match linker.global_of(entry) {
