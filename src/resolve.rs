@@ -725,8 +725,13 @@ impl Walk<'_> {
                     if skip {
                         continue;
                     }
+                    // A shipped consumer takes a shipped copy first, else a dev one, which then ships:
+                    // never a second copy of what the tree has (two Reacts break hooks).
                     let pool = if shipped.contains(&from) { &shipped_have } else { &have };
-                    if let Some(best) = self.settle_on(&s, &from, &name, &range, pool) {
+                    if let Some(best) = self
+                        .settle_on(&s, &from, &name, &range, pool)
+                        .or_else(|| self.settle_on(&s, &from, &name, &range, &have))
+                    {
                         if let Some(list) = s.edges.get_mut(&from) {
                             list.push(Edge { name, version: best, optional: false });
                         }
