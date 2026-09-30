@@ -41,3 +41,24 @@ jobs:
         run: |
           rustup target add x86_64-apple-darwin
           cargo clippy --workspace --target x86_64-apple-darwin -- -D warnings
+
+  # pnpm's registry-mock: its edge-case packages installed with jpm and compared with what pnpm
+  # 12 installs (tests/conformance/pnpm-registry-mock/expected.json, recorded on Linux x64).
+  registry-mock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo build --release
+      - run: bash tests/conformance/pnpm-registry-mock/registry.sh "$RUNNER_TEMP/regmock"
+      - run: node tests/conformance/pnpm-registry-mock/diff.mjs
+      - if: failure()
+        run: tail -50 "$RUNNER_TEMP/regmock/registry.log" || true

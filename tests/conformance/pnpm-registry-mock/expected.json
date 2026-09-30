@@ -1,0 +1,3467 @@
+{
+ "registryMock": "6.0.0",
+ "pnpm": "12.8.1",
+ "platform": "linux-x64-glibc",
+ "results": {
+  "alias: aliased subdependency": {
+   "root": [
+    "@pnpm.e2e/pkg-with-1-aliased-dep -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/pkg-with-1-aliased-dep@100.0.0 dep=@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0"
+   ],
+   "bins": []
+  },
+  "alias: an alias named like a package manager": {
+   "root": [
+    "yarn -> @pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0"
+   ],
+   "bins": []
+  },
+  "alias: the same package via an alias and directly": {
+   "root": [
+    "is-negative -> 1.0.1",
+    "negative -> is-negative@1.0.1"
+   ],
+   "packages": [
+    "is-negative@1.0.1"
+   ],
+   "bins": []
+  },
+  "alias: three aliases of one package in a dependency": {
+   "root": [
+    "@pnpm.e2e/depends-on-console-log -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/console-log@1.0.0",
+    "@pnpm.e2e/console-log@2.0.0",
+    "@pnpm.e2e/console-log@3.0.0",
+    "@pnpm.e2e/depends-on-console-log@1.0.0 console-log-1=@pnpm.e2e/console-log@1.0.0 console-log-2=@pnpm.e2e/console-log@2.0.0 console-log-3=@pnpm.e2e/console-log@3.0.0"
+   ],
+   "bins": []
+  },
+  "alias: two aliases of npm packages": {
+   "root": [
+    "negative -> is-negative@1.0.0",
+    "positive -> is-positive@3.1.0"
+   ],
+   "packages": [
+    "is-negative@1.0.0",
+    "is-positive@3.1.0"
+   ],
+   "bins": []
+  },
+  "bins: bin t from two packages": {
+   "root": [
+    "@pnpm.e2e/touch-file-many-bins -> 1.0.0",
+    "@pnpm.e2e/touch-file-one-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/touch-file-many-bins@1.0.0",
+    "@pnpm.e2e/touch-file-one-bin@1.0.0"
+   ],
+   "bins": [
+    "t",
+    "tt"
+   ]
+  },
+  "bins: broken bin and a sh bin": {
+   "root": [
+    "@pnpm.e2e/broken-bin -> 1.0.0",
+    "@pnpm.e2e/sh-hello-world -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/broken-bin@1.0.0",
+    "@pnpm.e2e/sh-hello-world@1.0.1"
+   ],
+   "bins": [
+    "broken-bin",
+    "sh-hello-world"
+   ]
+  },
+  "bins: bundled dependencies": {
+   "root": [
+    "@pnpm.e2e/pkg-with-bundle-dependencies -> 1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies-true -> 1.0.0",
+    "@pnpm.e2e/pkg-with-bundled-dependencies -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies-true@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0",
+    "@pnpm.e2e/pkg-with-bundled-dependencies@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "bins: directories.bin": {
+   "root": [
+    "@pnpm.e2e/pkg-with-directories-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-directories-bin@1.0.0"
+   ],
+   "bins": [
+    "pkg-with-directories-bin"
+   ]
+  },
+  "bins: one bin under a parent": {
+   "root": [
+    "@pnpm.e2e/hello-world-js-bin-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin-parent@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0"
+   ],
+   "bins": [
+    "hello-world-js-bin"
+   ]
+  },
+  "bins: several bins": {
+   "root": [
+    "@pnpm.e2e/touch-file-good-bin-name -> 1.0.0",
+    "@pnpm.e2e/touch-file-many-bins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/touch-file-good-bin-name@1.0.0",
+    "@pnpm.e2e/touch-file-many-bins@1.0.0"
+   ],
+   "bins": [
+    "t",
+    "touch-file-good-bin-name",
+    "tt"
+   ]
+  },
+  "bins: two packages with the same bin name": {
+   "root": [
+    "@pnpm.e2e/hello-world-js-bin -> 1.0.0",
+    "@pnpm.e2e/hello-world-js-bin-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin-parent@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0"
+   ],
+   "bins": [
+    "hello-world-js-bin"
+   ]
+  },
+  "dedupe: bar and foo and an alias of bar": {
+   "root": [
+    "@pnpm.e2e/bar -> 100.1.0",
+    "@pnpm.e2e/foo -> 2.0.0",
+    "bar-alias -> @pnpm.e2e/bar@100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "@pnpm.e2e/foo@2.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: dev and optional groups": {
+   "root": [
+    "@pnpm.e2e/bar -> 100.1.0",
+    "@pnpm.e2e/foo -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "@pnpm.e2e/foo@100.1.0"
+   ],
+   "bins": []
+  },
+  "dedupe: foobarqar and the abc family": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent-with-c -> 1.0.1",
+    "@pnpm.e2e/foobarqar -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-with-c@1.0.1 @pnpm.e2e/abc-parent-with-ab=1.1.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0",
+    "@pnpm.e2e/bar@100.0.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/foobarqar@1.0.1 @pnpm.e2e/bar=100.0.0 @pnpm.e2e/foo=100.1.0 @pnpm.e2e/qar=100.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/qar@100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: foobarqar beside foo 100.0.0": {
+   "root": [
+    "@pnpm.e2e/foo -> 100.0.0",
+    "@pnpm.e2e/foobarqar -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.0.0",
+    "@pnpm.e2e/foo@100.0.0",
+    "@pnpm.e2e/foobarqar@1.0.1 @pnpm.e2e/bar=100.0.0 @pnpm.e2e/foo=100.0.0 @pnpm.e2e/qar=100.0.0",
+    "@pnpm.e2e/qar@100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: ignore a root pin outside the range": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 101.0.0",
+    "@pnpm.e2e/pkg-with-1-dep -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.1.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer a root dist-tag": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 101.0.0",
+    "@pnpm.e2e/pkg-with-1-dep -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.1.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer a version higher in the graph": {
+   "root": [
+    "@pnpm.e2e/has-foo-as-dep-and-subdep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.0.0",
+    "@pnpm.e2e/has-foo-as-dep-and-subdep@1.0.0 @pnpm.e2e/foo=100.0.0 @pnpm.e2e/requires-any-foo=1.0.0",
+    "@pnpm.e2e/requires-any-foo@1.0.0 @pnpm.e2e/foo=100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer direct versions over subdependency ones": {
+   "root": [
+    "@pnpm.e2e/foo -> 100.0.0",
+    "@pnpm.e2e/has-foo-100.0.0-range-dep -> 1.0.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-1 -> 1.0.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-2 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.0.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/has-foo-100.0.0-range-dep@1.0.0 @pnpm.e2e/foo=100.0.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-1@1.0.0 @pnpm.e2e/foo=100.1.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-2@1.0.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer the root pin even aliased": {
+   "root": [
+    "@pnpm.e2e/pkg-with-1-dep -> 100.1.0",
+    "foo -> @pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.1.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer the root pin for an aliased subdependency": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 100.0.0",
+    "@pnpm.e2e/pkg-with-1-aliased-dep -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/pkg-with-1-aliased-dep@100.0.0 dep=@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: prefer the version the root pins": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 100.0.0",
+    "@pnpm.e2e/pkg-with-1-dep -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.1.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0"
+   ],
+   "bins": []
+  },
+  "dedupe: three groups": {
+   "root": [
+    "@pnpm.e2e/bar -> 100.1.0",
+    "@pnpm.e2e/foo -> 100.1.0",
+    "@pnpm.e2e/qar -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/qar@100.1.0"
+   ],
+   "bins": []
+  },
+  "optional: a missing optional dependency": {
+   "root": [
+    "@pnpm.e2e/i-do-not-exist -> (missing)",
+    "is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: failing optional peer": {
+   "root": [
+    "@pnpm.e2e/pkg-with-failing-optional-dependency -> 1.0.0",
+    "@pnpm.e2e/pkg-with-failing-optional-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-failing-optional-dependency@1.0.0 @pnpm.e2e/pkg-with-failing-postinstall=1.0.0",
+    "@pnpm.e2e/pkg-with-failing-optional-peer@1.0.0 @pnpm.e2e/pkg-with-failing-postinstall=1.0.0",
+    "@pnpm.e2e/pkg-with-failing-postinstall@1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: good optional beside root optional": {
+   "root": [
+    "@pnpm.e2e/pkg-with-good-optional -> 1.0.0",
+    "is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0",
+    "@pnpm.e2e/pkg-with-good-optional@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=101.0.0 is-positive=1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: many platform packages under a parent": {
+   "root": [
+    "@pnpm.e2e/parent-of-has-many-optional-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-many-optional-deps@1.0.0 @pnpm.e2e/darwin-arm64=- @pnpm.e2e/darwin-x64=- @pnpm.e2e/linux-arm64=- @pnpm.e2e/linux-x64=1.0.0 @pnpm.e2e/windows-x64=-",
+    "@pnpm.e2e/linux-x64@1.0.0",
+    "@pnpm.e2e/parent-of-has-many-optional-deps@1.0.0 @pnpm.e2e/has-many-optional-deps=1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: not compatible with any os, as optional": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-any-os -> (missing)"
+   ],
+   "packages": [],
+   "bins": []
+  },
+  "optional: not compatible, its dependency required elsewhere": {
+   "root": [
+    "@pnpm.e2e/dep-of-optional-pkg -> 1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os -> (missing)"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: only the optional-only package skipped": {
+   "root": [
+    "@pnpm.e2e/has-optional-dep-with-peer -> 1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os-and-has-peer -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/has-optional-dep-with-peer@1.0.0 @pnpm.e2e/not-compatible-with-any-os-and-has-peer=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os-and-has-peer@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: optional beats regular of the same name": {
+   "root": [
+    "is-positive -> 3.1.0"
+   ],
+   "packages": [
+    "is-positive@3.1.0"
+   ],
+   "bins": []
+  },
+  "optional: required package not compatible with the os": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-any-os -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0"
+   ],
+   "bins": []
+  },
+  "optional: subdependency of an optional dependency skipped": {
+   "root": [
+    "@pnpm.e2e/pkg-with-optional -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-optional@1.0.0 @pnpm.e2e/not-compatible-with-any-os=-"
+   ],
+   "bins": []
+  },
+  "optional: subdependency skipped": {
+   "root": [
+    "@pnpm.e2e/dep-of-optional-pkg -> 1.0.0",
+    "@pnpm.e2e/pkg-with-optional -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/pkg-with-optional@1.0.0 @pnpm.e2e/not-compatible-with-any-os=-"
+   ],
+   "bins": []
+  },
+  "optional: unsupported dependency of an optional dependency": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-not-compatible-dep -> (missing)"
+   ],
+   "packages": [],
+   "bins": []
+  },
+  "peer: 2 circular peers": {
+   "root": [
+    "@pnpm.e2e/circular-peer-a -> 1.0.0",
+    "@pnpm.e2e/circular-peer-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peer-a@1.0.0 @pnpm.e2e/circular-peer-b=1.0.0",
+    "@pnpm.e2e/circular-peer-b@1.0.0 @pnpm.e2e/circular-peer-a=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: 3 circular peers": {
+   "root": [
+    "@pnpm.e2e/circular-peers-1-of-3 -> 1.0.0",
+    "@pnpm.e2e/circular-peers-2-of-3 -> 1.0.0",
+    "@pnpm.e2e/circular-peers-3-of-3 -> 1.0.0",
+    "@pnpm.e2e/peer-a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peers-1-of-3@1.0.0 @pnpm.e2e/circular-peers-2-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.0",
+    "@pnpm.e2e/circular-peers-2-of-3@1.0.0 @pnpm.e2e/circular-peers-3-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0",
+    "@pnpm.e2e/circular-peers-3-of-3@1.0.0 @pnpm.e2e/circular-peers-1-of-3=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: abc 1.0.0 with nothing else": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: alias that differs from the real name": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0",
+    "@pnpm.e2e/peer-b -> @pnpm.e2e/peer-a@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=@pnpm.e2e/peer-a@1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: aliases of one package in a subdependency": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-aliases-of-same-pkg -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-aliases-of-same-pkg@1.0.0 @pnpm.e2e/abc=1.0.0 peer-c1=@pnpm.e2e/peer-c@2.0.0 peer-c2=@pnpm.e2e/peer-c@1.0.1 peer-c3=@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: auto-installed peer beside a dependency on another version": {
+   "root": [
+    "@pnpm.e2e/abc -> 2.0.0",
+    "@pnpm.e2e/has-peer-c-in-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@2.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/has-peer-c-in-deps@1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: bad peer version pinned at root": {
+   "root": [
+    "@pnpm.e2e/foo -> 2.0.0",
+    "@pnpm.e2e/has-foo100-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@2.0.0",
+    "@pnpm.e2e/has-foo100-peer@1.0.0 @pnpm.e2e/foo=2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: circular aliased peers": {
+   "root": [
+    "@pnpm.e2e/deadlock.a -> 1.0.0",
+    "@pnpm.e2e/deadlock.b -> 2.0.0",
+    "alias-b -> @pnpm.e2e/deadlock.b@1.0.0",
+    "alias-c -> @pnpm.e2e/deadlock.c@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/deadlock.a@1.0.0 @pnpm.e2e/deadlock.b=2.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.b@1.0.0 @pnpm.e2e/deadlock.a=1.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.b@2.0.0",
+    "@pnpm.e2e/deadlock.c@1.0.0 @pnpm.e2e/deadlock.a=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: common range of two peers": {
+   "root": [
+    "@pnpm.e2e/wants-peer-c-1 -> 1.0.0",
+    "@pnpm.e2e/wants-peer-c-1.0.0 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/wants-peer-c-1.0.0@1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/wants-peer-c-1@1.0.0 @pnpm.e2e/peer-c=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: complex circular peers": {
+   "root": [
+    "@pnpm.e2e/complex-circular-peers-a -> 1.0.0",
+    "@pnpm.e2e/complex-circular-peers-b -> 1.0.0",
+    "@pnpm.e2e/complex-circular-peers-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/complex-circular-peers-a@1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-b@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-c=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-c@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: default peer, root provides 101": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 101.0.0",
+    "@pnpm.e2e/has-default-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0",
+    "@pnpm.e2e/has-default-peer@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=101.0.0"
+   ],
+   "bins": []
+  },
+  "peer: events and peers under a parent": {
+   "root": [
+    "@pnpm.e2e/parent-of-pkg-with-events-and-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/parent-of-pkg-with-events-and-peers@1.0.0 @pnpm.e2e/peer-c=1.0.1 @pnpm.e2e/pkg-with-events-and-peers=1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/pkg-with-events-and-peers@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-c=1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: foo101 peer beside foo100 peer": {
+   "root": [
+    "@pnpm.e2e/has-foo100-peer -> 1.0.0",
+    "@pnpm.e2e/has-foo101-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-foo100-peer@1.0.0 @pnpm.e2e/foo=-",
+    "@pnpm.e2e/has-foo101-peer@1.0.0 @pnpm.e2e/foo=-"
+   ],
+   "bins": []
+  },
+  "peer: from aliased direct dependency": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0",
+    "peer-a -> @pnpm.e2e/peer-a@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: from aliased subdependencies": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-aliases -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-aliases@1.0.0 @pnpm.e2e/abc=1.0.0 @pnpm.e2e/peer-c=1.0.1 a=@pnpm.e2e/peer-a@1.0.1 b=@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: grand parent with c 1.0.0 beside parent 1.0.0 and abc": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0",
+    "@pnpm.e2e/abc-grand-parent-with-c -> 1.0.0",
+    "@pnpm.e2e/abc-parent-with-ab -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-with-c@1.0.0 @pnpm.e2e/abc-parent-with-ab=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-parent-with-ab@1.0.0 @pnpm.e2e/abc=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 is-positive=1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: grand parent with c beside parent and root c 2": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent-with-c -> 1.0.1",
+    "@pnpm.e2e/abc-parent-with-ab -> 1.1.0",
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-with-c@1.0.1 @pnpm.e2e/abc-parent-with-ab=1.1.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: grand parent without c, root c 2": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent-without-c -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-without-c@1.0.0 @pnpm.e2e/abc-parent-with-ab=1.1.0",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: has-pkg-with-peer-only": {
+   "root": [
+    "@pnpm.e2e/has-pkg-with-peer-only -> 1.0.0"
+   ],
+   "packages": [
+    "@having/scoped-peer@1.0.0 @scoped/peer=1.0.0",
+    "@pnpm.e2e/has-pkg-with-peer-only@1.0.0 @having/scoped-peer=1.0.0 @scoped/peer=1.0.0",
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: highest of several aliases": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0",
+    "peer-c1 -> @pnpm.e2e/peer-c@2.0.0",
+    "peer-c2 -> @pnpm.e2e/peer-c@1.0.1",
+    "peer-c3 -> @pnpm.e2e/peer-c@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: hoist a peer to reuse it": {
+   "root": [
+    "@pnpm/xyz-parent-parent-parent-parent -> 1.0.0",
+    "@pnpm/xyz-parent-parent-with-xyz -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent-with-xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/xyz-parent=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/xyz-parent-parent@1.0.0 @pnpm/xyz-parent=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: meta-only optional peer from the graph": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers-meta-only -> 1.0.0",
+    "@pnpm.e2e/has-peer-c-in-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers-meta-only@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=- @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/has-peer-c-in-deps@1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: missing peers hoisted": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-missing-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-missing-peers@1.0.0 @pnpm.e2e/abc=1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: no common range of two peers": {
+   "root": [
+    "@pnpm.e2e/wants-peer-c-1 -> 1.0.0",
+    "@pnpm.e2e/wants-peer-c-2 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/wants-peer-c-1@1.0.0 @pnpm.e2e/peer-c=-",
+    "@pnpm.e2e/wants-peer-c-2@1.0.0 @pnpm.e2e/peer-c=-"
+   ],
+   "bins": []
+  },
+  "peer: non-aliased beats aliased": {
+   "root": [
+    "@pnpm.e2e/abc -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 1.0.0",
+    "peer-c -> @pnpm.e2e/peer-c@2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional and required peers deduped": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers -> 1.0.0",
+    "@pnpm.e2e/abc-optional-peers-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers-parent@1.0.0 @pnpm.e2e/abc-optional-peers=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: optional peer found elsewhere in the graph": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers -> 1.0.0",
+    "@pnpm.e2e/abc-regular-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/abc-regular-deps@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional peer that is also a dependency": {
+   "root": [
+    "@pnpm.e2e/bravo-dep -> 1.1.0",
+    "@pnpm.e2e/has-optional-peer-as-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bravo-dep@1.0.0",
+    "@pnpm.e2e/bravo-dep@1.1.0",
+    "@pnpm.e2e/has-optional-peer-as-dep@1.0.0 @pnpm.e2e/bravo-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional peer via a peer of a sibling": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers -> 1.0.0",
+    "@pnpm.e2e/abc-regular-deps -> 1.0.0",
+    "@pnpm.e2e/abc-regular-deps-is-in-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/abc-regular-deps-is-in-peers@1.0.0 @pnpm.e2e/abc-regular-deps=1.0.0",
+    "@pnpm.e2e/abc-regular-deps@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional peer with a peer": {
+   "root": [
+    "@pnpm.e2e/has-optional-peer-with-peer -> 1.0.0",
+    "@pnpm.e2e/has-y-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-optional-peer-with-peer@1.0.0 @pnpm.e2e/has-y-peer=1.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional peers in meta only, root c 2": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers-meta-only -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers-meta-only@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=- @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: optional peers, root c 2": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=- @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: package resolves its own peer, root c 2": {
+   "root": [
+    "@pnpm.e2e/peer-c -> 2.0.0",
+    "@pnpm.e2e/pkg-with-resolved-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@2.0.0",
+    "@pnpm.e2e/pkg-with-resolved-peer@1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: parent as peer": {
+   "root": [
+    "@pnpm.e2e/alpha -> 1.0.0",
+    "@pnpm.e2e/has-alpha -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/alpha@1.0.0 @pnpm.e2e/has-alpha-as-peer=1.0.0",
+    "@pnpm.e2e/has-alpha-as-peer@1.0.0 @pnpm.e2e/alpha=1.0.0",
+    "@pnpm.e2e/has-alpha@1.0.0 @pnpm.e2e/alpha=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: peer of itself": {
+   "root": [
+    "@pnpm.e2e/peer-of-itself -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-of-itself@1.0.0 @pnpm.e2e/peer-of-itself=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: peer of peer from the dependent": {
+   "root": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer-and-y -> 1.0.0",
+    "@pnpm/y -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer-and-y@1.0.0 @pnpm.e2e/has-y-peer=1.0.0 @pnpm/y=1.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: peer with a bin": {
+   "root": [
+    "@pnpm.e2e/for-testing-peers-having-bins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/for-testing-peers-having-bins@1.0.0 @pnpm.e2e/peer-with-bin=1.0.0 @pnpm.e2e/pkg-with-peer-having-bin=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/peer-with-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-peer-having-bin@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-with-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: recursive with optional peer": {
+   "root": [
+    "@pnpm.e2e/peer-a -> 1.0.1",
+    "@pnpm.e2e/recursive-with-optional-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-recursive-with-optional-peer@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/recursive-with-optional-peer=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/recursive-with-optional-peer@1.0.0 @pnpm.e2e/dep-of-recursive-with-optional-peer=1.0.0 @pnpm.e2e/peer-a=1.0.0",
+    "@pnpm.e2e/recursive-with-optional-peer@1.0.0 @pnpm.e2e/dep-of-recursive-with-optional-peer=1.0.0 @pnpm.e2e/peer-a=1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: repeated peers hoisted": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.a -> 1.0.0",
+    "@pnpm.e2e/repeat-peers.x -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=1.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.x@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: resolved from parent": {
+   "root": [
+    "@pnpm.e2e/tango -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=1.0.0",
+    "@pnpm.e2e/tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: resolved from parent via its alias": {
+   "root": [
+    "@pnpm.e2e/tango -> @pnpm.e2e/tango-tango@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=@pnpm.e2e/tango-tango@1.0.0",
+    "@pnpm.e2e/tango-tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: root alias provides a peer": {
+   "root": [
+    "@pnpm/x -> @pnpm.e2e/peer-a@1.0.0",
+    "@pnpm/xyz-parent-parent-parent-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm/xyz-parent-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent@1.0.0 @pnpm/xyz-parent=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=@pnpm.e2e/peer-a@1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: root peer with an npm alias": {
+   "root": [],
+   "packages": [],
+   "bins": []
+  },
+  "peer: root peerDependencies installed": {
+   "root": [
+    "is-negative -> 1.0.1"
+   ],
+   "packages": [
+    "is-negative@1.0.1"
+   ],
+   "bins": []
+  },
+  "peer: root peers prefer the root range": {
+   "root": [],
+   "packages": [],
+   "bins": []
+  },
+  "peer: root provides a peer outside the range": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-ab -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-ab@1.0.0 @pnpm.e2e/abc=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 is-positive=1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@2.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: root provides the peer in range": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-ab -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-ab@1.0.0 @pnpm.e2e/abc=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 is-positive=1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: same missing peer once": {
+   "root": [
+    "@pnpm.e2e/has-has-y-peer-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-has-y-peer-peer@1.0.0 @pnpm.e2e/has-y-peer=1.0.0 @pnpm/y=1.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=1.0.0",
+    "@pnpm/y@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: same package with a peer via two aliases": {
+   "root": [
+    "@pnpm.e2e/has-y-peer -> 1.0.0",
+    "has-y-peer -> @pnpm.e2e/has-y-peer@1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "peer: scoped peer": {
+   "root": [
+    "@pnpm.e2e/for-testing-scoped-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@having/scoped-peer@1.0.0 @scoped/peer=1.0.0",
+    "@pnpm.e2e/for-testing-scoped-peers@1.0.0 @having/scoped-peer=1.0.0 @scoped/peer=1.0.0",
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: tango as peer at the root": {
+   "root": [
+    "@pnpm.e2e/has-tango-as-peer-dep -> 1.0.0",
+    "@pnpm.e2e/tango -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=1.0.0",
+    "@pnpm.e2e/tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: transitive peer from the root": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent -> 1.0.0",
+    "@pnpm.e2e/peer-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent@1.0.0 @pnpm.e2e/abc-parent-with-ab=1.1.0",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "peer: y 1 beside has-y-peer": {
+   "root": [
+    "@pnpm.e2e/has-y-peer -> 1.0.0",
+    "@pnpm/y -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=1.0.0",
+    "@pnpm/y@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @foo/has-dep-from-same-scope": {
+   "root": [
+    "@foo/has-dep-from-same-scope -> 1.0.0"
+   ],
+   "packages": [
+    "@foo/has-dep-from-same-scope@1.0.0 @foo/no-deps=1.0.0 is-negative=1.0.0",
+    "@foo/no-deps@1.0.0",
+    "is-negative@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @foo/no-deps": {
+   "root": [
+    "@foo/no-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@foo/no-deps@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @foo/touch-file-one-bin": {
+   "root": [
+    "@foo/touch-file-one-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@foo/touch-file-one-bin@1.0.0"
+   ],
+   "bins": [
+    "touch-file-one-bin"
+   ]
+  },
+  "single @having/scoped-peer": {
+   "root": [
+    "@having/scoped-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@having/scoped-peer@1.0.0 @scoped/peer=1.0.0",
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @jsr/pnpm-e2e__bar": {
+   "failed": "Error: ERR_PNPM_FETCH_404"
+  },
+  "single @pnpm.e2e/abc": {
+   "root": [
+    "@pnpm.e2e/abc -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc@2.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-grand-parent": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent@1.0.0 @pnpm.e2e/abc-parent-with-ab=1.1.0",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-grand-parent-with-c": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent-with-c -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-with-c@1.0.1 @pnpm.e2e/abc-parent-with-ab=1.1.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-grand-parent-without-c": {
+   "root": [
+    "@pnpm.e2e/abc-grand-parent-without-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-grand-parent-without-c@1.0.0 @pnpm.e2e/abc-parent-with-ab=1.1.0",
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-optional-peers": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=- @pnpm.e2e/peer-c=-",
+    "@pnpm.e2e/peer-a@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-optional-peers-meta-only": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers-meta-only -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers-meta-only@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=- @pnpm.e2e/peer-c=-",
+    "@pnpm.e2e/peer-a@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-optional-peers-parent": {
+   "root": [
+    "@pnpm.e2e/abc-optional-peers-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-optional-peers-parent@1.0.0 @pnpm.e2e/abc-optional-peers=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/abc-optional-peers@1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-parent-with-ab": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-ab -> 1.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-ab@1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-parent-with-aliases": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-aliases -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-aliases@1.0.0 @pnpm.e2e/abc=1.0.0 @pnpm.e2e/peer-c=1.0.1 a=@pnpm.e2e/peer-a@1.0.1 b=@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-parent-with-aliases-of-same-pkg": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-aliases-of-same-pkg -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-aliases-of-same-pkg@1.0.0 @pnpm.e2e/abc=1.0.0 peer-c1=@pnpm.e2e/peer-c@2.0.0 peer-c2=@pnpm.e2e/peer-c@1.0.1 peer-c3=@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-parent-with-missing-peers": {
+   "root": [
+    "@pnpm.e2e/abc-parent-with-missing-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-parent-with-missing-peers@1.0.0 @pnpm.e2e/abc=1.0.0",
+    "@pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1",
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-regular-deps": {
+   "root": [
+    "@pnpm.e2e/abc-regular-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-regular-deps@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/abc-regular-deps-is-in-peers": {
+   "root": [
+    "@pnpm.e2e/abc-regular-deps-is-in-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/abc-regular-deps-is-in-peers@1.0.0 @pnpm.e2e/abc-regular-deps=1.0.0",
+    "@pnpm.e2e/abc-regular-deps@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/alpha": {
+   "root": [
+    "@pnpm.e2e/alpha -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/alpha@1.0.0 @pnpm.e2e/has-alpha-as-peer=1.0.0",
+    "@pnpm.e2e/has-alpha-as-peer@1.0.0 @pnpm.e2e/alpha=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/bar": {
+   "root": [
+    "@pnpm.e2e/bar -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/beta-version": {
+   "root": [
+    "@pnpm.e2e/beta-version -> 1.0.0-beta.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/beta-version@1.0.0-beta.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/bravo": {
+   "root": [
+    "@pnpm.e2e/bravo -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bravo-dep@1.1.0",
+    "@pnpm.e2e/bravo@1.0.0 @pnpm.e2e/bravo-dep=1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/bravo-dep": {
+   "root": [
+    "@pnpm.e2e/bravo-dep -> 1.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bravo-dep@1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/broken-bin": {
+   "root": [
+    "@pnpm.e2e/broken-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/broken-bin@1.0.0"
+   ],
+   "bins": [
+    "broken-bin"
+   ]
+  },
+  "single @pnpm.e2e/build-allow-list": {
+   "root": [
+    "@pnpm.e2e/build-allow-list -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/build-allow-list@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/build-metadata-in-dep-version": {
+   "root": [
+    "@pnpm.e2e/build-metadata-in-dep-version -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/build-metadata-in-dep-version@1.0.0 @pnpm.e2e/foo=100.0.0",
+    "@pnpm.e2e/foo@100.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-deps-1-of-2": {
+   "root": [
+    "@pnpm.e2e/circular-deps-1-of-2 -> 1.0.2"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-deps-1-of-2@1.0.2 @pnpm.e2e/circular-deps-2-of-2=1.0.2",
+    "@pnpm.e2e/circular-deps-2-of-2@1.0.2 @pnpm.e2e/circular-deps-1-of-2=1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-deps-2-of-2": {
+   "root": [
+    "@pnpm.e2e/circular-deps-2-of-2 -> 1.0.2"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-deps-1-of-2@1.0.2 @pnpm.e2e/circular-deps-2-of-2=1.0.2",
+    "@pnpm.e2e/circular-deps-2-of-2@1.0.2 @pnpm.e2e/circular-deps-1-of-2=1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-peer-a": {
+   "root": [
+    "@pnpm.e2e/circular-peer-a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peer-a@1.0.0 @pnpm.e2e/circular-peer-b=1.0.0",
+    "@pnpm.e2e/circular-peer-b@1.0.0 @pnpm.e2e/circular-peer-a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-peer-b": {
+   "root": [
+    "@pnpm.e2e/circular-peer-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peer-a@1.0.0 @pnpm.e2e/circular-peer-b=1.0.0",
+    "@pnpm.e2e/circular-peer-b@1.0.0 @pnpm.e2e/circular-peer-a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-peers-1-of-3": {
+   "root": [
+    "@pnpm.e2e/circular-peers-1-of-3 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peers-1-of-3@1.0.0 @pnpm.e2e/circular-peers-2-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1",
+    "@pnpm.e2e/circular-peers-2-of-3@1.0.0 @pnpm.e2e/circular-peers-3-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0",
+    "@pnpm.e2e/circular-peers-3-of-3@1.0.0 @pnpm.e2e/circular-peers-1-of-3=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-peers-2-of-3": {
+   "root": [
+    "@pnpm.e2e/circular-peers-2-of-3 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peers-1-of-3@1.0.0 @pnpm.e2e/circular-peers-2-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1",
+    "@pnpm.e2e/circular-peers-2-of-3@1.0.0 @pnpm.e2e/circular-peers-3-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0",
+    "@pnpm.e2e/circular-peers-3-of-3@1.0.0 @pnpm.e2e/circular-peers-1-of-3=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/circular-peers-3-of-3": {
+   "root": [
+    "@pnpm.e2e/circular-peers-3-of-3 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-peers-1-of-3@1.0.0 @pnpm.e2e/circular-peers-2-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1",
+    "@pnpm.e2e/circular-peers-2-of-3@1.0.0 @pnpm.e2e/circular-peers-3-of-3=1.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0",
+    "@pnpm.e2e/circular-peers-3-of-3@1.0.0 @pnpm.e2e/circular-peers-1-of-3=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.1",
+    "@pnpm.e2e/peer-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/complex-circular-peers-a": {
+   "root": [
+    "@pnpm.e2e/complex-circular-peers-a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/complex-circular-peers-a@1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-b@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-c=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-c@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/complex-circular-peers-b": {
+   "root": [
+    "@pnpm.e2e/complex-circular-peers-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/complex-circular-peers-a@1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-b@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-c=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-c@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/complex-circular-peers-c": {
+   "root": [
+    "@pnpm.e2e/complex-circular-peers-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/complex-circular-peers-a@1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-b@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-c=1.0.0",
+    "@pnpm.e2e/complex-circular-peers-c@1.0.0 @pnpm.e2e/complex-circular-peers-a=1.0.0 @pnpm.e2e/complex-circular-peers-b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/console-log": {
+   "root": [
+    "@pnpm.e2e/console-log -> 3.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/console-log@3.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/count-to-10": {
+   "root": [
+    "@pnpm.e2e/count-to-10 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/count-to-10@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/darwin-arm64": {
+   "root": [
+    "@pnpm.e2e/darwin-arm64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/darwin-arm64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/darwin-x64": {
+   "root": [
+    "@pnpm.e2e/darwin-x64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/darwin-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/deadlock.a": {
+   "root": [
+    "@pnpm.e2e/deadlock.a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/deadlock.a@1.0.0 @pnpm.e2e/deadlock.b=1.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.b@1.0.0 @pnpm.e2e/deadlock.a=1.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.c@1.0.0 @pnpm.e2e/deadlock.a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/deadlock.b": {
+   "root": [
+    "@pnpm.e2e/deadlock.b -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/deadlock.b@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/deadlock.c": {
+   "root": [
+    "@pnpm.e2e/deadlock.c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/deadlock.a@1.0.0 @pnpm.e2e/deadlock.b=1.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.b@1.0.0 @pnpm.e2e/deadlock.a=1.0.0 @pnpm.e2e/deadlock.c=1.0.0",
+    "@pnpm.e2e/deadlock.c@1.0.0 @pnpm.e2e/deadlock.a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/dep-of-optional-pkg": {
+   "root": [
+    "@pnpm.e2e/dep-of-optional-pkg -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/dep-of-pkg-with-1-dep": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 101.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/dep-of-recursive-with-optional-peer": {
+   "root": [
+    "@pnpm.e2e/dep-of-recursive-with-optional-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-recursive-with-optional-peer@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/recursive-with-optional-peer=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/recursive-with-optional-peer@1.0.0 @pnpm.e2e/dep-of-recursive-with-optional-peer=1.0.0 @pnpm.e2e/peer-a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/depends-on-console-log": {
+   "root": [
+    "@pnpm.e2e/depends-on-console-log -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/console-log@1.0.0",
+    "@pnpm.e2e/console-log@2.0.0",
+    "@pnpm.e2e/console-log@3.0.0",
+    "@pnpm.e2e/depends-on-console-log@1.0.0 console-log-1=@pnpm.e2e/console-log@1.0.0 console-log-2=@pnpm.e2e/console-log@2.0.0 console-log-3=@pnpm.e2e/console-log@3.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/depends-on-pkg-abcd": {
+   "root": [
+    "@pnpm.e2e/depends-on-pkg-abcd -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/depends-on-pkg-abcd@1.0.0 @pnpm.e2e/pkg-a=1.0.0 @pnpm.e2e/pkg-b=1.0.0 @pnpm.e2e/pkg-c=1.0.0 @pnpm.e2e/pkg-d=1.0.0",
+    "@pnpm.e2e/pkg-a@1.0.0",
+    "@pnpm.e2e/pkg-b@1.0.0",
+    "@pnpm.e2e/pkg-c@1.0.0",
+    "@pnpm.e2e/pkg-d@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/deprecated": {
+   "root": [
+    "@pnpm.e2e/deprecated -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/deprecated@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/exports-pnpmfile": {
+   "root": [
+    "@pnpm.e2e/exports-pnpmfile -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/exports-pnpmfile@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/external-depend-on-internal-dep": {
+   "root": [
+    "@pnpm.e2e/external-depend-on-internal-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/external-depend-on-internal-dep@1.0.0 @pnpm.e2e/internal-f=-"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/failing-postinstall": {
+   "root": [
+    "@pnpm.e2e/failing-postinstall -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/failing-postinstall@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/foo": {
+   "root": [
+    "@pnpm.e2e/foo -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/foobar": {
+   "root": [
+    "@pnpm.e2e/foobar -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/foobar@100.0.0 @pnpm.e2e/bar=100.1.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/foobarqar": {
+   "root": [
+    "@pnpm.e2e/foobarqar -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.0.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/foobarqar@1.0.1 @pnpm.e2e/bar=100.0.0 @pnpm.e2e/foo=100.1.0 @pnpm.e2e/qar=100.0.0",
+    "@pnpm.e2e/qar@100.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/for-legacy-node": {
+   "root": [
+    "@pnpm.e2e/for-legacy-node -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/for-legacy-node@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/for-legacy-pnpm": {
+   "root": [
+    "@pnpm.e2e/for-legacy-pnpm -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/for-legacy-pnpm@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/for-testing-peers-having-bins": {
+   "root": [
+    "@pnpm.e2e/for-testing-peers-having-bins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/for-testing-peers-having-bins@1.0.0 @pnpm.e2e/peer-with-bin=1.0.0 @pnpm.e2e/pkg-with-peer-having-bin=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/peer-with-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-peer-having-bin@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-with-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/for-testing-pnpm-dlx": {
+   "root": [
+    "@pnpm.e2e/for-testing-pnpm-dlx -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/for-testing-pnpm-dlx@1.0.0"
+   ],
+   "bins": [
+    "foo"
+   ]
+  },
+  "single @pnpm.e2e/for-testing-scoped-peers": {
+   "root": [
+    "@pnpm.e2e/for-testing-scoped-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@having/scoped-peer@1.0.0 @scoped/peer=1.0.0",
+    "@pnpm.e2e/for-testing-scoped-peers@1.0.0 @having/scoped-peer=1.0.0 @scoped/peer=1.0.0",
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/generate-node-info-during-install": {
+   "root": [
+    "@pnpm.e2e/generate-node-info-during-install -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/generate-node-info-during-install@1.0.0"
+   ],
+   "bins": [
+    "print-generated-node-info"
+   ]
+  },
+  "single @pnpm.e2e/generated-bins": {
+   "root": [
+    "@pnpm.e2e/generated-bins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/generated-bins@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-aliased-git-dependency": {
+   "failed": "Error: ERR_PNPM_EXOTIC_SUBDEP"
+  },
+  "single @pnpm.e2e/has-alpha": {
+   "root": [
+    "@pnpm.e2e/has-alpha -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/alpha@1.0.0 @pnpm.e2e/has-alpha-as-peer=1.0.0",
+    "@pnpm.e2e/has-alpha-as-peer@1.0.0 @pnpm.e2e/alpha=1.0.0",
+    "@pnpm.e2e/has-alpha@1.0.0 @pnpm.e2e/alpha=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-alpha-as-peer": {
+   "root": [
+    "@pnpm.e2e/has-alpha-as-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/alpha@1.0.0 @pnpm.e2e/has-alpha-as-peer=1.0.0",
+    "@pnpm.e2e/has-alpha-as-peer@1.0.0 @pnpm.e2e/alpha=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-beta-only": {
+   "root": [
+    "@pnpm.e2e/has-beta-only -> 1.0.0-beta.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-beta-only@1.0.0-beta.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-bin-and-needs-build": {
+   "root": [
+    "@pnpm.e2e/has-bin-and-needs-build -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-bin-and-needs-build@1.0.0 @pnpm.e2e/install-script-example=1.0.0 @pnpm.e2e/pre-and-postinstall-scripts-example=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/install-script-example@1.0.0",
+    "@pnpm.e2e/pre-and-postinstall-scripts-example@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": [
+    "has-bin-and-needs-build"
+   ]
+  },
+  "single @pnpm.e2e/has-binding-gyp": {
+   "root": [
+    "@pnpm.e2e/has-binding-gyp -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-binding-gyp@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-cpu-specified": {
+   "root": [
+    "@pnpm.e2e/has-cpu-specified -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-cpu-specified@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-default-peer": {
+   "root": [
+    "@pnpm.e2e/has-default-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/has-default-peer@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-different-licenses": {
+   "root": [
+    "@pnpm.e2e/has-different-licenses -> 3.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-different-licenses@3.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-execution-env": {
+   "root": [
+    "@pnpm.e2e/has-execution-env -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-execution-env@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-failing-postinstall-dep": {
+   "root": [
+    "@pnpm.e2e/has-failing-postinstall-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/failing-postinstall@1.0.0",
+    "@pnpm.e2e/has-failing-postinstall-dep@1.0.0 @pnpm.e2e/failing-postinstall=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo-100.0.0-range-dep": {
+   "root": [
+    "@pnpm.e2e/has-foo-100.0.0-range-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/has-foo-100.0.0-range-dep@1.0.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo-100.1.0-dep-1": {
+   "root": [
+    "@pnpm.e2e/has-foo-100.1.0-dep-1 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-1@1.0.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo-100.1.0-dep-2": {
+   "root": [
+    "@pnpm.e2e/has-foo-100.1.0-dep-2 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/has-foo-100.1.0-dep-2@1.0.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo-as-dep-and-subdep": {
+   "root": [
+    "@pnpm.e2e/has-foo-as-dep-and-subdep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.0.0",
+    "@pnpm.e2e/has-foo-as-dep-and-subdep@1.0.0 @pnpm.e2e/foo=100.0.0 @pnpm.e2e/requires-any-foo=1.0.0",
+    "@pnpm.e2e/requires-any-foo@1.0.0 @pnpm.e2e/foo=100.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo100-peer": {
+   "root": [
+    "@pnpm.e2e/has-foo100-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/has-foo100-peer@1.0.0 @pnpm.e2e/foo=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-foo101-peer": {
+   "failed": "Error: ERR_PNPM_NO_MATCHING_VERSION"
+  },
+  "single @pnpm.e2e/has-generated-bins-as-dep": {
+   "root": [
+    "@pnpm.e2e/has-generated-bins-as-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/generated-bins@1.0.0",
+    "@pnpm.e2e/has-generated-bins-as-dep@1.0.0 @pnpm.e2e/generated-bins=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-github-dep": {
+   "failed": "Error: ERR_PNPM_EXOTIC_SUBDEP"
+  },
+  "single @pnpm.e2e/has-has-y-peer-only-as-peer": {
+   "root": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer@1.0.0 @pnpm.e2e/has-y-peer=1.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-has-y-peer-only-as-peer-and-y": {
+   "root": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer-and-y -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-has-y-peer-only-as-peer-and-y@2.0.0 @pnpm.e2e/has-y-peer=1.0.0 @pnpm/y=2.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-has-y-peer-peer": {
+   "root": [
+    "@pnpm.e2e/has-has-y-peer-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-has-y-peer-peer@1.0.0 @pnpm.e2e/has-y-peer=1.0.0 @pnpm/y=1.0.0",
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=1.0.0",
+    "@pnpm/y@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-local-dep": {
+   "root": [
+    "@pnpm.e2e/has-local-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/has-local-dep@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 local-dep=@pnpm.e2e/local-dep@1.0.0",
+    "@pnpm.e2e/local-dep@1.0.0 @pnpm.e2e/bravo-dep=-"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-many-optional-deps": {
+   "root": [
+    "@pnpm.e2e/has-many-optional-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-many-optional-deps@1.0.0 @pnpm.e2e/darwin-arm64=- @pnpm.e2e/darwin-x64=- @pnpm.e2e/linux-arm64=- @pnpm.e2e/linux-x64=1.0.0 @pnpm.e2e/windows-x64=-",
+    "@pnpm.e2e/linux-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-native-dep": {
+   "root": [
+    "@pnpm.e2e/has-native-dep -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-native-dep@1.0.1 bcrypt=3.0.6",
+    "abbrev@1.1.1",
+    "ansi-regex@2.1.1",
+    "aproba@1.2.0",
+    "are-we-there-yet@1.1.7 delegates=1.0.0 readable-stream=2.3.8",
+    "balanced-match@1.0.2",
+    "bcrypt@3.0.6 nan=2.13.2 node-pre-gyp=0.12.0",
+    "brace-expansion@1.1.21 balanced-match=1.0.2 concat-map=0.0.1",
+    "chownr@1.1.4",
+    "code-point-at@1.1.0",
+    "concat-map@0.0.1",
+    "console-control-strings@1.1.0",
+    "core-util-is@1.0.3",
+    "debug@3.2.7 ms=2.1.3",
+    "deep-extend@0.6.0",
+    "delegates@1.0.0",
+    "detect-libc@1.0.3",
+    "fs-minipass@1.2.7 minipass=2.9.0",
+    "fs.realpath@1.0.0",
+    "gauge@2.7.4 aproba=1.2.0 console-control-strings=1.1.0 has-unicode=2.0.1 object-assign=4.1.1 signal-exit=3.0.7 string-width=1.0.2 strip-ansi=3.0.1 wide-align=1.1.5",
+    "glob@7.2.3 fs.realpath=1.0.0 inflight=1.0.6 inherits=2.0.4 minimatch=3.1.5 once=1.4.0 path-is-absolute=1.0.1",
+    "has-unicode@2.0.1",
+    "iconv-lite@0.4.24 safer-buffer=2.1.2",
+    "ignore-walk@3.0.4 minimatch=3.1.5",
+    "inflight@1.0.6 once=1.4.0 wrappy=1.0.2",
+    "inherits@2.0.4",
+    "ini@1.3.8",
+    "is-fullwidth-code-point@1.0.0 number-is-nan=1.0.1",
+    "isarray@1.0.0",
+    "minimatch@3.1.5 brace-expansion=1.1.21",
+    "minimist@1.2.8",
+    "minipass@2.9.0 safe-buffer=5.2.1 yallist=3.1.1",
+    "minizlib@1.3.3 minipass=2.9.0",
+    "mkdirp@0.5.6 minimist=1.2.8",
+    "ms@2.1.3",
+    "nan@2.13.2",
+    "needle@2.9.1 debug=3.2.7 iconv-lite=0.4.24 sax=1.6.1",
+    "node-pre-gyp@0.12.0 detect-libc=1.0.3 mkdirp=0.5.6 needle=2.9.1 nopt=4.0.3 npm-packlist=1.4.8 npmlog=4.1.2 rc=1.2.8 rimraf=2.7.1 semver=5.7.2 tar=4.4.19",
+    "nopt@4.0.3 abbrev=1.1.1 osenv=0.1.5",
+    "npm-bundled@1.1.2 npm-normalize-package-bin=1.0.1",
+    "npm-normalize-package-bin@1.0.1",
+    "npm-packlist@1.4.8 ignore-walk=3.0.4 npm-bundled=1.1.2 npm-normalize-package-bin=1.0.1",
+    "npmlog@4.1.2 are-we-there-yet=1.1.7 console-control-strings=1.1.0 gauge=2.7.4 set-blocking=2.0.0",
+    "number-is-nan@1.0.1",
+    "object-assign@4.1.1",
+    "once@1.4.0 wrappy=1.0.2",
+    "os-homedir@1.0.2",
+    "os-tmpdir@1.0.2",
+    "osenv@0.1.5 os-homedir=1.0.2 os-tmpdir=1.0.2",
+    "path-is-absolute@1.0.1",
+    "process-nextick-args@2.0.1",
+    "rc@1.2.8 deep-extend=0.6.0 ini=1.3.8 minimist=1.2.8 strip-json-comments=2.0.1",
+    "readable-stream@2.3.8 core-util-is=1.0.3 inherits=2.0.4 isarray=1.0.0 process-nextick-args=2.0.1 safe-buffer=5.1.2 string_decoder=1.1.1 util-deprecate=1.0.2",
+    "rimraf@2.7.1 glob=7.2.3",
+    "safe-buffer@5.1.2",
+    "safe-buffer@5.2.1",
+    "safer-buffer@2.1.2",
+    "sax@1.6.1",
+    "semver@5.7.2",
+    "set-blocking@2.0.0",
+    "signal-exit@3.0.7",
+    "string-width@1.0.2 code-point-at=1.1.0 is-fullwidth-code-point=1.0.0 strip-ansi=3.0.1",
+    "string_decoder@1.1.1 safe-buffer=5.1.2",
+    "strip-ansi@3.0.1 ansi-regex=2.1.1",
+    "strip-json-comments@2.0.1",
+    "tar@4.4.19 chownr=1.1.4 fs-minipass=1.2.7 minipass=2.9.0 minizlib=1.3.3 mkdirp=0.5.6 safe-buffer=5.2.1 yallist=3.1.1",
+    "util-deprecate@1.0.2",
+    "wide-align@1.1.5 string-width=1.0.2",
+    "wrappy@1.0.2",
+    "yallist@3.1.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-not-compatible-dep": {
+   "root": [
+    "@pnpm.e2e/has-not-compatible-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/has-not-compatible-dep@1.0.0 @pnpm.e2e/not-compatible-with-any-os=1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-optional-dep-with-peer": {
+   "root": [
+    "@pnpm.e2e/has-optional-dep-with-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-optional-dep-with-peer@1.0.0 @pnpm.e2e/not-compatible-with-any-os-and-has-peer=- @pnpm.e2e/peer-c=1.0.0",
+    "@pnpm.e2e/peer-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-optional-peer-as-dep": {
+   "root": [
+    "@pnpm.e2e/has-optional-peer-as-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bravo-dep@1.0.0",
+    "@pnpm.e2e/has-optional-peer-as-dep@1.0.0 @pnpm.e2e/bravo-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-optional-peer-with-peer": {
+   "root": [
+    "@pnpm.e2e/has-optional-peer-with-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-optional-peer-with-peer@1.0.0 @pnpm.e2e/has-y-peer=-"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-patch-for-foo": {
+   "root": [
+    "@pnpm.e2e/has-patch-for-foo -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-patch-for-foo@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-peer-c-in-deps": {
+   "root": [
+    "@pnpm.e2e/has-peer-c-in-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-peer-c-in-deps@1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-pkg-with-peer-only": {
+   "root": [
+    "@pnpm.e2e/has-pkg-with-peer-only -> 1.0.0"
+   ],
+   "packages": [
+    "@having/scoped-peer@1.0.0 @scoped/peer=1.0.0",
+    "@pnpm.e2e/has-pkg-with-peer-only@1.0.0 @having/scoped-peer=1.0.0 @scoped/peer=1.0.0",
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-prerelease": {
+   "root": [
+    "@pnpm.e2e/has-prerelease -> 3.0.0-rc.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-prerelease@3.0.0-rc.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-same-license": {
+   "root": [
+    "@pnpm.e2e/has-same-license -> 3.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-same-license@3.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-say-hi-peer": {
+   "root": [
+    "@pnpm.e2e/has-say-hi-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-say-hi-peer@1.0.0 say-hi=0.0.4",
+    "say-hi@0.0.4"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-tango-as-peer-dep": {
+   "root": [
+    "@pnpm.e2e/has-tango-as-peer-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=1.0.0",
+    "@pnpm.e2e/tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-untrusted-optional-dep": {
+   "root": [
+    "@pnpm.e2e/has-untrusted-optional-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-untrusted-optional-dep@1.0.0 @pnpm/e2e.test-provenance=0.0.5",
+    "@pnpm/e2e.test-provenance@0.0.5"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/has-y-peer": {
+   "root": [
+    "@pnpm.e2e/has-y-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-y-peer@1.0.0 @pnpm/y=2.0.0",
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/hello-world-js-bin": {
+   "root": [
+    "@pnpm.e2e/hello-world-js-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0"
+   ],
+   "bins": [
+    "hello-world-js-bin"
+   ]
+  },
+  "single @pnpm.e2e/hello-world-js-bin-parent": {
+   "root": [
+    "@pnpm.e2e/hello-world-js-bin-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin-parent@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0",
+    "@pnpm.e2e/hello-world-js-bin@1.0.0"
+   ],
+   "bins": [
+    "hello-world-js-bin"
+   ]
+  },
+  "single @pnpm.e2e/independent-and-requires-build": {
+   "root": [
+    "@pnpm.e2e/independent-and-requires-build -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/independent-and-requires-build@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/install-script-example": {
+   "root": [
+    "@pnpm.e2e/install-script-example -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/install-script-example@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/linux-arm64": {
+   "root": [
+    "@pnpm.e2e/linux-arm64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/linux-arm64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/linux-x64": {
+   "root": [
+    "@pnpm.e2e/linux-x64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/linux-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/not-compatible-with-any-os": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-any-os -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/not-compatible-with-any-os-and-has-peer": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-any-os-and-has-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os-and-has-peer@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0 @pnpm.e2e/peer-c=2.0.0",
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/not-compatible-with-not-compatible-dep": {
+   "root": [
+    "@pnpm.e2e/not-compatible-with-not-compatible-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-optional-pkg@1.0.0",
+    "@pnpm.e2e/not-compatible-with-any-os@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0",
+    "@pnpm.e2e/not-compatible-with-not-compatible-dep@1.0.0 @pnpm.e2e/not-compatible-with-any-os=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-darwin-arm64": {
+   "root": [
+    "@pnpm.e2e/only-darwin-arm64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-darwin-arm64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-darwin-x64": {
+   "root": [
+    "@pnpm.e2e/only-darwin-x64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-darwin-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-linux-arm64-glibc": {
+   "root": [
+    "@pnpm.e2e/only-linux-arm64-glibc -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-linux-arm64-glibc@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-linux-arm64-musl": {
+   "root": [
+    "@pnpm.e2e/only-linux-arm64-musl -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-linux-arm64-musl@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-linux-x64-glibc": {
+   "root": [
+    "@pnpm.e2e/only-linux-x64-glibc -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-linux-x64-glibc@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-linux-x64-musl": {
+   "root": [
+    "@pnpm.e2e/only-linux-x64-musl -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-linux-x64-musl@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-win32-arm64": {
+   "root": [
+    "@pnpm.e2e/only-win32-arm64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-win32-arm64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/only-win32-x64": {
+   "root": [
+    "@pnpm.e2e/only-win32-x64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-win32-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/parent-of-has-many-optional-deps": {
+   "root": [
+    "@pnpm.e2e/parent-of-has-many-optional-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-many-optional-deps@1.0.0 @pnpm.e2e/darwin-arm64=- @pnpm.e2e/darwin-x64=- @pnpm.e2e/linux-arm64=- @pnpm.e2e/linux-x64=1.0.0 @pnpm.e2e/windows-x64=-",
+    "@pnpm.e2e/linux-x64@1.0.0",
+    "@pnpm.e2e/parent-of-has-many-optional-deps@1.0.0 @pnpm.e2e/has-many-optional-deps=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/parent-of-pkg-with-1-dep": {
+   "root": [
+    "@pnpm.e2e/parent-of-pkg-with-1-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/parent-of-pkg-with-1-dep@1.0.0 @pnpm.e2e/pkg-with-1-dep=100.1.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.1.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/parent-of-pkg-with-events-and-peers": {
+   "root": [
+    "@pnpm.e2e/parent-of-pkg-with-events-and-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/parent-of-pkg-with-events-and-peers@1.0.0 @pnpm.e2e/peer-c=1.0.1 @pnpm.e2e/pkg-with-events-and-peers=1.0.0",
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/pkg-with-events-and-peers@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-c=1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-a": {
+   "root": [
+    "@pnpm.e2e/peer-a -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-a@1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-b": {
+   "root": [
+    "@pnpm.e2e/peer-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-c": {
+   "root": [
+    "@pnpm.e2e/peer-c -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-c@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-deps-in-child-pkg": {
+   "root": [
+    "@pnpm.e2e/peer-deps-in-child-pkg -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-deps-in-child-pkg@1.0.0 is-negative=2.1.0",
+    "is-negative@2.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-of-itself": {
+   "root": [
+    "@pnpm.e2e/peer-of-itself -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-of-itself@1.0.0 @pnpm.e2e/peer-of-itself=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/peer-with-bin": {
+   "root": [
+    "@pnpm.e2e/peer-with-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-with-bin@1.0.0"
+   ],
+   "bins": [
+    "peer-with-bin"
+   ]
+  },
+  "single @pnpm.e2e/pkg-a": {
+   "root": [
+    "@pnpm.e2e/pkg-a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-a@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-b": {
+   "root": [
+    "@pnpm.e2e/pkg-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-b@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-c": {
+   "root": [
+    "@pnpm.e2e/pkg-c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-c@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-d": {
+   "root": [
+    "@pnpm.e2e/pkg-d -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-d@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-that-calls-unlisted-dep-in-hooks": {
+   "root": [
+    "@pnpm.e2e/pkg-that-calls-unlisted-dep-in-hooks -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-that-calls-unlisted-dep-in-hooks@1.0.0 @pnpm.e2e/pkg-that-depends-on-json-append=1.0.0",
+    "@pnpm.e2e/pkg-that-depends-on-json-append@1.0.0 json-append=1.1.1",
+    "buffer-from@1.1.2",
+    "concat-stream@1.6.2 buffer-from=1.1.2 inherits=2.0.4 readable-stream=2.3.8 typedarray=0.0.6",
+    "core-util-is@1.0.3",
+    "inherits@2.0.4",
+    "isarray@1.0.0",
+    "json-append@1.1.1 concat-stream=1.6.2",
+    "process-nextick-args@2.0.1",
+    "readable-stream@2.3.8 core-util-is=1.0.3 inherits=2.0.4 isarray=1.0.0 process-nextick-args=2.0.1 safe-buffer=5.1.2 string_decoder=1.1.1 util-deprecate=1.0.2",
+    "safe-buffer@5.1.2",
+    "string_decoder@1.1.1 safe-buffer=5.1.2",
+    "typedarray@0.0.6",
+    "util-deprecate@1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-that-depends-on-json-append": {
+   "root": [
+    "@pnpm.e2e/pkg-that-depends-on-json-append -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-that-depends-on-json-append@1.0.0 json-append=1.1.1",
+    "buffer-from@1.1.2",
+    "concat-stream@1.6.2 buffer-from=1.1.2 inherits=2.0.4 readable-stream=2.3.8 typedarray=0.0.6",
+    "core-util-is@1.0.3",
+    "inherits@2.0.4",
+    "isarray@1.0.0",
+    "json-append@1.1.1 concat-stream=1.6.2",
+    "process-nextick-args@2.0.1",
+    "readable-stream@2.3.8 core-util-is=1.0.3 inherits=2.0.4 isarray=1.0.0 process-nextick-args=2.0.1 safe-buffer=5.1.2 string_decoder=1.1.1 util-deprecate=1.0.2",
+    "safe-buffer@5.1.2",
+    "string_decoder@1.1.1 safe-buffer=5.1.2",
+    "typedarray@0.0.6",
+    "util-deprecate@1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-that-installs-slowly": {
+   "root": [
+    "@pnpm.e2e/pkg-that-installs-slowly -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-that-installs-slowly@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-that-uses-plugins": {
+   "root": [
+    "@pnpm.e2e/pkg-that-uses-plugins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-that-uses-plugins@1.0.0"
+   ],
+   "bins": [
+    "pkg-that-uses-plugins"
+   ]
+  },
+  "single @pnpm.e2e/pkg-with-1-aliased-dep": {
+   "root": [
+    "@pnpm.e2e/pkg-with-1-aliased-dep -> 100.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/pkg-with-1-aliased-dep@100.0.0 dep=@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-1-dep": {
+   "root": [
+    "@pnpm.e2e/pkg-with-1-dep -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0",
+    "@pnpm.e2e/pkg-with-1-dep@100.1.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-accidentally-published-catalog-protocol": {
+   "failed": "Error: ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER"
+  },
+  "single @pnpm.e2e/pkg-with-bundle-dependencies": {
+   "root": [
+    "@pnpm.e2e/pkg-with-bundle-dependencies -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-bundle-dependencies-false": {
+   "root": [
+    "@pnpm.e2e/pkg-with-bundle-dependencies-false -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies-false@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-bundle-dependencies-true": {
+   "root": [
+    "@pnpm.e2e/pkg-with-bundle-dependencies-true -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-bundle-dependencies-true@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-bundled-dependencies": {
+   "root": [
+    "@pnpm.e2e/pkg-with-bundled-dependencies -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-bundled-dependencies@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-directories-bin": {
+   "root": [
+    "@pnpm.e2e/pkg-with-directories-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-directories-bin@1.0.0"
+   ],
+   "bins": [
+    "pkg-with-directories-bin"
+   ]
+  },
+  "single @pnpm.e2e/pkg-with-duplicated-dep": {
+   "root": [
+    "@pnpm.e2e/pkg-with-duplicated-dep -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0",
+    "@pnpm.e2e/pkg-with-duplicated-dep@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-events-and-peers": {
+   "root": [
+    "@pnpm.e2e/pkg-with-events-and-peers -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/peer-c@2.0.0",
+    "@pnpm.e2e/pkg-with-events-and-peers@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-c=2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-failing-optional-dependency": {
+   "root": [
+    "@pnpm.e2e/pkg-with-failing-optional-dependency -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-failing-optional-dependency@1.0.0 @pnpm.e2e/pkg-with-failing-postinstall=1.0.0",
+    "@pnpm.e2e/pkg-with-failing-postinstall@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-failing-optional-peer": {
+   "root": [
+    "@pnpm.e2e/pkg-with-failing-optional-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-failing-optional-peer@1.0.0 @pnpm.e2e/pkg-with-failing-postinstall=-"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-failing-postinstall": {
+   "root": [
+    "@pnpm.e2e/pkg-with-failing-postinstall -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-failing-postinstall@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-good-optional": {
+   "root": [
+    "@pnpm.e2e/pkg-with-good-optional -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0",
+    "@pnpm.e2e/pkg-with-good-optional@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=101.0.0 is-positive=1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-optional": {
+   "root": [
+    "@pnpm.e2e/pkg-with-optional -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/pkg-with-optional@1.0.0 @pnpm.e2e/not-compatible-with-any-os=-"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-peer-having-bin": {
+   "root": [
+    "@pnpm.e2e/pkg-with-peer-having-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/peer-with-bin@1.0.0",
+    "@pnpm.e2e/pkg-with-peer-having-bin@1.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0 @pnpm.e2e/peer-with-bin=1.0.0"
+   ],
+   "bins": [
+    "peer-with-bin"
+   ]
+  },
+  "single @pnpm.e2e/pkg-with-resolved-peer": {
+   "root": [
+    "@pnpm.e2e/pkg-with-resolved-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-b@1.0.0",
+    "@pnpm.e2e/peer-c@2.0.0",
+    "@pnpm.e2e/pkg-with-resolved-peer@1.0.0 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pkg-with-tarball-dep-from-registry": {
+   "failed": "Error:   × installing dependencies"
+  },
+  "single @pnpm.e2e/plugin-example": {
+   "root": [
+    "@pnpm.e2e/plugin-example -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/plugin-example@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/postinstall-calls-pnpm": {
+   "root": [
+    "@pnpm.e2e/postinstall-calls-pnpm -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/postinstall-calls-pnpm@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/postinstall-requires-is-positive": {
+   "root": [
+    "@pnpm.e2e/postinstall-requires-is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/postinstall-requires-is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/pre-and-postinstall-scripts-example": {
+   "root": [
+    "@pnpm.e2e/pre-and-postinstall-scripts-example -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/hello-world-js-bin@1.0.0",
+    "@pnpm.e2e/pre-and-postinstall-scripts-example@2.0.0 @pnpm.e2e/hello-world-js-bin=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/print-node-info": {
+   "root": [
+    "@pnpm.e2e/print-node-info -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/print-node-info@1.0.0"
+   ],
+   "bins": [
+    "print-node-info"
+   ]
+  },
+  "single @pnpm.e2e/print-version": {
+   "root": [
+    "@pnpm.e2e/print-version -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/print-version@2.0.0"
+   ],
+   "bins": [
+    "print-version"
+   ]
+  },
+  "single @pnpm.e2e/qar": {
+   "root": [
+    "@pnpm.e2e/qar -> 100.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/qar@100.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/recursive-with-optional-peer": {
+   "root": [
+    "@pnpm.e2e/recursive-with-optional-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-recursive-with-optional-peer@1.0.0 @pnpm.e2e/peer-a=1.0.0 @pnpm.e2e/recursive-with-optional-peer=1.0.0",
+    "@pnpm.e2e/peer-a@1.0.0",
+    "@pnpm.e2e/recursive-with-optional-peer@1.0.0 @pnpm.e2e/dep-of-recursive-with-optional-peer=1.0.0 @pnpm.e2e/peer-a=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/repeat-peers.a": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.a -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/repeat-peers.b": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/repeat-peers.c": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.c -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/repeat-peers.d": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.d -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/repeat-peers.x": {
+   "root": [
+    "@pnpm.e2e/repeat-peers.x -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/repeat-peers.a@2.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.b@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0 @pnpm.e2e/repeat-peers.c=1.0.0",
+    "@pnpm.e2e/repeat-peers.c@1.0.0 @pnpm.e2e/repeat-peers.d=1.0.0",
+    "@pnpm.e2e/repeat-peers.d@1.0.0 @pnpm.e2e/repeat-peers.b=1.0.0",
+    "@pnpm.e2e/repeat-peers.x@1.0.0 @pnpm.e2e/repeat-peers.a=2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/requires-any-foo": {
+   "root": [
+    "@pnpm.e2e/requires-any-foo -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@2.0.0",
+    "@pnpm.e2e/requires-any-foo@1.0.0 @pnpm.e2e/foo=2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/requires-chalk-530": {
+   "root": [
+    "@pnpm.e2e/requires-chalk-530 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/requires-chalk-530@1.0.0 chalk=5.3.0",
+    "chalk@5.3.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/requires-itself": {
+   "root": [
+    "@pnpm.e2e/requires-itself -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/requires-itself@1.0.0 @pnpm.e2e/requires-itself=1.0.0 is-positive=1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/romeo": {
+   "root": [
+    "@pnpm.e2e/romeo -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/romeo-dep@1.1.0",
+    "@pnpm.e2e/romeo@1.0.0 @pnpm.e2e/romeo-dep=1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/romeo-dep": {
+   "root": [
+    "@pnpm.e2e/romeo-dep -> 1.1.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/romeo-dep@1.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/runs-own-bin": {
+   "root": [
+    "@pnpm.e2e/runs-own-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/runs-own-bin@1.0.0"
+   ],
+   "bins": [
+    "runs-own-bin"
+   ]
+  },
+  "single @pnpm.e2e/self-file-reference": {
+   "root": [
+    "@pnpm.e2e/self-file-reference -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/self-file-reference@1.0.0 @pnpm.e2e/self-file-reference=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/self-link-reference": {
+   "root": [
+    "@pnpm.e2e/self-link-reference -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/self-link-reference@1.0.0 @pnpm.e2e/self-link-reference=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/sh-hello-world": {
+   "root": [
+    "@pnpm.e2e/sh-hello-world -> 1.0.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/sh-hello-world@1.0.1"
+   ],
+   "bins": [
+    "sh-hello-world"
+   ]
+  },
+  "single @pnpm.e2e/shell-mock": {
+   "root": [
+    "@pnpm.e2e/shell-mock -> 0.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/shell-mock@0.0.0"
+   ],
+   "bins": [
+    "shell-mock"
+   ]
+  },
+  "single @pnpm.e2e/support-different-architectures": {
+   "root": [
+    "@pnpm.e2e/support-different-architectures -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/only-linux-x64-glibc@1.0.0",
+    "@pnpm.e2e/support-different-architectures@1.0.0 @pnpm.e2e/only-darwin-arm64=- @pnpm.e2e/only-darwin-x64=- @pnpm.e2e/only-linux-arm64-glibc=- @pnpm.e2e/only-linux-arm64-musl=- @pnpm.e2e/only-linux-x64-glibc=1.0.0 @pnpm.e2e/only-linux-x64-musl=- @pnpm.e2e/only-win32-arm64=- @pnpm.e2e/only-win32-x64=-"
+   ],
+   "bins": [
+    "get-optional-dependencies"
+   ]
+  },
+  "single @pnpm.e2e/symlinks-preserved": {
+   "root": [
+    "@pnpm.e2e/symlinks-preserved -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/symlinks-preserved@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/tango": {
+   "root": [
+    "@pnpm.e2e/tango -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=1.0.0",
+    "@pnpm.e2e/tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/tango-tango": {
+   "root": [
+    "@pnpm.e2e/tango-tango -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-tango-as-peer-dep@1.0.0 @pnpm.e2e/tango=1.0.0",
+    "@pnpm.e2e/tango-tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0",
+    "@pnpm.e2e/tango@1.0.0 @pnpm.e2e/has-tango-as-peer-dep=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/test-pnpm-issue219": {
+   "root": [
+    "@pnpm.e2e/test-pnpm-issue219 -> 1.0.3"
+   ],
+   "packages": [
+    "@pnpm.e2e/test-pnpm-issue219@1.0.3 @zkochan/test-pnpm-issue219=1.0.2",
+    "@zkochan/test-pnpm-issue219@1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/test-pnpm-peer-deps": {
+   "root": [
+    "@pnpm.e2e/test-pnpm-peer-deps -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-deps-in-child-pkg@1.0.0 is-negative=2.1.0",
+    "@pnpm.e2e/test-pnpm-peer-deps@1.0.0 @pnpm.e2e/peer-deps-in-child-pkg=1.0.0 is-negative=2.1.0",
+    "is-negative@2.1.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/touch-file-good-bin-name": {
+   "root": [
+    "@pnpm.e2e/touch-file-good-bin-name -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/touch-file-good-bin-name@1.0.0"
+   ],
+   "bins": [
+    "touch-file-good-bin-name",
+    "tt"
+   ]
+  },
+  "single @pnpm.e2e/touch-file-many-bins": {
+   "root": [
+    "@pnpm.e2e/touch-file-many-bins -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/touch-file-many-bins@1.0.0"
+   ],
+   "bins": [
+    "t",
+    "tt"
+   ]
+  },
+  "single @pnpm.e2e/touch-file-one-bin": {
+   "root": [
+    "@pnpm.e2e/touch-file-one-bin -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/touch-file-one-bin@1.0.0"
+   ],
+   "bins": [
+    "t"
+   ]
+  },
+  "single @pnpm.e2e/update-config-with-catalogs": {
+   "root": [
+    "@pnpm.e2e/update-config-with-catalogs -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/update-config-with-catalogs@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/uses-pkg-with-self-usage": {
+   "root": [
+    "@pnpm.e2e/uses-pkg-with-self-usage -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/uses-pkg-with-self-usage@1.0.0 babel-runtime=5.8.38",
+    "babel-runtime@5.8.38 core-js=1.2.7",
+    "core-js@1.2.7"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/using-ajv": {
+   "root": [
+    "@pnpm.e2e/using-ajv -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/using-ajv@1.0.0 ajv=4.10.4 ajv-keywords=1.5.0",
+    "ajv-keywords@1.5.0 ajv=4.10.4",
+    "ajv@4.10.4 co=4.6.0 json-stable-stringify=1.3.0",
+    "call-bind-apply-helpers@1.0.2 es-errors=1.3.0 function-bind=1.1.2",
+    "call-bind@1.0.9 call-bind-apply-helpers=1.0.2 es-define-property=1.0.1 get-intrinsic=1.3.0 set-function-length=1.2.2",
+    "call-bound@1.0.4 call-bind-apply-helpers=1.0.2 get-intrinsic=1.3.0",
+    "co@4.6.0",
+    "define-data-property@1.1.4 es-define-property=1.0.1 es-errors=1.3.0 gopd=1.2.0",
+    "dunder-proto@1.0.1 call-bind-apply-helpers=1.0.2 es-errors=1.3.0 gopd=1.2.0",
+    "es-define-property@1.0.1",
+    "es-errors@1.3.0",
+    "es-object-atoms@1.1.2 es-errors=1.3.0",
+    "function-bind@1.1.2",
+    "get-intrinsic@1.3.0 call-bind-apply-helpers=1.0.2 es-define-property=1.0.1 es-errors=1.3.0 es-object-atoms=1.1.2 function-bind=1.1.2 get-proto=1.0.1 gopd=1.2.0 has-symbols=1.1.0 hasown=2.0.4 math-intrinsics=1.1.0",
+    "get-proto@1.0.1 dunder-proto=1.0.1 es-object-atoms=1.1.2",
+    "gopd@1.2.0",
+    "has-property-descriptors@1.0.2 es-define-property=1.0.1",
+    "has-symbols@1.1.0",
+    "hasown@2.0.4 function-bind=1.1.2",
+    "isarray@2.0.5",
+    "json-stable-stringify@1.3.0 call-bind=1.0.9 call-bound=1.0.4 isarray=2.0.5 jsonify=0.0.1 object-keys=1.1.1",
+    "jsonify@0.0.1",
+    "math-intrinsics@1.1.0",
+    "object-keys@1.1.1",
+    "set-function-length@1.2.2 define-data-property=1.1.4 es-errors=1.3.0 function-bind=1.1.2 get-intrinsic=1.3.0 gopd=1.2.0 has-property-descriptors=1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/wants-peer-c-1": {
+   "root": [
+    "@pnpm.e2e/wants-peer-c-1 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-c@1.0.1",
+    "@pnpm.e2e/wants-peer-c-1@1.0.0 @pnpm.e2e/peer-c=1.0.1"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/wants-peer-c-1.0.0": {
+   "root": [
+    "@pnpm.e2e/wants-peer-c-1.0.0 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-c@1.0.0",
+    "@pnpm.e2e/wants-peer-c-1.0.0@1.0.0 @pnpm.e2e/peer-c=1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/wants-peer-c-2": {
+   "root": [
+    "@pnpm.e2e/wants-peer-c-2 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/peer-c@2.0.0",
+    "@pnpm.e2e/wants-peer-c-2@1.0.0 @pnpm.e2e/peer-c=2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/windows-x64": {
+   "root": [
+    "@pnpm.e2e/windows-x64 -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/windows-x64@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/with-postinstall-a": {
+   "root": [
+    "@pnpm.e2e/with-postinstall-a -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/with-postinstall-a@1.0.0 @pnpm.e2e/with-postinstall-b=1.0.0 json-append=1.1.1",
+    "@pnpm.e2e/with-postinstall-b@1.0.0 json-append=1.1.1",
+    "buffer-from@1.1.2",
+    "concat-stream@1.6.2 buffer-from=1.1.2 inherits=2.0.4 readable-stream=2.3.8 typedarray=0.0.6",
+    "core-util-is@1.0.3",
+    "inherits@2.0.4",
+    "isarray@1.0.0",
+    "json-append@1.1.1 concat-stream=1.6.2",
+    "process-nextick-args@2.0.1",
+    "readable-stream@2.3.8 core-util-is=1.0.3 inherits=2.0.4 isarray=1.0.0 process-nextick-args=2.0.1 safe-buffer=5.1.2 string_decoder=1.1.1 util-deprecate=1.0.2",
+    "safe-buffer@5.1.2",
+    "string_decoder@1.1.1 safe-buffer=5.1.2",
+    "typedarray@0.0.6",
+    "util-deprecate@1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/with-postinstall-b": {
+   "root": [
+    "@pnpm.e2e/with-postinstall-b -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/with-postinstall-b@1.0.0 json-append=1.1.1",
+    "buffer-from@1.1.2",
+    "concat-stream@1.6.2 buffer-from=1.1.2 inherits=2.0.4 readable-stream=2.3.8 typedarray=0.0.6",
+    "core-util-is@1.0.3",
+    "inherits@2.0.4",
+    "isarray@1.0.0",
+    "json-append@1.1.1 concat-stream=1.6.2",
+    "process-nextick-args@2.0.1",
+    "readable-stream@2.3.8 core-util-is=1.0.3 inherits=2.0.4 isarray=1.0.0 process-nextick-args=2.0.1 safe-buffer=5.1.2 string_decoder=1.1.1 util-deprecate=1.0.2",
+    "safe-buffer@5.1.2",
+    "string_decoder@1.1.1 safe-buffer=5.1.2",
+    "typedarray@0.0.6",
+    "util-deprecate@1.0.2"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/with-same-file-in-different-cases": {
+   "root": [
+    "@pnpm.e2e/with-same-file-in-different-cases -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/with-same-file-in-different-cases@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm.e2e/write-lifecycle-env": {
+   "root": [
+    "@pnpm.e2e/write-lifecycle-env -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/write-lifecycle-env@1.0.0"
+   ],
+   "bins": [
+    "write-lifecycle-env"
+   ]
+  },
+  "single @pnpm/plugin-pnpmfile": {
+   "root": [
+    "@pnpm/plugin-pnpmfile -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/plugin-pnpmfile@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/postinstall-modifies-source": {
+   "root": [
+    "@pnpm/postinstall-modifies-source -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/postinstall-modifies-source@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/x": {
+   "root": [
+    "@pnpm/x -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz": {
+   "root": [
+    "@pnpm/xyz -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz-parent": {
+   "root": [
+    "@pnpm/xyz-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz-parent-parent": {
+   "root": [
+    "@pnpm/xyz-parent-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent-parent@1.0.0 @pnpm/xyz-parent=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz-parent-parent-parent": {
+   "root": [
+    "@pnpm/xyz-parent-parent-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent@1.0.0 @pnpm/xyz-parent=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz-parent-parent-parent-parent": {
+   "root": [
+    "@pnpm/xyz-parent-parent-parent-parent -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent-parent@1.0.0 @pnpm/xyz-parent-parent=1.0.0",
+    "@pnpm/xyz-parent-parent@1.0.0 @pnpm/xyz-parent=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/xyz-parent-parent-with-xyz": {
+   "root": [
+    "@pnpm/xyz-parent-parent-with-xyz -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/x@1.0.0",
+    "@pnpm/xyz-parent-parent-with-xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/xyz-parent=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/xyz-parent@1.0.0 @pnpm/xyz=1.0.0",
+    "@pnpm/xyz@1.0.0 @pnpm/x=1.0.0 @pnpm/y=1.0.0 @pnpm/z=1.0.0",
+    "@pnpm/y@1.0.0",
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/y": {
+   "root": [
+    "@pnpm/y -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm/y@2.0.0"
+   ],
+   "bins": []
+  },
+  "single @pnpm/z": {
+   "root": [
+    "@pnpm/z -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm/z@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @scoped/peer": {
+   "root": [
+    "@scoped/peer -> 1.0.0"
+   ],
+   "packages": [
+    "@scoped/peer@1.0.0"
+   ],
+   "bins": []
+  },
+  "single @zkochan/test-pnpm-issue219": {
+   "root": [
+    "@zkochan/test-pnpm-issue219 -> 1.0.2"
+   ],
+   "packages": [
+    "@zkochan/test-pnpm-issue219@1.0.2"
+   ],
+   "bins": []
+  },
+  "versions: a dependency from the same scope": {
+   "root": [
+    "@foo/has-dep-from-same-scope -> 1.0.0"
+   ],
+   "packages": [
+    "@foo/has-dep-from-same-scope@1.0.0 @foo/no-deps=1.0.0 is-negative=1.0.0",
+    "@foo/no-deps@1.0.0",
+    "is-negative@1.0.0"
+   ],
+   "bins": []
+  },
+  "versions: a dist-tag": {
+   "root": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep -> 101.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0"
+   ],
+   "bins": []
+  },
+  "versions: a missing version fails": {
+   "failed": "Error: ERR_PNPM_NO_MATCHING_VERSION"
+  },
+  "versions: an empty spec": {
+   "root": [
+    "is-positive -> 3.1.0"
+   ],
+   "packages": [
+    "is-positive@3.1.0"
+   ],
+   "bins": []
+  },
+  "versions: an unknown package fails": {
+   "failed": "Error: ERR_PNPM_FETCH_404"
+  },
+  "versions: build metadata in a dependency range": {
+   "root": [
+    "@pnpm.e2e/build-metadata-in-dep-version -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/build-metadata-in-dep-version@1.0.0 @pnpm.e2e/foo=100.0.0",
+    "@pnpm.e2e/foo@100.0.0"
+   ],
+   "bins": []
+  },
+  "versions: caret range skips a prerelease": {
+   "root": [
+    "@pnpm.e2e/has-prerelease -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-prerelease@2.0.0"
+   ],
+   "bins": []
+  },
+  "versions: circular dependencies": {
+   "root": [
+    "@pnpm.e2e/circular-deps-1-of-2 -> 1.0.2"
+   ],
+   "packages": [
+    "@pnpm.e2e/circular-deps-1-of-2@1.0.2 @pnpm.e2e/circular-deps-2-of-2=1.0.2",
+    "@pnpm.e2e/circular-deps-2-of-2@1.0.2 @pnpm.e2e/circular-deps-1-of-2=1.0.2"
+   ],
+   "bins": []
+  },
+  "versions: issue 219": {
+   "root": [
+    "@pnpm.e2e/test-pnpm-issue219 -> 1.0.3"
+   ],
+   "packages": [
+    "@pnpm.e2e/test-pnpm-issue219@1.0.3 @zkochan/test-pnpm-issue219=1.0.2",
+    "@zkochan/test-pnpm-issue219@1.0.2"
+   ],
+   "bins": []
+  },
+  "versions: latest is a prerelease": {
+   "root": [
+    "@pnpm.e2e/has-prerelease -> 3.0.0-rc.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-prerelease@3.0.0-rc.0"
+   ],
+   "bins": []
+  },
+  "versions: requires itself": {
+   "root": [
+    "@pnpm.e2e/requires-itself -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/requires-itself@1.0.0 @pnpm.e2e/requires-itself=1.0.0 is-positive=1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "versions: star with a prerelease latest": {
+   "root": [
+    "@pnpm.e2e/has-prerelease -> 2.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-prerelease@2.0.0"
+   ],
+   "bins": []
+  },
+  "versions: star with only prereleases": {
+   "root": [
+    "@pnpm.e2e/has-beta-only -> 1.0.0-beta.1"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-beta-only@1.0.0-beta.1"
+   ],
+   "bins": []
+  },
+  "versions: time-based pairs": {
+   "root": [
+    "@pnpm.e2e/bravo -> 1.0.0",
+    "@pnpm.e2e/romeo -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bravo-dep@1.1.0",
+    "@pnpm.e2e/bravo@1.0.0 @pnpm.e2e/bravo-dep=1.1.0",
+    "@pnpm.e2e/romeo-dep@1.1.0",
+    "@pnpm.e2e/romeo@1.0.0 @pnpm.e2e/romeo-dep=1.1.0"
+   ],
+   "bins": []
+  }
+ }
+}
