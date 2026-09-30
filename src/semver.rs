@@ -453,13 +453,36 @@ fn empty((low, high): &(Bound, Bound)) -> bool {
 /// Whether some version satisfies both ranges (npm's `intersects`).
 pub fn intersects(a: &str, b: &str) -> bool {
     let (Some(a), Some(b)) = (parse_range(a, false), parse_range(b, false)) else { return false };
-    a.iter().any(|x| b.iter().any(|y| !empty(&bounds(&[x.as_slice(), y.as_slice()].concat()))))
+    // An exact version meets a range when the range takes it, prerelease rules and all:
+    // `2.0.0-rc.1` lies below `<2.0.0` but is not in it.
+    let exact = |set: &[Comparator]| match set {
+        [c] if c.op == Op::Eq => Some(c.v.clone()),
+        _ => None,
+    };
+    let meet = |x: &[Comparator], y: &[Comparator]| match (exact(x), exact(y)) {
+        (Some(v), _) => test_set(&v, y, false),
+        (_, Some(v)) => test_set(&v, x, false),
+        _ => !empty(&bounds(&[x, y].concat())),
+    };
+    a.iter().any(|x| b.iter().any(|y| meet(x, y)))
 }
 
 /// Whether every version `sub` allows, `sup` allows too (npm's `subset`), each of `sub`'s
 /// alternatives inside one of `sup`'s.
 pub fn subset(sub: &str, sup: &str) -> bool {
     let (Some(sub), Some(sup)) = (parse_range(sub, false), parse_range(sup, false)) else { return false };
+    // `<x.y.z-0` (how `^1` or `<2` end) is `<x.y.z` to a range: its only other versions are
+    // x.y.z's prereleases, which a range without them never admits. As node-semver's subset.
+    let release = |(low, high): (Bound, Bound)| {
+        let high = match high {
+            Some((v, false)) if v.pre == [Id::Num(0)] => {
+                Some((Version::new(v.major, v.minor, v.patch, Vec::new()), false))
+            }
+            other => other,
+        };
+        (low, high)
+    };
+    let bounds = |set: &[Comparator]| release(bounds(set));
     let inside = |(l, h): &(Bound, Bound), (sl, sh): &(Bound, Bound)| {
         let low = match (l, sl) {
             (_, None) => true,
@@ -520,6 +543,16 @@ mod tests {
             ("<=1.0.0", ">=1.0.0", true),
             ("*", "^3", true),
             ("^1 || ^3", "3.1.0", true),
+            // node-semver's answers, around the `-0` a caret or x-range ends with.
+            ("1.x", "^1.5.0", true),
+            ("<2", ">=2.0.0-0", false),
+            ("<2", "2.0.0", false),
+            ("<2", ">=2", false),
+            ("~1.2", "1.2.9", true),
+            ("~1.2", ">=1.2.9 <1.3.0", true),
+            ("^1.2.3-beta.1", "1.2.3-beta.2", true),
+            ("<2.0.0", "2.0.0-rc.1", false),
+            ("^1", "1.5.0-rc.1", false),
         ] {
             assert_eq!(intersects(a, b), meet, "{a} {b}");
             assert_eq!(intersects(b, a), meet, "{b} {a}");
@@ -534,6 +567,21 @@ mod tests {
             ("*", "^1", false),
             ("~1.2.0", "*", true),
             ("latest", "*", false),
+            // node-semver's answers: `<x.y.z-0` ends a range where `<x.y.z` does.
+            (">=1.2.3 <1.3.0", "~1.2.0", true),
+            ("<2.0.0", "<2", true),
+            ("<2", "<2.0.0", true),
+            ("1.x", "^1", true),
+            ("^1", "1.x", true),
+            ("~1.2", "~1.2.0", true),
+            ("1.2.x", "~1.2.0", true),
+            ("1", "^1.0.0", true),
+            ("^0.2.3", "^0.2.0", true),
+            ("1.2.3 - 1.2.9", "~1.2.0", true),
+            ("v1.2.3", "^1", true),
+            ("^1 || ^2", "1.x || 2.x", true),
+            ("<2.0.1", "<2", false),
+            ("<=2.0.0", "<2", false),
         ] {
             assert_eq!(subset(sub, sup), inside, "{sub} in {sup}");
         }
