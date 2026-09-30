@@ -1141,6 +1141,16 @@ fn runs_the_projects_own_lifecycle_scripts() {
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
     env.ok(&["install", "--ignore-scripts"]);
     assert_eq!(env.read("order.txt"), "pre\npost\nprepare\n");
+
+    // A script that failed runs again on the next install, not "up to date".
+    env.manifest(json!({
+        "dependencies": { "dep": "1.0.0" },
+        "scripts": { "postinstall": "test -f ok || { touch ok; exit 1; }; echo post >> again.txt" }
+    }));
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    assert!(!env.jpm(&["install"]).status.success());
+    env.ok(&["install"]);
+    assert_eq!(env.read("again.txt"), "post\n");
 }
 
 #[cfg(unix)]

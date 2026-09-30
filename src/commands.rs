@@ -615,12 +615,21 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     ui::phase("linked");
     // Install scripts write to the terminal themselves.
     drop(progress);
-    let built = if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys)? };
+    // A script that fails runs again on the next install: the tree no longer passes for done.
+    let again = |e: Error| {
+        if let Some(mut st) = state::read(&dir) {
+            (st.complete, st.inputs) = (false, None);
+            let _ = state::write(&dir, &st);
+        }
+        e
+    };
+    let built =
+        if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys).map_err(again)? };
     // The project's own scripts, on an install that changed the tree, as npm runs them.
     if scripts && edit.is_none() && !outcome.up_to_date {
         let mut tops = vec![(dir.as_path(), &project.manifest)];
         tops.extend(project.workspaces.iter().map(|w| (w.dir.as_path(), &w.manifest)));
-        build::run_lifecycle(&tops)?;
+        build::run_lifecycle(&tops).map_err(again)?;
     }
     // Installed, and with scripts in the tarball itself, whatever the registry said.
     let ships = |p: &crate::graph::Package| match (store.pkg_dir(&p.integrity), store.index(&p.integrity)) {
