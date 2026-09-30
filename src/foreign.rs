@@ -1,7 +1,8 @@
 //! The lockfile npm, pnpm or bun left in a project, read so jpm installs the tree it holds and
 //! writes no `jpm.lock` beside it. Every format is a set of `name@version` nodes with edges once
-//! npm's and bun's path-keyed maps are walked the way Node resolves and pnpm's peer suffixes are
-//! stripped. Read only when a project has one of these files and no `jpm.lock`.
+//! npm's and bun's path-keyed maps are walked the way Node resolves; pnpm's copies per set of
+//! peers keep their keys, `name@version(peer@version)`, as jpm's do. Read only when a project has
+//! one of these files and no `jpm.lock`.
 
 use crate::graph::alias_edge;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -44,6 +45,8 @@ struct Node {
     /// The registry package, when `name` is an alias for it.
     real: Option<String>,
     version: String,
+    /// pnpm's peer suffix of this copy, `(react@18.2.0)`: its key ends in it.
+    suffix: String,
     resolved: Option<String>,
     integrity: String,
     dependencies: Deps,
@@ -619,6 +622,8 @@ fn read_pnpm(text: &str) -> Result<Source> {
     let mut nodes = Vec::new();
     for (key, snap) in snapshots {
         let id = strip_peers(key);
+        // A copy per set of peers, keyed as pnpm keys it.
+        let suffix = peer_suffix(key);
         let Some(pkg) = package_index.get(id).copied().filter(|p| !p.is_null()) else { continue };
         let resolution = pkg.get("resolution");
         let field = |f: &str| resolution.and_then(|r| r.get(f)).and_then(Value::as_str).filter(|s| !s.is_empty());
@@ -627,6 +632,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
         let mut node = Node {
             name,
             version,
+            suffix,
             resolved: field("tarball").map(str::to_string),
             integrity: integrity.to_string(),
             has_bin: pkg.get("hasBin") == Some(&Value::Bool(true)),
@@ -693,7 +699,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
     }
     // pnpm keys an alias by the real package; jpm gives the alias a node of its own.
     let by_id: HashMap<String, usize> =
-        nodes.iter().enumerate().map(|(i, n)| (format!("{}@{}", n.name, n.version), i)).collect();
+        nodes.iter().enumerate().map(|(i, n)| (format!("{}@{}{}", n.name, n.version, n.suffix), i)).collect();
     for (alias, real, version) in &aliases {
         let Some(&i) = by_id.get(&format!("{real}@{version}")) else { continue };
         let node = Node { name: alias.clone(), real: Some(real.clone()), ..nodes[i].clone() };
@@ -713,15 +719,45 @@ fn read_pnpm(text: &str) -> Result<Source> {
     })
 }
 
-/// The version an edge `dep: ref` points at, `""` when not from a registry; an alias's
-/// `npm:<real>@<version>`, noted for a node of its own.
+/// The version an edge `dep: ref` points at, the peer suffix of the copy included, `""` when not
+/// from a registry; an alias's `npm:<real>@<version>`, noted for a node of its own.
 fn pnpm_edge(aliases: &mut BTreeSet<(String, String, String)>, dep: &str, r: &str) -> Result<String> {
     let Some((real, version)) = pnpm_target(dep, r) else { return Ok(String::new()) };
+    let suffix = peer_suffix(r);
     if real == dep {
-        return Ok(version.to_string());
+        return Ok(format!("{version}{suffix}"));
     }
-    aliases.insert((dep.to_string(), real.to_string(), version.to_string()));
-    Ok(alias_edge(real, version))
+    aliases.insert((dep.to_string(), real.to_string(), format!("{version}{suffix}")));
+    Ok(alias_edge(real, version) + &suffix)
+}
+
+/// The peer groups after a pnpm key or version, each peer's own nested, without the
+/// `(patch_hash=...)` pnpm writes among them: jpm marks a patch on the entry.
+fn peer_suffix(key: &str) -> String {
+    let mut out = String::new();
+    let mut rest = &key[strip_peers(key).len()..];
+    while rest.starts_with('(') {
+        let mut depth = 0usize;
+        let Some(end) = rest.bytes().position(|b| {
+            depth = match b {
+                b'(' => depth + 1,
+                b')' => depth - 1,
+                _ => depth,
+            };
+            depth == 0
+        }) else {
+            break;
+        };
+        let inner = &rest[1..end];
+        if crate::graph::name_end(inner).is_some() && !inner.starts_with("patch_hash=") {
+            out.push('(');
+            out.push_str(strip_peers(inner));
+            out.push_str(&peer_suffix(inner));
+            out.push(')');
+        }
+        rest = &rest[end + 1..];
+    }
+    out
 }
 
 /// `1.2.3`, `1.2.3(peer@1)`, `real@1.2.3(peer@1)` for an alias; nothing for `link:`, `file:`.
@@ -907,8 +943,8 @@ fn build(
     let mut twice = BTreeSet::new();
     for node in source.nodes {
         let key = match &node.real {
-            Some(real) => format!("{}@{}", node.name, alias_edge(real, &node.version)),
-            None => format!("{}@{}", node.name, node.version),
+            Some(real) => format!("{}@{}{}", node.name, alias_edge(real, &node.version), node.suffix),
+            None => format!("{}@{}{}", node.name, node.version, node.suffix),
         };
         let Some(have) = nodes.get_mut(&key) else {
             nodes.insert(key, node);
@@ -1604,6 +1640,73 @@ package tool@1.0.0
         binless.packages.get_mut("tool@1.0.0").unwrap().bin.clear();
         assert_eq!(pnpm.lock, binless);
         assert_eq!(pnpm.binless, ["tool@1.0.0"]);
+    }
+
+    #[test]
+    fn keeps_pnpm_copies_per_set_of_peers() {
+        // pnpm's keys for copies of one version with different peers are jpm's too.
+        let text = "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      a:
+        specifier: ^1
+        version: 1.0.0(host@1.0.0)
+      b:
+        specifier: ^1
+        version: 1.0.0
+      host:
+        specifier: ^1
+        version: 1.0.0
+packages:
+  a@1.0.0:
+    resolution: {integrity: sha512-a}
+  b@1.0.0:
+    resolution: {integrity: sha512-b}
+  host@1.0.0:
+    resolution: {integrity: sha512-h1}
+  host@2.0.0:
+    resolution: {integrity: sha512-h2}
+  ui@1.0.0:
+    resolution: {integrity: sha512-ui}
+    peerDependencies:
+      host: '*'
+snapshots:
+  a@1.0.0(host@1.0.0):
+    dependencies:
+      ui: 1.0.0(host@1.0.0)
+  b@1.0.0:
+    dependencies:
+      host: 2.0.0
+      ui: 1.0.0(host@2.0.0)
+  host@1.0.0: {}
+  host@2.0.0: {}
+  ui@1.0.0(host@1.0.0):
+    dependencies:
+      host: 1.0.0
+  ui@1.0.0(host@2.0.0):
+    dependencies:
+      host: 2.0.0
+";
+        let doc = json!({ "dependencies": { "a": "^1", "b": "^1", "host": "^1" } });
+        let lock = read("pnpm-lock.yaml", text, doc).unwrap().lock;
+        assert_eq!(lock.root.dependencies["a"], "1.0.0(host@1.0.0)");
+        assert_eq!(lock.packages["a@1.0.0(host@1.0.0)"].dependencies["ui"], "1.0.0(host@1.0.0)");
+        assert_eq!(lock.packages["b@1.0.0"].dependencies["ui"], "1.0.0(host@2.0.0)");
+        assert_eq!(lock.packages["ui@1.0.0(host@1.0.0)"].dependencies["host"], "1.0.0");
+        assert_eq!(lock.packages["ui@1.0.0(host@2.0.0)"].dependencies["host"], "2.0.0");
+        // A copy linked to a peer its key does not name is refused.
+        let wrong = text.replacen(
+            "  ui@1.0.0(host@2.0.0):
+    dependencies:
+      host: 2.0.0",
+            "  ui@1.0.0(host@2.0.0):
+    dependencies:
+      host: 1.0.0",
+            1,
+        );
+        let doc = json!({ "dependencies": { "a": "^1", "b": "^1", "host": "^1" } });
+        assert!(read("pnpm-lock.yaml", &wrong, doc).err().unwrap().message.contains("peer suffix"));
     }
 
     #[test]

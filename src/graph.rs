@@ -152,21 +152,26 @@ pub struct Package {
     /// Its key is `name@npm:<alias>@<version>`: grafana has that alias and the real typescript at
     /// one version, two packages that `name@version` would make one.
     pub alias: Option<String>,
+    /// The peers this copy is linked with, as pnpm writes them after the version:
+    /// `(react-dom@18.2.0(react@18.2.0))(react@18.2.0)`. Empty for the one copy of a package
+    /// whose peers are one set wherever it is reached.
+    pub peer_suffix: String,
 }
 
 impl Package {
-    /// What an edge to this package carries as its version.
+    /// What an edge to this package carries as its version, its peer suffix included.
     pub fn edge_version(&self) -> String {
-        match (&self.local, &self.source, &self.alias) {
+        let base = match (&self.local, &self.source, &self.alias) {
             (Some(path), ..) => format!("link:{path}"),
             (None, Some(source), _) => source.clone(),
             (None, None, Some(real)) => alias_edge(real, &self.version),
             _ => self.version.clone(),
-        }
+        };
+        if self.peer_suffix.is_empty() { base } else { base + &self.peer_suffix }
     }
 
     /// The one identity: `name@version`, `name@link:<path>`, `name@<source>` or, for an alias,
-    /// `name@npm:<real>@<version>`.
+    /// `name@npm:<real>@<version>`, then the peer suffix of its copy.
     pub fn key(&self) -> String {
         format!("{}@{}", self.name, self.edge_version())
     }
@@ -217,6 +222,94 @@ pub fn split_alias(edge: &str) -> Option<(&str, &str)> {
 pub fn split_key(key: &str) -> Option<(&str, &str)> {
     let at = name_end(key)?;
     Some((&key[..at], &key[at + 1..]))
+}
+
+/// A key as the package and the peer suffix of its copy: `a@1.0.0(react@18.2.0)` is `a@1.0.0`
+/// and `(react@18.2.0)`; a key without one has an empty suffix. A version never holds a `(`,
+/// but a url or a path may: there the suffix starts at the first `(` from which the rest reads
+/// as groups of keys.
+pub fn split_peers(key: &str) -> (&str, &str) {
+    if !key.ends_with(')') {
+        return (key, "");
+    }
+    let Some(at) = name_end(key) else { return (key, "") };
+    let tail = &key[at + 1..];
+    // An alias's real name may hold a `(`: its version starts past it.
+    let from = match tail.strip_prefix("npm:").and_then(name_end) {
+        Some(real) => at + 1 + 4 + real + 1,
+        None => at + 1,
+    };
+    for (i, _) in key[from..].match_indices('(') {
+        if peer_groups(&key[from + i..]).is_some() {
+            return (&key[..from + i], &key[from + i..]);
+        }
+    }
+    (key, "")
+}
+
+/// The keys in a peer suffix, `(a@1)(b@2(c@3))` as `a@1` and `b@2(c@3)`; `None` unless it is
+/// nothing but balanced groups, each holding a `name@...`.
+pub fn peer_groups(suffix: &str) -> Option<Vec<&str>> {
+    let mut out = Vec::new();
+    let mut rest = suffix;
+    while !rest.is_empty() {
+        if !rest.starts_with('(') {
+            return None;
+        }
+        let mut depth = 0usize;
+        let mut end = None;
+        for (i, b) in rest.bytes().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner = &rest[1..end?];
+        name_end(inner).filter(|&at| at + 1 < inner.len())?;
+        out.push(inner);
+        rest = &rest[end? + 1..];
+    }
+    Some(out)
+}
+
+/// An edge's version without the peer suffix of the copy it reaches.
+pub fn edge_base<'a>(name: &str, version: &'a str) -> &'a str {
+    if !version.ends_with(')') {
+        return version;
+    }
+    let key = format!("{name}@{version}");
+    let base = split_peers(&key).0.len();
+    &version[..base - name.len() - 1]
+}
+
+/// The resolution with one package per key, peer suffixes gone: what a resolve starts from, as
+/// it settles peers afresh. Of a package's copies the first stands for all of them.
+pub fn merge_copies(res: &Resolution) -> std::borrow::Cow<'_, Resolution> {
+    if res.packages.values().all(|p| p.peer_suffix.is_empty()) {
+        return std::borrow::Cow::Borrowed(res);
+    }
+    let strip = |deps: &Deps| -> Deps { deps.iter().map(|(n, v)| (n.clone(), edge_base(n, v).to_string())).collect() };
+    let mut out = Resolution { root: res.root.clone(), packages: BTreeMap::new(), warnings: res.warnings.clone() };
+    out.root.dependencies = strip(&res.root.dependencies);
+    for (key, p) in &res.packages {
+        let base = split_peers(key).0;
+        if out.packages.contains_key(base) {
+            continue;
+        }
+        let mut p = p.clone();
+        p.peer_suffix.clear();
+        p.dependencies = strip(&p.dependencies);
+        p.optional_dependencies = strip(&p.optional_dependencies);
+        out.packages.insert(base.to_string(), p);
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Where the `@` that ends a package name is in `name@...`: past a scope's own leading `@`.
