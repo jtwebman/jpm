@@ -64,6 +64,17 @@ pub fn skipped(res: &Resolution, chosen: &HashSet<String>, installed: &dyn Fn(&s
     out
 }
 
+/// Whether a package as unpacked in the store has what `run_packages` runs: an install script,
+/// a binding.gyp, or a git package's `prepare`. The registry's `hasInstallScript` can say so of
+/// a tarball with none (fsevents 2, on every Mac).
+pub fn ships_install_scripts(p: &crate::graph::Package, dir: &Path, index: &crate::store::Index) -> bool {
+    let scripts = read_scripts(&dir.join(index.stored("package.json")));
+    let git = p.source.as_deref().is_some_and(spec::is_git);
+    INSTALL.iter().any(|e| scripts.contains_key(*e))
+        || (git && scripts.contains_key("prepare"))
+        || index.files.iter().any(|f| f.path == "binding.gyp")
+}
+
 /// Run the chosen packages' install scripts, each package's dependencies first, in its entry
 /// under `node_modules/.jpm` (`keys` names them). A package whose scripts ran is marked, so a
 /// later install does not run them again. The number that ran.
