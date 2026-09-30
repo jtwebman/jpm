@@ -114,6 +114,11 @@ impl Manifest {
             }
             Ok(())
         })?;
+        // An optional peer named in peerDependenciesMeta alone takes any version, as pnpm and yarn
+        // read it (mobx-react-lite's react-dom).
+        for name in &m.peer_optional {
+            m.peer_dependencies.entry(name.clone()).or_insert_with(|| "*".into());
+        }
         Ok(m)
     }
 }

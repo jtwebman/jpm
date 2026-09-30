@@ -441,15 +441,20 @@ struct Declared {
 
 impl Declared {
     fn of(entry: &Value) -> Self {
-        let optional_peers = entry
+        let optional_peers: BTreeSet<String> = entry
             .get("peerDependenciesMeta")
             .and_then(Value::as_object)
             .map(|m| m.iter().filter(|(_, v)| truthy(v.get("optional"))).map(|(k, _)| k.clone()).collect())
             .unwrap_or_default();
+        let mut peers = deps(entry.get("peerDependencies"));
+        // One in peerDependenciesMeta alone is any version, as `Manifest::parse` reads it.
+        for name in &optional_peers {
+            peers.entry(name.clone()).or_insert_with(|| "*".into());
+        }
         Self {
             dependencies: deps(entry.get("dependencies")),
             optional: deps(entry.get("optionalDependencies")),
-            peers: deps(entry.get("peerDependencies")),
+            peers,
             optional_peers,
         }
     }
