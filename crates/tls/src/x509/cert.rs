@@ -139,8 +139,9 @@ fn boolean(r: &mut Reader) -> Result<bool, Code> {
     }
 }
 
-/// notBefore <= now <= notAfter, both ends inclusive (RFC 5280 section 4.1.2.5).
-pub(super) fn check_validity(validity: &[u8], now: u64) -> Result<(), Code> {
+/// notBefore <= now <= notAfter, both ends inclusive (RFC 5280 section 4.1.2.5). The two ends
+/// when it holds.
+pub(super) fn check_validity(validity: &[u8], now: u64) -> Result<(u64, u64), Code> {
     let mut r = Reader::new(validity);
     let not_before = time(&mut r)?;
     let not_after = time(&mut r)?;
@@ -154,7 +155,7 @@ pub(super) fn check_validity(validity: &[u8], now: u64) -> Result<(), Code> {
     } else if now > not_after {
         Err(Expired)
     } else {
-        Ok(())
+        Ok((not_before, not_after))
     }
 }
 

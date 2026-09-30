@@ -275,6 +275,40 @@ fn ip_address_host() {
 /// The certificate checks, end to end: each refusal names its reason, and the server hears
 /// bad_certificate.
 #[test]
+fn remembers_a_checked_chain_for_its_host_only() {
+    let good = pki(KeyType::P256);
+    let config = jpm_tls::Config {
+        roots: vec![good.anchor()],
+        alpn: Vec::new(),
+        insecure_skip_verify: false,
+        verified: Default::default(),
+    };
+    let once = |host: &str, server_pki: &common::Pki| {
+        let (tcp, server) = rustls_server(rustls_server_config(server_pki, &ServerOpts::default()), |s| {
+            while s.conn.is_handshaking() {
+                s.conn.complete_io(&mut s.sock)?;
+            }
+            Ok::<_, std::io::Error>(())
+        });
+        let r = connect(tcp, host, &config).map(|_| ());
+        let _ = server.join().unwrap();
+        r
+    };
+    once("localhost", good).unwrap();
+    assert_eq!(config.verified.len(), 1);
+    // The second connection takes the chain as checked, and remembers nothing new.
+    once("localhost", good).unwrap();
+    assert_eq!(config.verified.len(), 1);
+    // The same chain for a name it does not have is still refused.
+    let e = once("example.com", good).unwrap_err().to_string();
+    assert_eq!(e, "tls: bad certificate: certificate is not valid for this host");
+    // And a chain from another root, still unknown.
+    let e = once("localhost", pki(KeyType::P384)).unwrap_err().to_string();
+    assert_eq!(e, "tls: bad certificate: bad signature");
+    assert_eq!(config.verified.len(), 1);
+}
+
+#[test]
 fn certificate_checks() {
     let check = |server_pki: &common::Pki, host: &str, roots: Vec<jpm_tls::Anchor<'static>>| {
         let config = rustls_server_config(server_pki, &ServerOpts::default());
@@ -284,8 +318,12 @@ fn certificate_checks() {
             }
             Ok::<_, std::io::Error>(())
         });
-        let r =
-            connect(tcp, host, &jpm_tls::Config { roots, alpn: Vec::new(), insecure_skip_verify: false }).map(|_| ());
+        let r = connect(
+            tcp,
+            host,
+            &jpm_tls::Config { roots, alpn: Vec::new(), insecure_skip_verify: false, verified: Default::default() },
+        )
+        .map(|_| ());
         (r, server.join().unwrap())
     };
     let good = pki(KeyType::P256);

@@ -21,6 +21,90 @@ pub struct Config {
     /// protected end to end, but nothing says whose key that is: anyone on the path can pose as
     /// the server. Off unless asked for.
     pub insecure_skip_verify: bool,
+    /// Chains already checked for a host with these roots; start it with `Verified::default()`.
+    pub verified: Verified,
+}
+
+/// The certificate chains a `Config` has checked, each with the host it was checked for and
+/// until when that check holds. Every connection to a registry is sent the same chain: the path
+/// search and its signature checks run once per run instead of once per connection. The server
+/// still proves on every connection that it holds the certificate's key.
+#[derive(Default)]
+pub struct Verified {
+    seen: std::sync::Mutex<Vec<Seen>>,
+    /// Held while a chain is checked: an install's first connections all start at once, and
+    /// each would otherwise check the same chain before any had finished.
+    checking: std::sync::Mutex<()>,
+}
+
+/// A chain checked: the SHA-256 of the host and the certificates, and the times the path holds.
+struct Seen {
+    key: [u8; 32],
+    from: u64,
+    until: u64,
+}
+
+/// Chains remembered, at most: a registry and a few hosts it redirects to.
+const VERIFIED_MAX: usize = 16;
+
+impl Verified {
+    fn key(host: &str, chain: &[&[u8]]) -> [u8; 32] {
+        let mut h = jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha256);
+        // Each part with its length first, so no two lists hash alike.
+        for part in std::iter::once(host.as_bytes()).chain(chain.iter().copied()) {
+            h.update(&(part.len() as u64).to_be_bytes());
+            h.update(part);
+        }
+        let mut key = [0; 32];
+        key.copy_from_slice(&h.finish());
+        key
+    }
+
+    /// Whether this chain was checked for this host, and that check holds at `now`.
+    fn holds(&self, key: &[u8; 32], now: u64) -> bool {
+        let seen = self.seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.iter().any(|s| s.key == *key && s.from <= now && now <= s.until)
+    }
+
+    /// The leaf's key by `check` (the full check), or by `hit` where this chain passed it for
+    /// this host before; the first connections wait for one full check instead of each making
+    /// their own.
+    fn check<T, E>(
+        &self,
+        key: [u8; 32],
+        now: u64,
+        hit: impl FnOnce() -> std::result::Result<T, E>,
+        check: impl FnOnce() -> std::result::Result<(T, (u64, u64)), E>,
+    ) -> std::result::Result<T, E> {
+        if self.holds(&key, now) {
+            return hit();
+        }
+        let _one = self.checking.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.holds(&key, now) {
+            return hit();
+        }
+        let (got, within) = check()?;
+        self.add(key, within);
+        Ok(got)
+    }
+
+    fn add(&self, key: [u8; 32], (from, until): (u64, u64)) {
+        let mut seen = self.seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|s| s.key != key);
+        if seen.len() == VERIFIED_MAX {
+            seen.remove(0);
+        }
+        seen.push(Seen { key, from, until });
+    }
+
+    /// How many chains are remembered.
+    pub fn len(&self) -> usize {
+        self.seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// A TLS connection over `S`, usually a `TcpStream`.
@@ -328,5 +412,32 @@ mod tests {
         s.conn.io.fail_writes = false;
         assert!(s.write(b"GET").is_err());
         assert!(s.conn.io.output.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod verified_tests {
+    use super::Verified;
+
+    #[test]
+    fn holds_only_its_own_chain_and_host_in_its_dates() {
+        let v = Verified::default();
+        let (a, b) = (&b"leaf"[..], &b"intermediate"[..]);
+        let key = Verified::key("registry.npmjs.org", &[a, b]);
+        v.add(key, (10, 20));
+        assert!(v.holds(&key, 10) && v.holds(&key, 20));
+        assert!(!v.holds(&key, 9) && !v.holds(&key, 21));
+        // Another host, another chain, or the same bytes split otherwise: not the same key.
+        assert_ne!(key, Verified::key("evil.test", &[a, b]));
+        assert_ne!(key, Verified::key("registry.npmjs.org", &[a]));
+        assert_ne!(key, Verified::key("registry.npmjs.org", &[b"leafinter", b"mediate"]));
+        assert_ne!(Verified::key("ab", &[b"c"]), Verified::key("a", &[b"bc"]));
+        // Bounded: the oldest goes first.
+        for i in 0..super::VERIFIED_MAX as u64 {
+            v.add(Verified::key(&i.to_string(), &[a]), (0, u64::MAX));
+        }
+        assert_eq!(v.len(), super::VERIFIED_MAX);
+        assert!(!v.holds(&key, 15));
+        assert!(v.holds(&Verified::key("15", &[a]), 15));
     }
 }

@@ -125,6 +125,17 @@ const MAX_CHAIN: usize = 64;
 /// any order) for `host` (a DNS name or an IP address literal) at `now` (seconds since the Unix
 /// epoch). The server certificate's public key on success.
 pub fn verify_server<'a>(chain: &[&'a [u8]], host: &str, now: u64, anchors: &[Anchor]) -> Result<PublicKey<'a>, Error> {
+    verify_server_within(chain, host, now, anchors).map(|(key, _)| key)
+}
+
+/// `verify_server`, and the times (seconds since the Unix epoch) between which the path it found
+/// holds: the latest notBefore and the earliest notAfter on it. Anchors carry no validity.
+pub fn verify_server_within<'a>(
+    chain: &[&'a [u8]],
+    host: &str,
+    now: u64,
+    anchors: &[Anchor],
+) -> Result<(PublicKey<'a>, (u64, u64)), Error> {
     let (&leaf_der, rest) = chain.split_first().ok_or(Error::from(Code::Encoding))?;
     if chain.len() > MAX_CHAIN {
         return Err(Code::TooComplex.into());
@@ -136,13 +147,19 @@ pub fn verify_server<'a>(chain: &[&'a [u8]], host: &str, now: u64, anchors: &[An
         anchors,
         now,
         path: [0; MAX_INTERMEDIATES],
+        top: 0,
         signatures: 100,
         steps: 200_000,
         comparisons: 250_000,
     };
     search.build(0)?;
     name::check_host(leaf.san, &Host::new(host))?;
-    Ok(cert::leaf_key(leaf.spki)?)
+    let mut within = (0, u64::MAX);
+    for i in 0..=search.top {
+        let (from, until) = cert::check_validity(search.at(i).validity, now)?;
+        within = (within.0.max(from), within.1.min(until));
+    }
+    Ok((cert::leaf_key(leaf.spki)?, within))
 }
 
 /// The server certificate's key, with nothing checked but that the certificate reads: for
@@ -168,6 +185,8 @@ struct Search<'s, 'a> {
     now: u64,
     /// Indexes into `certs` of the intermediates on the path, leaf side first.
     path: [usize; MAX_INTERMEDIATES],
+    /// The certificate on the path found that an anchor signed: 0 the leaf.
+    top: usize,
     signatures: usize,
     steps: usize,
     comparisons: usize,
@@ -201,7 +220,10 @@ impl<'a> Search<'_, 'a> {
                 continue;
             }
             match self.check_path(depth, anchor) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.top = depth;
+                    return Ok(());
+                }
                 Err(e) => note(&mut err, e)?,
             }
         }

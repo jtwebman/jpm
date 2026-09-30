@@ -14,7 +14,7 @@ use rcgen::{GeneralSubtree, NameConstraints};
 use x509_util::{Chain, Kind, NOW, anchor, ca_params, pem_certs, trust};
 
 fn config(roots: Vec<Anchor<'static>>, insecure: bool) -> Config {
-    Config { roots, alpn: Vec::new(), insecure_skip_verify: insecure }
+    Config { roots, alpn: Vec::new(), insecure_skip_verify: insecure, verified: Default::default() }
 }
 
 fn mozilla() -> Vec<Anchor<'static>> {

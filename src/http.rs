@@ -331,6 +331,7 @@ impl Client {
             roots: roots(),
             alpn: vec![b"http/1.1".to_vec()],
             insecure_skip_verify,
+            verified: Default::default(),
         }) as Box<dyn FnOnce() -> _ + Send>);
         Self { tls, proxies: Proxies::new(config, env), pool: Mutex::default(), dns: Mutex::default() }
     }

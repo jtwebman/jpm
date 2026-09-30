@@ -50,6 +50,7 @@ impl Pki {
             roots: vec![self.anchor()],
             alpn: alpn.iter().map(|p| p.to_vec()).collect(),
             insecure_skip_verify: false,
+            verified: Default::default(),
         }
     }
 
