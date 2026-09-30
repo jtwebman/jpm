@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::bin::Bins;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::semver;
 use crate::sys::Platform;
 
@@ -408,39 +408,39 @@ fn reach<'a>(
 
 /// Narrow a resolution to the packages that run here. The lockfile holds every platform's
 /// builds; this needs no network, since `os`, `cpu` and `libc` were written down. A package
-/// with a required edge to something that cannot run here goes too. A package that cannot run
-/// here is an error only when a top's own dependency needs it through required edges: a workspace
-/// may list every platform's build as a devDependency, as bun allows, and only this platform's
-/// is linked.
+/// with a required edge to something that cannot run here goes too, unless a top's own
+/// dependency needs it through required edges: then only the package that cannot run here is
+/// left out, with a warning naming who needs it. A workspace may list every platform's build as
+/// a devDependency, as bun allows, and only this platform's is linked.
 pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resolution> {
     let mut warnings: BTreeSet<String> = std::mem::take(&mut res.warnings).into_iter().collect();
     let mut gone: HashMap<String, String> = HashMap::new();
     let needed = needed(&res);
-    let mut drop = |key: &str, why: String, chained: bool, gone: &mut HashMap<String, String>| -> Result<()> {
+    let mut drop = |key: &str, why: String, chained: bool, gone: &mut HashMap<String, String>| {
         let p = &res.packages[key];
         if let Some(who) = needed.get(key) {
-            return Err(Error::new("EBADPLATFORM", format!("{key} {why} (required by {who})")));
-        }
-        if !p.optional {
+            // Needed, but built for another platform: left out with a warning, as pnpm does, and
+            // what needs it stays. A team on several platforms shares one lockfile.
+            warnings.insert(format!("skipped {key}: {why}, though {who} needs it"));
+        } else if !p.optional {
             warnings.insert(format!("skipped dev-only {key}: {why}"));
         } else if chained {
             warnings.insert(format!("skipped optional {key}: {why}"));
         }
         gone.insert(key.to_string(), why);
-        Ok(())
     };
     for (key, p) in &res.packages {
         if !runs_on(p.os.as_ref(), p.cpu.as_ref(), p.libc.as_ref(), platform) {
-            drop(key, format!("does not run on {platform}"), false, &mut gone)?;
+            drop(key, format!("does not run on {platform}"), false, &mut gone);
         }
     }
     // A required edge to a dropped package takes its owner with it, until nothing changes. A
-    // workspace stays: what it can lose is dev-only.
+    // workspace stays, and so does a package a top needs: it only loses the edge.
     let mut changed = !gone.is_empty();
     while changed {
         changed = false;
         for (key, p) in &res.packages {
-            if gone.contains_key(key) || p.local.is_some() {
+            if gone.contains_key(key) || p.local.is_some() || needed.contains_key(key) {
                 continue;
             }
             let lost = p.dependencies.iter().find_map(|(n, v)| {
@@ -448,7 +448,7 @@ pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resol
                 gone.get(&dep).map(|why| format!("needs {dep}, which {why}"))
             });
             if let Some(why) = lost {
-                drop(key, why, true, &mut gone)?;
+                drop(key, why, true, &mut gone);
                 changed = true;
             }
         }
@@ -575,10 +575,13 @@ mod tests {
         res.root.specs = Some(Specs { dev_dependencies: Some(deps.clone()), ..Specs::default() });
         let out = filter_platform(res.clone(), &platform()).unwrap();
         assert!(!out.packages.contains_key("bind@1.0.0") && out.warnings.iter().any(|w| w.contains("dev-only")));
-        // Brought by its dependencies, it is needed.
+        // Brought by its dependencies, it is needed: left out with a warning, and a stays.
         res.root.specs = Some(Specs { dependencies: Some(deps), ..Specs::default() });
-        let e = filter_platform(res, &platform()).unwrap_err();
-        assert_eq!((e.code, e.message.contains("(required by a@1.0.0)")), ("EBADPLATFORM", true), "{}", e.message);
+        let out = filter_platform(res, &platform()).unwrap();
+        assert_eq!(out.packages.keys().collect::<Vec<_>>(), ["a@1.0.0"]);
+        assert!(!out.packages["a@1.0.0"].dependencies.contains_key("bind"));
+        let said = "skipped bind@1.0.0: does not run on linux-x64-glibc, though a@1.0.0 needs it";
+        assert!(out.warnings.iter().any(|w| w == said), "{:?}", out.warnings);
     }
 
     /// bun's test/cli/install/architecture-match.test.ts, on linux x64. Two of its lists bun
