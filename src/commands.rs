@@ -440,6 +440,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let progress = ui::progress();
     let store = Arc::new(ctx.store(ctx.opts.verify));
     let _hold = store.hold(false);
+    // Each download waits for its first entry in the global store to take its files whole.
+    store.stage_for_links(ctx.wants_global());
     let platform = Platform::current();
     let prefetching = !ctx.opts.production && !ctx.dedupe;
     // Downloads start as the walk picks each package and go on past the plan: linking starts

@@ -432,6 +432,8 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
         return Err(e);
     }
+    // Downloads no entry took whole, into the store as they are.
+    opts.store.flush()?;
     linker.hoist(&entries_dir.join(HOIST))?;
     let hook = entries_dir.join(HOOK);
     if linker.wanted.values().any(|e| e.shared) {
@@ -481,19 +483,34 @@ impl Linker<'_> {
         let fin = global.join(&entry.key);
         if !fin.is_dir() {
             let temp = global.join(format!(".tmp-{}", temp_suffix()));
-            let built = self.build(entry, &temp).and_then(|()| {
-                seal(&temp);
-                fs::rename(&temp, &fin)
-                    .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
-            });
+            let (moved, built) = match self.move_in(entry, &temp) {
+                Ok(moved) => {
+                    let built = self.build(entry, &temp, moved.is_some()).and_then(|()| {
+                        seal(&temp);
+                        fs::rename(&temp, &fin)
+                            .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
+                    });
+                    (moved, built)
+                }
+                Err(e) => (None, Err(e)),
+            };
             match built {
-                Ok(()) => Counts::add(&self.counts.entries, 1),
+                Ok(()) => {
+                    if moved.is_some() {
+                        let at = format!("{}/node_modules/{}", entry.key, entry.pkg.dir_name());
+                        self.opts.store.homed(&entry.pkg.integrity, &at)?;
+                    }
+                    Counts::add(&self.counts.entries, 1);
+                }
                 // Another install built it first; its entry is as good as ours.
                 Err(_) if fin.is_dir() => {
+                    let kept = self.give_back(entry, moved);
                     remove_tree(&temp);
+                    kept?;
                     Counts::add(&self.counts.reused, 1);
                 }
                 Err(e) => {
+                    let _ = self.give_back(entry, moved);
                     remove_tree(&temp);
                     return Err(e);
                 }
@@ -506,10 +523,41 @@ impl Linker<'_> {
         Ok(())
     }
 
+    /// A global entry's package directory in `temp`, taken whole from the store's staged
+    /// download when there is one: moved there with one rename, not a link and a directory per
+    /// file. The store then keeps the entry's copy as its own (see `Store::claim`), so only an
+    /// entry whose files are the tarball's may take it: not one built, patched or cut down to a
+    /// runtime's binary. While it holds the claim, this thread reads nothing else of the store.
+    fn move_in(&self, entry: &Entry, temp: &Path) -> Result<Option<PathBuf>> {
+        let pkg = entry.pkg;
+        if entry.build || pkg.patch.is_some() || pkg.runtime.is_some() {
+            return Ok(None);
+        }
+        self.ready(pkg)?;
+        let Some(staged) = self.opts.store.claim(&pkg.integrity) else { return Ok(None) };
+        let pkg_dir = temp.join("node_modules").join(pkg.dir_name());
+        let moved = pkg_dir.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::rename(&staged, &pkg_dir));
+        match moved {
+            Ok(()) => Ok(Some(pkg_dir)),
+            Err(_) => self.opts.store.unclaim(&pkg.integrity, &staged).map(|()| None),
+        }
+    }
+
+    /// Files `move_in` took for an entry that was not placed, back to the store.
+    fn give_back(&self, entry: &Entry, moved: Option<PathBuf>) -> Result<()> {
+        let Some(dir) = moved else { return Ok(()) };
+        // `seal` may have run: moving a directory out takes write access to it and its parent.
+        unseal(&dir);
+        if let Some(parent) = dir.parent() {
+            unseal(parent);
+        }
+        self.opts.store.unclaim(&entry.pkg.integrity, &dir)
+    }
+
     /// Rebuild an entry and take its name in one rename, so no reader sees a partial entry.
     fn swap_in(&self, entry: &Entry, fin: &Path, root: &Path) -> Result<()> {
         let temp = root.join(format!(".tmp-{}", temp_suffix()));
-        if let Err(e) = self.build(entry, &temp) {
+        if let Err(e) = self.build(entry, &temp, false) {
             remove_tree(&temp);
             return Err(e);
         }
@@ -641,7 +689,7 @@ impl Linker<'_> {
             return self.swap_in(entry, &fin, &self.entries_dir);
         }
         let temp = self.temp_name();
-        let built = self.build(entry, &temp).and_then(|()| {
+        let built = self.build(entry, &temp, false).and_then(|()| {
             fs::rename(&temp, &fin)
                 .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
         });
@@ -695,25 +743,30 @@ impl Linker<'_> {
         Ok(true)
     }
 
-    fn build(&self, entry: &Entry, temp: &Path) -> Result<()> {
+    /// `moved`: the package's files are in place already (see `move_in`).
+    fn build(&self, entry: &Entry, temp: &Path, moved: bool) -> Result<()> {
         let pkg = entry.pkg;
-        // Before the directory clone (macOS) as well as the file links.
-        self.ready(pkg)?;
         let nm = temp.join("node_modules");
         let pkg_dir = nm.join(pkg.dir_name());
-        let parent = pkg_dir.parent().unwrap_or(&nm);
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
-        let src = self.opts.store.pkg_dir(&pkg.integrity)?;
-        // A runtime's entry is less than its store directory (see `index`): never a clone.
-        let cloned = !entry.build
-            && entry.pkg.runtime.is_none()
-            && sys::clone_dir(&src, &pkg_dir)
-                .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
-        if cloned {
-            Counts::add(&self.counts.cloned, 1);
+        if moved {
+            Counts::add(&self.counts.linked, self.index(entry)?.files.len());
         } else {
-            self.place_files(&*self.index(entry)?, &src, &pkg_dir, entry.build)?;
+            // Before the directory clone (macOS) as well as the file links.
+            self.ready(pkg)?;
+            let parent = pkg_dir.parent().unwrap_or(&nm);
+            fs::create_dir_all(parent)
+                .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
+            let src = self.opts.store.pkg_dir(&pkg.integrity)?;
+            // A runtime's entry is less than its store directory (see `index`): never a clone.
+            let cloned = !entry.build
+                && entry.pkg.runtime.is_none()
+                && sys::clone_dir(&src, &pkg_dir)
+                    .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
+            if cloned {
+                Counts::add(&self.counts.cloned, 1);
+            } else {
+                self.place_files(&*self.index(entry)?, &src, &pkg_dir, entry.build)?;
+            }
         }
         if let Some(hash) = &pkg.patch {
             let patch = self.opts.patches.iter().find(|p| p.hash == *hash).ok_or_else(|| {
@@ -1064,6 +1117,17 @@ fn seal(dir: &Path) {
             }
         }
         let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o555));
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// One directory `seal` made read-only, writable by its owner again.
+fn unseal(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o755));
     }
     #[cfg(not(unix))]
     let _ = dir;

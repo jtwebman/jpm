@@ -7,8 +7,11 @@
 //!   On Windows each is stored as `<path>.jpm` (the index says so): Windows Defender scans a file
 //!   it sees written as `.js` as script, a third more work than one with a name it does not
 //!   know, and every cold install writes thousands. Links into projects keep the real names.
+//!   On Linux, an entry an install unpacked for the global virtual store is instead a symlink to
+//!   the package directory of the first `links/` entry built from it: its files were moved there
+//!   whole rather than hardlinked one by one (see `claim`).
 //! - `v1/pkg/<shard>/<name>.idx`: the index; its presence is what makes the entry real.
-//! - `v1/tmp/`: entries being unpacked, renamed into `pkg/` once whole.
+//! - `v1/tmp/`: entries being unpacked, renamed into `pkg/` (or a `links/` entry) once whole.
 //! - `v1/links/`: the global virtual store's entries (see `link`).
 //! - `v1/projects/`: one file per project installed from this store, holding its path.
 //! - `v1/lock`: held shared by installs and exclusively by a prune.
@@ -19,7 +22,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, mpsc};
 
 use flate2::read::GzDecoder;
 
@@ -48,6 +52,20 @@ pub const STORED_SUFFIX: &str = ".jpm";
 
 /// Whether this platform's store suffixes the files it unpacks: Windows, for Defender.
 pub const SUFFIX_FILES: bool = cfg!(windows);
+
+/// Whether an install for the global virtual store moves a download's files into the first entry
+/// built from it (see `claim`): Linux, where one hardlink and a directory per file were a tenth of
+/// an install's CPU. Windows writes the store's files under other names, for Defender, and a Mac
+/// clones a whole entry in one call.
+const MOVES_INTO_LINKS: bool = cfg!(target_os = "linux");
+
+/// A verified download not yet published (see `claim`).
+enum Staged {
+    /// Unpacked whole in this directory.
+    Ready(PathBuf),
+    /// Being moved into an entry, or published.
+    Claimed,
+}
 
 impl Index {
     /// A file's name in the store: its path, with the suffix when this entry has one.
@@ -167,6 +185,11 @@ pub struct Store {
     loaded: Mutex<HashMap<String, Arc<Index>>>,
     /// Entries this process fetched, to tell a download from a cache hit.
     fetched: Mutex<HashSet<String>>,
+    /// Downloads are staged for the linker to move into entries (see `stage_for_links`).
+    staging: AtomicBool,
+    staged: Mutex<HashMap<String, Staged>>,
+    /// Signalled whenever a staged download leaves `Claimed`.
+    settled: Condvar,
 }
 
 /// `dir`, else `JPM_STORE`, else `~/.jpm/store`.
@@ -218,20 +241,37 @@ impl Store {
             pending: Mutex::default(),
             loaded: Mutex::default(),
             fetched: Mutex::default(),
+            staging: AtomicBool::new(false),
+            staged: Mutex::default(),
+            settled: Condvar::new(),
         }
+    }
+
+    /// For an install that builds its entries in the global virtual store: each download that is
+    /// verified waits, unpublished, for the linker to `claim` it, and whatever it leaves is
+    /// published by `flush` (or when the store is dropped). Never under `verify`, which rebuilds
+    /// entries from the store's own files.
+    pub fn stage_for_links(&self, on: bool) {
+        self.staging.store(on && MOVES_INTO_LINKS && !self.verify, Ordering::Relaxed);
     }
 
     pub fn metadata_dir(&self) -> PathBuf {
         self.dir.join("metadata")
     }
 
+    /// Where the entry's files are, for reading: a download still staged is published first.
     pub fn pkg_dir(&self, integrity: &str) -> Result<PathBuf> {
+        self.settle(integrity)?;
+        self.path_of(integrity)
+    }
+
+    fn path_of(&self, integrity: &str) -> Result<PathBuf> {
         let (shard, name) = shard_of(integrity)?;
         Ok(self.root.join("pkg").join(shard).join(name))
     }
 
     fn index_path(&self, integrity: &str) -> Result<PathBuf> {
-        let mut p = self.pkg_dir(integrity)?;
+        let mut p = self.path_of(integrity)?;
         p.as_mut_os_string().push(".idx");
         Ok(p)
     }
@@ -249,13 +289,17 @@ impl Store {
         }
         let text = fs::read_to_string(self.index_path(integrity).ok()?).ok()?;
         let index = Arc::new(Index::parse(&text)?);
+        // An entry that lives in a `links/` entry is gone with it: `v1/links` removed by hand.
+        if !self.path_of(integrity).ok()?.is_dir() {
+            return None;
+        }
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string(), index.clone());
         Some(index)
     }
 
     /// Every file still there at the size the index says: what `--verify` pays for.
     fn intact(&self, integrity: &str, index: &Index) -> bool {
-        let Ok(dir) = self.pkg_dir(integrity) else { return false };
+        let Ok(dir) = self.path_of(integrity) else { return false };
         index.files.iter().all(|f| fs::metadata(dir.join(index.stored(&f.path))).is_ok_and(|m| m.len() == f.size))
     }
 
@@ -295,6 +339,17 @@ impl Store {
         // The bytes are checked before anything they said is trusted, or kept.
         let checked = expected.check(&digest).map_err(|e| e.context(tarball)).and(unpacked);
         let index = match checked {
+            // Verified, and nowhere another process could read it yet: the linker's to move.
+            Ok(index) if hit.is_none() && self.staging.load(Ordering::Relaxed) => {
+                let index = Arc::new(index);
+                self.staged
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(integrity.into(), Staged::Ready(temp));
+                self.loaded.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.into(), index.clone());
+                self.fetched.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string());
+                return Ok(index);
+            }
             Ok(index) => self.publish(integrity, index, &temp, hit.is_some()),
             Err(e) => Err(e),
         };
@@ -399,23 +454,135 @@ impl Store {
     /// Publish an unpacked, verified entry: rename it into place, then write its index. Nothing is
     /// addressable before the integrity has passed.
     fn publish(&self, integrity: &str, index: Index, temp: &Path, repair: bool) -> Result<Arc<Index>> {
-        let dest = self.pkg_dir(integrity)?;
+        let index = Arc::new(index);
+        self.place(integrity, &index, temp, repair)?;
+        self.loaded.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string(), index.clone());
+        Ok(index)
+    }
+
+    /// `from` renamed into `pkg/`, then its index written.
+    fn place(&self, integrity: &str, index: &Index, from: &Path, repair: bool) -> Result<()> {
+        let dest = self.path_of(integrity)?;
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
         }
-        if repair && dest.exists() {
+        // A link into an entry that is gone is replaced as a broken entry is. Removing a link to
+        // an entry removes the link alone: other projects still link to the entry.
+        let dangling = !dest.is_dir() && fs::symlink_metadata(&dest).is_ok_and(|m| m.file_type().is_symlink());
+        if (repair && dest.exists()) || dangling {
             remove_tree(&dest);
         }
         // Another process may have published the same bytes first; its copy is as good.
-        if let Err(e) = fs::rename(temp, &dest)
+        if let Err(e) = fs::rename(from, &dest)
             && !dest.is_dir()
         {
             return Err(Error::io(&e, format!("cannot store {}", dest.display())));
         }
-        write_atomic(&self.index_path(integrity)?, index.render().as_bytes())?;
-        let index = Arc::new(index);
-        self.loaded.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string(), index.clone());
-        Ok(index)
+        write_atomic(&self.index_path(integrity)?, index.render().as_bytes())
+    }
+
+    /// The staged download of `integrity`, to move into a `links/` entry whole: the caller then
+    /// calls `homed` once the entry is in place, or `unclaim` with wherever the files are.
+    /// Readers of the entry (`pkg_dir`) wait until one of those has run. `None` when nothing is
+    /// staged for it, or another entry took it first.
+    pub fn claim(&self, integrity: &str) -> Option<PathBuf> {
+        let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
+        match staged.get_mut(integrity) {
+            Some(s @ Staged::Ready(_)) => match std::mem::replace(s, Staged::Claimed) {
+                Staged::Ready(dir) => Some(dir),
+                Staged::Claimed => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A claimed download's files are in place in the entry `links/<at>`: the store's entry
+    /// becomes a link there, and its index is written. Only after the entry's own rename, so no
+    /// other process ever sees an index for files that are not whole in their final place.
+    pub fn homed(&self, integrity: &str, at: &str) -> Result<()> {
+        let linked = self.link_home(integrity, at);
+        self.unstage(integrity, linked.is_ok());
+        linked
+    }
+
+    #[cfg(unix)]
+    fn link_home(&self, integrity: &str, at: &str) -> Result<()> {
+        let dest = self.path_of(integrity)?;
+        let parent = dest.parent().unwrap_or(&self.root);
+        fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+        // From `v1/pkg/<shard>/`, made under a temp name and renamed over whatever link is there.
+        let target = Path::new("..").join("..").join("links").join(at);
+        let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("entry");
+        let temp = parent.join(format!(".{name}.{}.tmp", temp_suffix()));
+        let placed = std::os::unix::fs::symlink(&target, &temp).and_then(|()| fs::rename(&temp, &dest));
+        if let Err(e) = placed {
+            let _ = fs::remove_file(&temp);
+            // A directory there is another process's publish of the same bytes: as good.
+            if !dest.is_dir() {
+                return Err(Error::io(&e, format!("cannot store {}", dest.display())));
+            }
+        }
+        let index = self.loaded.lock().unwrap_or_else(PoisonError::into_inner).get(integrity).cloned();
+        let index = index.ok_or_else(|| Error::new("ENOENT", format!("{integrity} is not in the store")))?;
+        write_atomic(&self.index_path(integrity)?, index.render().as_bytes())
+    }
+
+    #[cfg(not(unix))]
+    fn link_home(&self, integrity: &str, _at: &str) -> Result<()> {
+        Err(Error::new("ENOTSUP", format!("{integrity}: no entry links here")))
+    }
+
+    /// A claimed download's files, at `dir` (where it was staged, or inside an entry that was
+    /// not placed), published into `pkg/` as any other download is.
+    pub fn unclaim(&self, integrity: &str, dir: &Path) -> Result<()> {
+        let index = self.loaded.lock().unwrap_or_else(PoisonError::into_inner).get(integrity).cloned();
+        let placed = match index {
+            Some(index) => self.place(integrity, &index, dir, false),
+            None => Err(Error::new("ENOENT", format!("{integrity} is not in the store"))),
+        };
+        remove_tree(dir);
+        self.unstage(integrity, placed.is_ok());
+        placed
+    }
+
+    /// Done with a staged download: readers waiting on it go on. One that could not be placed
+    /// is not in the store after all.
+    fn unstage(&self, integrity: &str, placed: bool) {
+        if !placed {
+            self.loaded.lock().unwrap_or_else(PoisonError::into_inner).remove(integrity);
+        }
+        self.staged.lock().unwrap_or_else(PoisonError::into_inner).remove(integrity);
+        self.settled.notify_all();
+    }
+
+    /// `integrity` published, if it is staged: at once when nothing claimed it, else once its
+    /// claimer is done.
+    fn settle(&self, integrity: &str) -> Result<()> {
+        let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            match staged.get_mut(integrity) {
+                None => return Ok(()),
+                Some(Staged::Claimed) => staged = self.settled.wait(staged).unwrap_or_else(PoisonError::into_inner),
+                Some(s @ Staged::Ready(_)) => {
+                    let Staged::Ready(dir) = std::mem::replace(s, Staged::Claimed) else { unreachable!() };
+                    drop(staged);
+                    return self.unclaim(integrity, &dir);
+                }
+            }
+        }
+    }
+
+    /// Every staged download no entry claimed, published: the install is done linking.
+    pub fn flush(&self) -> Result<()> {
+        let ready: Vec<String> = self
+            .staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, s)| matches!(s, Staged::Ready(_)))
+            .map(|(k, _)| k.clone())
+            .collect();
+        ready.iter().try_for_each(|integrity| self.settle(integrity))
     }
 
     /// A stored entry's files in `to` under their own names, as copies to edit: writable, an
@@ -439,8 +606,9 @@ impl Store {
 
     /// A file of a stored entry, under its stored name.
     pub fn file(&self, integrity: &str, path: &str) -> Result<PathBuf> {
+        let dir = self.pkg_dir(integrity)?;
         let stored = self.index(integrity).map_or_else(|| path.to_string(), |i| i.stored(path));
-        Ok(self.pkg_dir(integrity)?.join(stored))
+        Ok(dir.join(stored))
     }
 
     pub fn tmp_dir(&self) -> PathBuf {
@@ -481,6 +649,14 @@ impl Store {
 
     pub fn pkg_root(&self) -> PathBuf {
         self.root.join("pkg")
+    }
+}
+
+impl Drop for Store {
+    /// A download no entry claimed (an install that failed, or one fetched after linking) is
+    /// kept all the same.
+    fn drop(&mut self) {
+        let _ = self.flush();
     }
 }
 

@@ -111,7 +111,19 @@ pub fn mark(store: &Store) -> (HashSet<String>, HashSet<PathBuf>) {
             used.extend(all.filter_map(|i| store.pkg_dir(i).ok()));
         }
     }
+    // Content kept in a global entry (a link `../../links/<key>/...`) keeps that entry.
+    shared.extend(used.iter().filter_map(|p| home_of(p)));
     (shared, used)
+}
+
+/// The global entry a store entry's files live in, when it is a link to one.
+fn home_of(pkg_dir: &Path) -> Option<String> {
+    let target = fs::read_link(pkg_dir).ok()?;
+    let mut parts = target.components().map(|c| c.as_os_str().to_str());
+    match (parts.next()?, parts.next()?, parts.next()?, parts.next()?) {
+        (Some(".."), Some(".."), Some("links"), Some(key)) => Some(key.to_string()),
+        _ => None,
+    }
 }
 
 /// Global entries no registered project uses, and temp entries of dead processes.
@@ -145,18 +157,28 @@ pub fn prune_store(pkg_root: &Path, tmp: &Path, used: &HashSet<PathBuf>) -> Swep
             .collect();
         for name in &names {
             let path = shard.path().join(name);
+            // A link to a global entry that is gone holds nothing.
+            let dangling = || fs::read_link(&path).is_ok() && !path.is_dir();
             let orphan = match name.strip_suffix(".idx") {
                 Some(dir) => !names.contains(dir),
-                None => !name.ends_with(".tmp") && (!used.contains(&path) || !names.contains(&format!("{name}.idx"))),
+                None => {
+                    !name.ends_with(".tmp")
+                        && (!used.contains(&path) || !names.contains(&format!("{name}.idx")) || dangling())
+                }
             };
             if orphan {
                 out.bytes += freed(&path);
-                if path.is_dir() {
-                    remove_tree(&path);
+                if name.ends_with(".idx") {
+                    let _ = fs::remove_file(&path);
+                } else {
+                    // A link goes alone; the entry it names is `sweep_shared`'s.
+                    if fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
+                        remove_tree(&path);
+                    } else {
+                        let _ = fs::remove_file(&path);
+                    }
                     // The index goes too: without its files it would claim content that is gone.
                     let _ = fs::remove_file(shard.path().join(format!("{name}.idx")));
-                } else {
-                    let _ = fs::remove_file(&path);
                 }
                 out.removed += 1;
             }
