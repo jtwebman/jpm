@@ -247,6 +247,30 @@ fn reads_an_optional_peer_named_only_in_its_meta() {
 }
 
 #[test]
+fn a_dependency_that_is_a_peer_too_settles_as_a_peer() {
+    // The MCP sdk lists zod in both: the root's zod 3, not another package's zod 4.
+    let r = Registry::start(vec![
+        pkg(
+            "sdk",
+            "1.0.0",
+            json!({ "dependencies": { "zod": "^3 || ^4" }, "peerDependencies": { "zod": "^3 || ^4" } }),
+        ),
+        pkg("other", "1.0.0", json!({ "dependencies": { "zod": "4.0.0" } })),
+        pkg("zod", "3.25.0", json!({})),
+        pkg("zod", "4.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "sdk": "1.0.0", "other": "1.0.0", "zod": "3.25.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["sdk@1.0.0"]["dependencies"]["zod"], "3.25.0");
+    // Alone, it still gets one.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "sdk": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/sdk/../zod/index.js").contains("zod@4.0.0"));
+}
+
+#[test]
 fn settles_peers_against_the_tree() {
     let r = registry();
     let env = Env::new(&r);

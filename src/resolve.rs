@@ -645,7 +645,9 @@ impl Walk<'_> {
             return Ok(false);
         }
         s.edges.insert(key.clone(), Vec::new());
-        let peers = declared_peers(&m.dependencies, &m.optional_dependencies, Some(&m.peer_dependencies), &|n| {
+        // A dependency that is a peer too is a peer, as npm and pnpm take it: the MCP sdk's zod
+        // is the one its parent has, not the tree's newest.
+        let peers = declared_peers(&Deps::new(), &m.optional_dependencies, Some(&m.peer_dependencies), &|n| {
             m.is_optional_peer(n)
         });
         if !peers.is_empty() {
@@ -660,7 +662,7 @@ impl Walk<'_> {
         s.records.insert(key.clone(), found);
         crate::ui::count(&crate::ui::RESOLVED, 1);
         for (n, r) in &m.dependencies {
-            if !m.optional_dependencies.contains_key(n) {
+            if !m.optional_dependencies.contains_key(n) && !peers.contains_key(n) {
                 queue.push(Job { from: key.clone(), name: n.clone(), range: r.clone(), optional: false, fresh: false });
             }
         }
