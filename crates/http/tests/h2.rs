@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use jpm_http::frame::{self, Head};
-use jpm_http::{Conn, Got, Link, Pool, Request, hpack};
+use jpm_http::{Conn, Got, Link, MAX_STREAMS, Pool, Request, hpack};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -298,7 +298,7 @@ fn gets_over_tls_when_alpn_picks_h2() {
             }
         }
     });
-    let pool = Pool::new(1, TIMEOUT);
+    let pool = Pool::new(1, MAX_STREAMS, TIMEOUT);
     let config = client_config(&t);
     let connects = AtomicUsize::new(0);
     let connect = || {
@@ -343,7 +343,7 @@ fn hands_back_http1_when_alpn_picks_it() {
             tls.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
             tls.flush().unwrap();
         });
-        let pool = Pool::new(2, TIMEOUT);
+        let pool = Pool::new(2, MAX_STREAMS, TIMEOUT);
         let config = client_config(&t);
         let Got::H1(Some(mut s)) = pool.get("localhost", || dial(addr, &config), &req("/")).unwrap() else {
             panic!("expected HTTP/1.1")
@@ -471,7 +471,7 @@ fn goaway_sends_unanswered_requests_again_on_a_new_connection() {
             while p.frame().is_some() {}
         }
     });
-    let pool = Pool::new(1, TIMEOUT);
+    let pool = Pool::new(1, MAX_STREAMS, TIMEOUT);
     let connects = AtomicUsize::new(0);
     let connect = || {
         connects.fetch_add(1, Ordering::Relaxed);
@@ -510,7 +510,7 @@ fn a_refused_stream_goes_again_and_a_reset_one_fails() {
         p.send(frame::RST_STREAM, 0, c, &frame::INTERNAL_ERROR.to_be_bytes());
         while p.frame().is_some() {}
     });
-    let pool = Pool::new(1, TIMEOUT);
+    let pool = Pool::new(1, MAX_STREAMS, TIMEOUT);
     let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req("/")).unwrap() else { panic!() };
     assert_eq!(body(r).unwrap(), b"ok");
     let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req("/")).unwrap() else { panic!() };
@@ -590,32 +590,30 @@ fn sends_a_long_head_in_continuation_frames() {
     assert_eq!(body(r).unwrap(), b"50007 in 4 frames");
 }
 
-#[test]
-fn keeps_to_max_concurrent_streams() {
-    let open = Arc::new(AtomicUsize::new(0));
+/// The most streams open at once while 12 requests go at once on one connection, the server
+/// allowing `server` streams and the pool `cap`. The server answers two at a time.
+fn most_streams_open(server: u32, cap: usize) -> usize {
     let most = Arc::new(AtomicUsize::new(0));
-    let (o, m) = (open.clone(), most.clone());
+    let m = most.clone();
     let addr = listen(move |s, _| {
-        let mut p = Peer::new(s, &[(frame::MAX_CONCURRENT_STREAMS, 2)]);
+        let mut p = Peer::new(s, &[(frame::MAX_CONCURRENT_STREAMS, server)]);
         let (first, _) = p.request().unwrap();
         p.respond(first, 200, b"x");
-        // Answer two at a time: a third request before them would be one stream too many.
+        // A third request before two are answered would be one stream too many.
         let mut waiting = Vec::new();
         for _ in 0..12 {
             let (id, _) = p.request().unwrap();
-            let now = o.fetch_add(1, Ordering::SeqCst) + 1;
-            m.fetch_max(now, Ordering::SeqCst);
             waiting.push(id);
+            m.fetch_max(waiting.len(), Ordering::SeqCst);
             if waiting.len() == 2 {
                 for id in waiting.drain(..) {
-                    o.fetch_sub(1, Ordering::SeqCst);
                     p.respond(id, 200, b"x");
                 }
             }
         }
         while p.frame().is_some() {}
     });
-    let pool = Pool::new(1, TIMEOUT);
+    let pool = Pool::new(1, cap, TIMEOUT);
     // The first request's answer comes after the server's SETTINGS: then ask many at once.
     let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req("/")).unwrap() else { panic!() };
     assert_eq!(body(r).unwrap(), b"x");
@@ -631,8 +629,17 @@ fn keeps_to_max_concurrent_streams() {
             .collect();
         all.into_iter().for_each(|t| assert_eq!(t.join().unwrap(), b"x"));
     });
-    assert_eq!(most.load(Ordering::SeqCst), 2);
-    drop(open);
+    most.load(Ordering::SeqCst)
+}
+
+#[test]
+fn keeps_to_max_concurrent_streams() {
+    assert_eq!(most_streams_open(2, MAX_STREAMS), 2);
+}
+
+#[test]
+fn keeps_to_its_pools_stream_cap() {
+    assert_eq!(most_streams_open(100, 2), 2);
 }
 
 #[test]
@@ -643,7 +650,7 @@ fn refuses_a_header_with_a_line_break_and_keeps_its_stream() {
             p.respond(id, 200, b"x");
         }
     });
-    let pool = Pool::new(1, Duration::from_secs(2));
+    let pool = Pool::new(1, MAX_STREAMS, Duration::from_secs(2));
     let Got::H2(r) = pool.get("r.test", || plain(addr, TIMEOUT), &req("/")).unwrap() else { panic!() };
     assert_eq!(body(r).unwrap(), b"x");
     let again = || -> io::Result<Link<()>> { panic!("a second connection") };
@@ -670,7 +677,7 @@ fn opens_up_to_its_connections_per_host() {
             p.respond(id, 200, b"x");
         }
     });
-    let pool = Pool::new(3, TIMEOUT);
+    let pool = Pool::new(3, MAX_STREAMS, TIMEOUT);
     thread::scope(|s| {
         for _ in 0..30 {
             s.spawn(|| {

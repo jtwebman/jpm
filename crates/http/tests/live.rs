@@ -50,7 +50,7 @@ fn get(pool: &Pool, config: &Config, path: &str, headers: &[(&str, &str)]) -> (u
 #[ignore = "needs the network"]
 fn the_registry_over_h2() {
     let config = config();
-    let pool = Pool::new(2, STALL);
+    let pool = Pool::new(2, jpm_http::MAX_STREAMS, STALL);
     let json = [("accept", "application/vnd.npm.install-v1+json"), ("accept-encoding", "gzip")];
     let (status, etag, doc) = get(&pool, &config, "/react", &json);
     assert_eq!(status, 200);
