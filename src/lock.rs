@@ -1000,9 +1000,13 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             return Err(fail(format!("{at} depends on itself")));
         }
         check_top(ws.specs.as_ref(), &edges, &at, &ws.peer_dependencies)?;
-        check_links(ws.specs.as_ref(), &edges, path, &at, lock)?;
+        let link = format!("link:{path}");
+        let parent = Some((ws.name.as_str(), link.as_str()));
+        let top = Asks { specs: ws.specs.as_ref(), peers: &ws.peer_dependencies, base: path, parent };
+        check_links(&top, &edges, &at, lock)?;
     }
-    check_links(lock.root.specs.as_ref(), &lock.root.dependencies, "", "root", lock)?;
+    let root = Asks { specs: lock.root.specs.as_ref(), peers: &Deps::new(), base: "", parent: None };
+    check_links(&root, &lock.root.dependencies, "root", lock)?;
     for (name, version) in &lock.root.dependencies {
         spec::check_name(name, name).map_err(|_| fail(format!("root.dependencies[{name:?}] is not a package name")))?;
         if !known.contains(&format!("{name}@{version}")) {
@@ -1051,23 +1055,69 @@ fn check_top(specs: Option<&Specs>, deps: &Deps, at: &str, peers: &Deps) -> Resu
     Ok(())
 }
 
-/// A top links a directory only where its own spec for the name says so: an edit cannot point
-/// a name at some other directory.
-fn check_links(specs: Option<&Specs>, deps: &Deps, base: &str, at: &str, lock: &Lockfile) -> Result<()> {
+/// The top at `base` (the root, `parent` `None`, or the workspace `parent`), as its specs and
+/// peer ranges ask for each name once the overrides have their say.
+struct Asks<'a> {
+    specs: Option<&'a Specs>,
+    peers: &'a Deps,
+    base: &'a str,
+    parent: Option<(&'a str, &'a str)>,
+}
+
+/// A top links a directory, or takes a git or tarball package, only where its own spec for the
+/// name says so: an edit cannot point a name at another directory, repository, commit or url.
+/// A name linked by name alone is a workspace, and never a `file:` directory another top names
+/// by its path, which may share the name.
+fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()> {
     for (name, version) in deps {
-        let Some(path) = version.strip_prefix("link:") else { continue };
-        if !lock.packages.contains_key(&format!("{name}@{version}")) {
-            continue; // a workspace, linked by its name
-        }
-        let declared = specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name)).any(|range| {
-            spec::parse_dep(name, range)
-                .is_ok_and(|s| s.kind == Kind::Directory && spec::join_path(base, &s.fetch_spec[5..]) == path)
-        });
-        if !declared {
-            return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
+        let ranges = top.specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
+        let asked: Vec<spec::Spec> = ranges
+            .chain(top.peers.get(name))
+            .filter_map(|range| match crate::rules::find(&lock.root.overrides, top.parent, name, range) {
+                Some(Some(value)) => spec::parse_dep(name, value).ok(),
+                Some(None) => None,
+                None => spec::parse_dep(name, range).ok(),
+            })
+            .collect();
+        if let Some(path) = version.strip_prefix("link:") {
+            let dirs: Vec<&spec::Spec> = asked.iter().filter(|s| s.kind == Kind::Directory).collect();
+            let named = if dirs.is_empty() && !lock.packages.contains_key(&format!("{name}@{version}")) {
+                by_name(path, lock)
+            } else {
+                dirs.iter().any(|s| spec::join_path(top.base, &s.fetch_spec[5..]) == path)
+            };
+            if !named {
+                return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
+            }
+        } else if (spec::is_git(version) || version.contains("://") || version.starts_with("file:"))
+            && !asked.iter().any(|s| spec::names_source(s, top.base, version))
+        {
+            return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
         }
     }
     Ok(())
+}
+
+/// Whether the workspace entry at `path` may be linked by its name: the one entry so named, or
+/// one no top reaches by a `file:` or `link:` path.
+fn by_name(path: &str, lock: &Lockfile) -> bool {
+    let Some(target) = lock.workspaces.get(path) else { return false };
+    if lock.workspaces.values().filter(|w| w.name == target.name).count() == 1 {
+        return true;
+    }
+    let tops = std::iter::once(("", lock.root.specs.as_ref()))
+        .chain(lock.workspaces.iter().map(|(p, w)| (p.as_str(), w.specs.as_ref())));
+    // ponytail: a workspace that is also some top's `file:` path, sharing its name with another
+    // `file:` directory, is refused here; tell the two apart in the lockfile if that turns up.
+    !tops
+        .flat_map(|(base, specs)| {
+            let ranges = specs.into_iter().flat_map(Specs::groups).flat_map(|(_, g)| g.into_iter().flatten());
+            ranges.filter_map(move |(name, range)| {
+                let s = spec::parse_dep(name, range).ok().filter(|s| s.kind == Kind::Directory)?;
+                Some(spec::join_path(base, &s.fetch_spec[5..]))
+            })
+        })
+        .any(|p| p == path)
 }
 
 fn check_edges(

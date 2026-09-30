@@ -227,15 +227,38 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
     let (scheme, rest) = (&url[..at], &url[at..]);
     let (authority, _) = rest.split_once('/').unwrap_or((rest, ""));
     let (user, host) = authority.rsplit_once('@').unwrap_or(("", authority));
-    // `host:path` is ssh's scp-like form; `host:22` a port.
-    let (host, after) = host.split_once(':').unwrap_or((host, ""));
+    // `host:path` is ssh's scp-like form; `host:22` a port. An IPv6 host is `[...]`.
+    let (host, after) = match host.strip_prefix('[').and_then(|h| h.split_once(']')) {
+        Some((v6, rest)) if rest.is_empty() || rest.starts_with(':') => {
+            (&host[..v6.len() + 2], rest.get(1..).unwrap_or(""))
+        }
+        Some(_) => return bad("not a repository host"),
+        None => host.split_once(':').unwrap_or((host, "")),
+    };
     let scp = scheme == "git+ssh://" && !after.is_empty() && !after.bytes().all(|b| b.is_ascii_digit());
-    let path = if scp { &rest[rest.find(':').unwrap_or(0) + 1..] } else { rest.split_once('/').map_or("", |p| p.1) };
+    let host_at = if user.is_empty() { 0 } else { user.len() + 1 };
+    let path = if scp { &rest[host_at + host.len() + 1..] } else { rest.split_once('/').map_or("", |p| p.1) };
     let file = scheme == "git+file://";
-    if url.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'\\') || path.is_empty() || path.starts_with('-') {
+    // `x::address` is git's syntax for a transport helper (`ext::`, `fd::`): never a repository.
+    let unbracketed = if host.starts_with('[') { url.replacen(host, "", 1) } else { url.clone() };
+    if url.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'\\')
+        || unbracketed.contains("::")
+        || path.is_empty()
+        || path.starts_with('-')
+    {
         return bad("not a repository url");
     }
-    if host.starts_with('-') || user.starts_with('-') || host.is_empty() != file {
+    let named = |h: &str| {
+        !h.is_empty() && !h.starts_with('-') && h.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.".contains(&b))
+    };
+    let v6 = |h: &str| {
+        let inner = h.strip_prefix('[').and_then(|h| h.strip_suffix(']'));
+        inner.is_some_and(|a| !a.is_empty() && a.bytes().all(|b| b.is_ascii_hexdigit() || b":.".contains(&b)))
+    };
+    // `c:path` is a drive letter to git on Windows: a repository on the disk, not over ssh.
+    let drive = scp && host.len() == 1;
+    let bad_host = if file { !host.is_empty() } else { !named(host) && !v6(host) };
+    if user.starts_with('-') || drive || bad_host {
         return bad("not a repository host");
     }
     if !user.is_empty() && (scheme != "git+ssh://" || user.contains(':')) {
@@ -288,6 +311,21 @@ fn user_repo(path: &str) -> Option<String> {
 /// A full commit id: 40 hex digits, or 64 for a SHA-256 repository.
 pub fn is_commit(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Whether a lockfile's `version` (a url, a `file:` tarball, a repository at a commit) is the
+/// source `s` names, as read from the package.json in the directory `base`: the same url or
+/// file, or the same repository, at the commit `s` pins when it pins one.
+pub fn names_source(s: &Spec, base: &str, version: &str) -> bool {
+    match s.kind {
+        Kind::Tarball => source_at(&s.fetch_spec, base) == version,
+        Kind::Git => {
+            let (url, want) = s.fetch_spec.split_once('#').unwrap_or((&s.fetch_spec, ""));
+            let (locked, commit) = version.split_once('#').unwrap_or((version, ""));
+            url == locked && is_commit(commit) && (!is_commit(want) || want == commit)
+        }
+        _ => false,
+    }
 }
 
 /// A git source (`git+https://…#…`, `git://…#…`), as a lockfile key's tail or a `fetch_spec`.
@@ -535,6 +573,8 @@ mod tests {
         assert_eq!(git("git+https://example.com/a/b/c.git#x"), "git+https://example.com/a/b/c.git#x");
         assert_eq!(git("git://example.com/r"), "git://example.com/r#");
         assert_eq!(git("git+file:///srv/r.git"), "git+file:///srv/r.git#");
+        assert_eq!(git("git+ssh://git@[::1]:r.git"), "git+ssh://git@[::1]:r.git#");
+        assert_eq!(git("git+https://[fe80::1]:8443/r.git"), "git+https://[fe80::1]:8443/r.git#");
         assert!(is_git(&git("u/r")) && is_commit(C) && !is_commit(&C[..39]));
         // A bare CLI argument names one too.
         assert_eq!(bare_source("u/r").unwrap().as_deref(), Some(hub));
@@ -571,6 +611,17 @@ mod tests {
             "github:../r",
             "u/r#semver:not a range",
             "u/r#a b",
+            // A transport helper, however it is dressed: git would run it.
+            "git+ssh://ext::./x:r",
+            "git+ssh://git@ext::sh:r",
+            "git+ssh://fd::3:r",
+            "git+https://host/a::b",
+            // A drive letter, which git on Windows reads as a path on the disk.
+            "git+ssh://c:foo/r",
+            "git+ssh://host%2f:r",
+            "git+https://ho_st/r",
+            "git+https://[::1]x/r",
+            "git+https://[]/r",
         ] {
             assert!(parse_dep("x", bad).is_err(), "{bad}");
         }

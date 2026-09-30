@@ -235,8 +235,9 @@ A dependency can be a directory, given relative to the package.json that names i
 In `jpm.lock`, a `file:` directory inside the project is a `workspace` section under the name
 it is installed as, and an edge to either kind is `link:<path>`, the path from the project root.
 A linked directory is a `package <name>@link:<path>` entry holding only its version and bins.
-A lockfile edge to a linked directory must match the spec package.json gives it, so an edit to
-the lockfile alone cannot point a name at another directory.
+A lockfile edge to a directory must match the spec package.json gives it, and an edge by name
+alone must reach a workspace, not a `file:` directory that shares its name, so an edit to the
+lockfile alone cannot point a name at another directory.
 
 ## Git dependencies
 
@@ -272,12 +273,27 @@ jpm.lock, and belong in git's credential helper or ssh. `gist:` is not read yet.
 - **Scripts.** A git package's `prepare`, which npm runs to build it, counts as an install
   script: it runs only once approved (`jpm approve <name>`), before its other install scripts,
   in the package's copy. Its devDependencies are not installed for it.
-- **Security.** git runs with only https, ssh and git:// allowed (`GIT_ALLOW_PROTOCOL`: never
-  `ext::` or `file://`), without prompting for credentials when there is no terminal, with every
-  url after `--` and without the repository variables (`GIT_DIR` and the like) of a git that ran
-  jpm. A url, host or user starting with `-`, a ref starting with `-`, or a url with a space or
-  a control character in it is refused when package.json or jpm.lock is read. Registry tokens
-  are never sent to a git host.
+- **Lockfile.** A git or tarball edge of the root or a workspace in jpm.lock must be what
+  package.json names: the same url, or the same repository at the commit package.json pins, if
+  it pins one. A package's own git or tarball edge must be what its package.json (or the
+  registry's copy of it) names. An edit to jpm.lock alone cannot put another repository, commit
+  or url in its place: `--frozen-lockfile` fails, and `jpm install` resolves package.json again.
+- **Dependencies' repositories.** A registry package may depend on a git repository or a
+  tarball url, as with npm. `block-exotic-subdeps=true` in .npmrc (pnpm's setting; off by
+  default here) refuses that: only the root and workspaces may. Either way, for a repository no
+  package.json of the project names, git asks nothing: no credential prompt, askpass program or
+  Git Credential Manager window, and ssh runs in batch mode (no passphrase or host-key question)
+  unless `GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand` runs it another way. For the
+  project's own repositories, git asks on a terminal as it always does.
+- **Security.** git runs with only https, ssh and git:// allowed (`GIT_ALLOW_PROTOCOL`: never a
+  transport helper such as `ext::`, nor `file://`), with every url after `--`, and without the
+  repository variables (`GIT_DIR` and the like) of a git that ran jpm. It runs in an empty
+  directory of jpm's own with `GIT_CEILING_DIRECTORIES` set, so it reads no repository's config:
+  not the project's, and not one a checkout carries as plain files. A url, host or user starting
+  with `-`, a host other than letters, digits, `.` and `-` (or an IPv6 address in brackets), a
+  one-letter scp host (a drive to git on Windows), a `::` (git's transport-helper syntax), a ref
+  starting with `-`, or a url with a space or a control character in it is refused when
+  package.json or jpm.lock is read. Registry tokens are never sent to a git host.
 
 Another manager's lockfile with a git dependency is brought over by resolving package.json
 with its versions preferred.
@@ -414,8 +430,8 @@ or `ignore-scripts=true` in .npmrc turns every script off.
 `.npmrc` is read from the project, the user's home and npm's global location, plus
 `npm_config_*` variables. jpm reads `registry`, `@scope:registry`, credentials
 (`//host/:_authToken`, `_auth`, `username` and `_password`), `save-exact`, `offline`,
-`prefer-offline`, `min-release-age`, `before` and `min-release-age-exclude`, and the network
-settings below.
+`prefer-offline`, `min-release-age`, `before`, `min-release-age-exclude`,
+`block-exotic-subdeps` (see Git dependencies) and the network settings below.
 
 jpm has its own TLS and trusts Mozilla's root certificates and the operating system's: the
 Windows certificate store (the current user's `ROOT`, which includes the machine's and group

@@ -311,3 +311,135 @@ fn says_when_git_is_missing() {
     let out = env.command(&["install"]).env("PATH", env.root.join("nowhere")).output().unwrap();
     assert!(stderr(&out).contains("git is not installed"), "{}", stderr(&out));
 }
+
+/// package.json names one repository, and an edited jpm.lock another in its place (or another
+/// commit of the one it pins). Nothing installs from it, and its `prepare` never runs, though
+/// the lock approves it under a trusted name.
+#[cfg(unix)]
+#[test]
+fn a_lockfile_cannot_move_a_git_dependency_to_another_source() {
+    let r = registry();
+    let env = Env::new(&r);
+    let good = Repo::new(&env, "good");
+    let pinned = good.commit(&[("package.json", r#"{ "name": "gp", "version": "1.0.0" }"#)]);
+    let evil = Repo::new(&env, "evil");
+    let pwned = env.root.join("pwned");
+    let prepare =
+        format!(r#"{{ "name": "gp", "version": "1.0.0", "scripts": {{ "prepare": "touch {}" }} }}"#, pwned.display());
+    evil.commit(&[("package.json", &prepare)]);
+    // The attacker's own checkout: the other repository, trusted and approved.
+    let trusted = |spec: String| json!({ "trustedDependencies": ["gp"], "dependencies": { "gp": spec } });
+    env.manifest(trusted(format!("{}#main", evil.url())));
+    ok(&env, &["install"]);
+    ok(&env, &["approve", "gp"]);
+    assert!(pwned.exists());
+    std::fs::remove_file(&pwned).unwrap();
+    let locked = env.read("jpm.lock");
+    let (evil_main, good_main, good_pinned) =
+        (format!("{}#main", evil.url()), format!("{}#main", good.url()), format!("{}#{pinned}", good.url()));
+    // What a review sees, package.json and the lock's spec line, names the good repository.
+    for (spec, edited) in [
+        (good_main.clone(), locked.replace(&evil_main, &good_main)),
+        (good_pinned.clone(), locked.replace(&evil_main, &good_pinned).replace(&evil.url(), &good.url())),
+    ] {
+        env.manifest(trusted(spec));
+        env.write("jpm.lock", &edited);
+        wipe(&env);
+        let out = jpm(&env, &["ci"]);
+        assert!(!out.status.success() && stderr(&out).contains("which its specs do not name"), "{}", stderr(&out));
+        assert!(!env.exists("node_modules/gp"));
+        // An install sets the lockfile aside, and takes what package.json names.
+        let out = jpm(&env, &["install"]);
+        let text = stderr(&out);
+        assert!(out.status.success() && text.contains("ignoring jpm.lock"), "{text}");
+        assert!(!env.read("jpm.lock").contains(&evil.url()));
+        assert!(!pwned.exists());
+    }
+}
+
+/// A registry package's own git dependency installs, as npm installs it, and is locked to the
+/// repository its package.json names. `block-exotic-subdeps` refuses it; the project's own
+/// repositories stay.
+#[test]
+fn locks_a_packages_own_git_dependency_to_what_it_names() {
+    let r = registry();
+    let env = Env::new(&r);
+    let good = Repo::new(&env, "t");
+    good.commit(&[("package.json", r#"{ "name": "t", "version": "1.0.0" }"#), ("index.js", "good")]);
+    let other = Repo::new(&env, "u");
+    other.commit(&[("package.json", r#"{ "name": "t", "version": "1.0.0" }"#), ("index.js", "other")]);
+    r.publish(pkg("reg", "1.0.0", json!({ "dependencies": { "t": good.url() } })));
+    env.manifest(json!({ "dependencies": { "reg": "1.0.0" } }));
+    ok(&env, &["install"]);
+    let locked = env.read("jpm.lock");
+    assert!(locked.contains(&good.url()), "{locked}");
+    // An edit giving it another repository.
+    env.write("jpm.lock", &locked.replace(&good.url(), &other.url()));
+    wipe(&env);
+    let out = jpm(&env, &["ci"]);
+    assert!(!out.status.success() && stderr(&out).contains("which its package.json does not name"), "{}", stderr(&out));
+    // None of a package's own with block-exotic-subdeps: from the lockfile, or a fresh walk.
+    env.write("jpm.lock", &locked);
+    env.write(".npmrc", "block-exotic-subdeps=true\n");
+    for command in ["ci", "install"] {
+        let out = jpm(&env, &[command]);
+        assert!(!out.status.success() && stderr(&out).contains("block-exotic-subdeps"), "{}", stderr(&out));
+    }
+    std::fs::remove_file(env.project().join("jpm.lock")).unwrap();
+    let out = jpm(&env, &["install"]);
+    assert!(!out.status.success() && stderr(&out).contains("block-exotic-subdeps"), "{}", stderr(&out));
+    env.manifest(json!({ "dependencies": { "t": good.url() } }));
+    ok(&env, &["install"]);
+    assert_eq!(env.read("node_modules/t/index.js"), "good");
+}
+
+/// git runs in a directory of jpm's own: the project's repository config is never read, nor a
+/// bare repository's that a checkout carries as plain files and jpm is run from.
+#[cfg(unix)]
+#[test]
+fn reads_no_repository_config_around_the_project() {
+    let r = registry();
+    let env = Env::new(&r);
+    let pwned = env.root.join("pwned");
+    let config = format!(
+        "[core]\n\trepositoryformatversion = 0\n\tbare = true\n\tsshCommand = touch {} && false\n",
+        pwned.display()
+    );
+    git(&env.project(), &["init", "-q"]);
+    std::fs::write(env.project().join(".git/config"), config.replace("bare = true", "bare = false")).unwrap();
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"],
+        "dependencies": { "x": "git+ssh://git@example.invalid/u/r.git" } }));
+    env.write("packages/a/package.json", r#"{ "name": "a", "version": "1.0.0" }"#);
+    for (file, text) in
+        [("HEAD", "ref: refs/heads/main\n"), ("objects/info/keep", ""), ("refs/heads/keep", ""), ("config", &config)]
+    {
+        env.write(&format!("packages/a/{file}"), text);
+    }
+    for dir in [env.project(), env.project().join("packages/a")] {
+        let out = env.command_in(&dir, &["install"]).output().unwrap();
+        assert!(!out.status.success(), "{}", stderr(&out));
+        assert!(!pwned.exists(), "{}: {}", dir.display(), stderr(&out));
+    }
+}
+
+/// `<helper>::<address>` would have git run the helper: no spelling of a url reaches it.
+#[cfg(unix)]
+#[test]
+fn never_hands_git_a_transport_helper() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = registry();
+    let env = Env::new(&r);
+    let script = env.project().join("x:r");
+    std::fs::write(&script, "#!/bin/sh\ntouch pwned\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for spec in [
+        "git+ssh://ext::./x:r",
+        "git+ssh://git@ext::./x:r",
+        "git+ssh://ext::./x:r#0123456789012345678901234567890123456789",
+    ] {
+        env.manifest(json!({ "dependencies": { "x": spec } }));
+        let out = jpm(&env, &["install"]);
+        assert!(!out.status.success() && stderr(&out).contains("not a repository"), "{spec}: {}", stderr(&out));
+        assert!(!env.exists("pwned"), "{spec}");
+    }
+}
