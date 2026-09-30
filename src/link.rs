@@ -315,6 +315,8 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(prev) = previous.as_ref().filter(|s| !opts.verify && s.hash == opts.hash && s.complete)
         && let Some(root) = standing(opts.dir, &entries_dir, opts.global.as_deref(), &tops, res, prev, opts.production)
     {
+        // Downloads to a store emptied under a tree that still stands: kept as they are.
+        opts.store.flush()?;
         // The same tree from other inputs: the state learns them, so the next install is short.
         let learned = opts.inputs.as_ref().is_some_and(|i| prev.inputs.as_ref() != Some(&i.hash));
         if learned || prev.tarballs != opts.tarballs {
