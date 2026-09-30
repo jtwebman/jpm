@@ -122,6 +122,7 @@ pub struct Package {
     /// A workspace's declared ranges.
     pub specs: Option<Specs>,
     /// A tarball dependency: its url, or `file:` and a root-relative path. Its key ends in it.
+    /// Or a directory inside a registry package's tarball, `path:<its key>/<path>` (see `WITHIN`).
     pub source: Option<String>,
     /// Required edges: name -> version, `link:<path>` for a workspace, or a tarball's source.
     pub dependencies: Deps,
@@ -176,6 +177,12 @@ impl Package {
         format!("{}@{}", self.name, self.edge_version())
     }
 
+    /// The registry package whose tarball holds this one's files, and the directory they are in
+    /// there: a registry package's `file:` or `link:` dependency inside itself.
+    pub fn within(&self) -> Option<(&str, &str)> {
+        split_within(self.source.as_deref()?)
+    }
+
     /// The directory its files are in within its entry: an alias's real name, as pnpm has it,
     /// so it requires itself by that name and can link a dependency named like the alias.
     pub fn dir_name(&self) -> &str {
@@ -212,6 +219,24 @@ pub struct Resolution {
 /// An alias's edge: `npm:<real>@<version>`.
 pub fn alias_edge(real: &str, version: &str) -> String {
     format!("npm:{real}@{version}")
+}
+
+/// The source of a directory inside a registry package's own tarball, as its key and edges name
+/// it: `path:<the package's key>/<the path in the tarball>`. Its files are that subtree of the
+/// package's, which is fetched and checked as the package is.
+pub const WITHIN: &str = "path:";
+
+/// The package key and the path in its tarball that a `path:` source names. The key is a
+/// registry package's, `name@version` or an alias's `name@npm:<real>@<version>`: no version
+/// holds a `/`, so the path starts at the first one past it.
+pub fn split_within(source: &str) -> Option<(&str, &str)> {
+    let rest = source.strip_prefix(WITHIN)?;
+    let at = name_end(rest)?;
+    let tail = &rest[at + 1..];
+    // An alias's real name may hold a `/`: its version starts past it.
+    let from = tail.strip_prefix("npm:").and_then(name_end).map_or(0, |real| 4 + real + 1);
+    let slash = from + tail.get(from..)?.find('/')?;
+    Some((&rest[..at + 1 + slash], &tail[slash + 1..]))
 }
 
 /// The package and version an alias's edge names: `npm:<real>@<version>`.
@@ -541,6 +566,15 @@ mod tests {
         assert!(!runs_on(None, None, v(&["musl"]).as_ref(), &p));
         let unknown = Platform { libc: None, ..p };
         assert!(!runs_on(None, None, v(&["glibc"]).as_ref(), &unknown));
+    }
+
+    #[test]
+    fn splits_a_directory_inside_a_package_off_its_key() {
+        assert_eq!(split_within("path:host@1.0.0/local"), Some(("host@1.0.0", "local")));
+        assert_eq!(split_within("path:@s/host@1.0.0-rc.1/a/b"), Some(("@s/host@1.0.0-rc.1", "a/b")));
+        assert_eq!(split_within("path:x@npm:@s/real@2.0.0/lib"), Some(("x@npm:@s/real@2.0.0", "lib")));
+        assert_eq!(split_within("path:host@1.0.0"), None);
+        assert_eq!(split_within("file:host@1.0.0/local"), None);
     }
 
     fn pkg(name: &str, optional: bool, os: Option<Vec<String>>, deps: &[(&str, &str)]) -> Package {

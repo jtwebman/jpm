@@ -252,12 +252,24 @@ A dependency can be a directory, given relative to the package.json that names i
   installing its dependencies would mean writing its `node_modules`, and jpm writes nothing
   outside the project. Run `jpm install` in that directory for them.
 - A `file:` path ending in `.tgz`, `.tar.gz` or `.tar` is a tarball, copied into the store.
-- Only the root and workspaces (and `file:` directories) may depend on a path; a registry
-  package that does is an error.
+- A registry package may depend on a path only inside itself, where the files come from its
+  own tarball, checked against the same integrity:
+  - itself (`"its-name": "link:."`) is no dependency: it requires itself anyway, as under pnpm;
+  - a directory its tarball ships (`"local-dep": "file:./local-dep"`) is a package of its own,
+    linked beside it: its files are that directory's, and the dependencies in its package.json
+    are installed as any package's;
+  - a directory its tarball lacks (a monorepo published without it) is left out, with a warning.
+
+  A path out of the package (`..` past its root, an absolute path, `~`, a drive or a UNC path),
+  or one with a `%` in it, is an error: it could reach anything on the machine installing it.
+  So is a path dependency of a git or tarball package. Anything else may depend on a path only
+  from the root, a workspace or a `file:` directory.
 
 In `jpm.lock`, a `file:` directory inside the project is a `workspace` section under the name
 it is installed as, and an edge to either kind is `link:<path>`, the path from the project root.
 A linked directory is a `package <name>@link:<path>` entry holding only its version and bins.
+A directory inside a registry package is `package <name>@path:<package key>/<path>`, with that
+package's integrity; only the package itself, or another directory inside it, may link it.
 A lockfile edge to a directory must match the spec package.json gives it, and an edge by name
 alone must reach a workspace, not a `file:` directory that shares its name, so an edit to the
 lockfile alone cannot point a name at another directory.

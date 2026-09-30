@@ -3,8 +3,8 @@
     "aliaspin": "A root alias does not steer a dependency's pick, as in npm and yarn (tests/berry.rs basic_installs_plain_scoped_aliased_fixed_and_ranged_dependencies); pnpm takes the alias's version.",
     "ancestor": "jpm resolves each version of a package once, wherever it is reached, so a pick cannot lean on the versions resolved higher up one path to it; pnpm prefers those. The project's own dependencies do steer picks, as in pnpm.",
     "dirbin": "directories.bin is not read: jpm records bins from the registry's manifest when it resolves, before any tarball is fetched (npm writes directories.bin out as bin when it packs).",
+    "localdeps": "A directory inside a registry package (has-local-dep's local-dep, from its own tarball) is a package whose package.json dependencies jpm installs, as any package's (README, Directory dependencies); pnpm links the directory and installs none of them.",
     "nocommon": "No version fits both consumers' peer ranges: jpm gives each its own (tests/cli.rs consumers_missing_one_peer_share_a_version_that_fits_them_all), and fails where one range has no version at all, as pnpm does for has-foo101-peer alone; pnpm installs neither.",
-    "path": "A registry package that depends on a path (link: or file:) is refused: only the root and workspaces may (README, Directory dependencies). pnpm resolves the path inside the package.",
     "peerbin": "pnpm links the bins of a peer it installs into the root's node_modules/.bin, as if the root depended on it; jpm links the bins of the root's own dependencies only.",
     "peerparent": "The peers of a peer jpm installs come from the package that asked for it (its @pnpm/y 1.0.0); pnpm puts a peer it installs at the root, so its peers come from there (@pnpm/y 2.0.0).",
     "platform": "A package that does not run on this platform is skipped with a warning (and kept in jpm.lock for the others), though something needs it: a team on several platforms shares one lockfile (tests/cli.rs skips_a_dependency_for_another_platform). pnpm installs it with a warning.",
@@ -24,10 +24,9 @@
     {"scenario":"single @pnpm.e2e/abc-parent-with-aliases-of-same-pkg","reason":"range","diff":["packages: - @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=2.0.0","packages: + @pnpm.e2e/abc@1.0.0 @pnpm.e2e/dep-of-pkg-with-1-dep=100.0.0 @pnpm.e2e/peer-a=1.0.1 @pnpm.e2e/peer-b=1.0.0 @pnpm.e2e/peer-c=1.0.1"]},
     {"scenario":"single @pnpm.e2e/darwin-arm64","reason":"platform","diff":["root: - @pnpm.e2e/darwin-arm64 -> 1.0.0","root: + @pnpm.e2e/darwin-arm64 -> (missing)","packages: - @pnpm.e2e/darwin-arm64@1.0.0"]},
     {"scenario":"single @pnpm.e2e/darwin-x64","reason":"platform","diff":["root: - @pnpm.e2e/darwin-x64 -> 1.0.0","root: + @pnpm.e2e/darwin-x64 -> (missing)","packages: - @pnpm.e2e/darwin-x64@1.0.0"]},
-    {"scenario":"single @pnpm.e2e/external-depend-on-internal-dep","reason":"path","diff":["failed: pnpm succeeded, jpm failed"]},
     {"scenario":"single @pnpm.e2e/has-binding-gyp","reason":"platform","diff":["root: - @pnpm.e2e/has-binding-gyp -> 1.0.0","root: + @pnpm.e2e/has-binding-gyp -> (missing)","packages: - @pnpm.e2e/has-binding-gyp@1.0.0"]},
     {"scenario":"single @pnpm.e2e/has-foo-as-dep-and-subdep","reason":"ancestor","diff":["packages: - @pnpm.e2e/requires-any-foo@1.0.0 @pnpm.e2e/foo=100.0.0","packages: + @pnpm.e2e/foo@2.0.0","packages: + @pnpm.e2e/requires-any-foo@1.0.0 @pnpm.e2e/foo=2.0.0"]},
-    {"scenario":"single @pnpm.e2e/has-local-dep","reason":"path","diff":["failed: pnpm succeeded, jpm failed"]},
+    {"scenario":"single @pnpm.e2e/has-local-dep","reason":"localdeps","diff":["packages: - @pnpm.e2e/local-dep@1.0.0 @pnpm.e2e/bravo-dep=-","packages: + @pnpm.e2e/bravo-dep@1.0.0","packages: + @pnpm.e2e/local-dep@1.0.0 @pnpm.e2e/bravo-dep=1.0.0"]},
     {"scenario":"single @pnpm.e2e/has-native-dep","reason":"ancestor","diff":["packages: - wide-align@1.1.5 string-width=1.0.2","packages: + ansi-regex@5.0.1","packages: + emoji-regex@8.0.0","packages: + is-fullwidth-code-point@3.0.0","packages: + string-width@4.2.3 emoji-regex=8.0.0 is-fullwidth-code-point=3.0.0 strip-ansi=6.0.1","packages: + strip-ansi@6.0.1 ansi-regex=5.0.1","packages: + wide-align@1.1.5 string-width=4.2.3"]},
     {"scenario":"single @pnpm.e2e/has-not-compatible-dep","reason":"platform","diff":["packages: - @pnpm.e2e/dep-of-optional-pkg@1.0.0","packages: - @pnpm.e2e/has-not-compatible-dep@1.0.0 @pnpm.e2e/not-compatible-with-any-os=1.0.0","packages: - @pnpm.e2e/not-compatible-with-any-os@1.0.0 @pnpm.e2e/dep-of-optional-pkg=1.0.0","packages: + @pnpm.e2e/has-not-compatible-dep@1.0.0 @pnpm.e2e/not-compatible-with-any-os=-"]},
     {"scenario":"single @pnpm.e2e/linux-arm64","reason":"platform","diff":["root: - @pnpm.e2e/linux-arm64 -> 1.0.0","root: + @pnpm.e2e/linux-arm64 -> (missing)","packages: - @pnpm.e2e/linux-arm64@1.0.0"]},
@@ -43,8 +42,6 @@
     {"scenario":"single @pnpm.e2e/only-win32-x64","reason":"platform","diff":["root: - @pnpm.e2e/only-win32-x64 -> 1.0.0","root: + @pnpm.e2e/only-win32-x64 -> (missing)","packages: - @pnpm.e2e/only-win32-x64@1.0.0"]},
     {"scenario":"single @pnpm.e2e/pkg-with-directories-bin","reason":"dirbin","diff":["bins: - pkg-with-directories-bin"]},
     {"scenario":"single @pnpm.e2e/pkg-with-peer-having-bin","reason":"peerbin","diff":["bins: - peer-with-bin"]},
-    {"scenario":"single @pnpm.e2e/self-file-reference","reason":"path","diff":["failed: pnpm succeeded, jpm failed"]},
-    {"scenario":"single @pnpm.e2e/self-link-reference","reason":"path","diff":["failed: pnpm succeeded, jpm failed"]},
     {"scenario":"single @pnpm.e2e/windows-x64","reason":"platform","diff":["root: - @pnpm.e2e/windows-x64 -> 1.0.0","root: + @pnpm.e2e/windows-x64 -> (missing)","packages: - @pnpm.e2e/windows-x64@1.0.0"]}
   ]
 }

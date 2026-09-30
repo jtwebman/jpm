@@ -73,6 +73,14 @@ impl Index {
         if self.suffixed { format!("{path}{STORED_SUFFIX}") } else { path.to_string() }
     }
 
+    /// The files under the directory `at`, at their paths there: a directory inside a package.
+    pub fn under(&self, at: &str) -> Self {
+        let prefix = format!("{at}/");
+        let inside = |f: &FileEntry| Some(FileEntry { path: f.path.strip_prefix(&prefix)?.to_string(), ..f.clone() });
+        let files: Vec<FileEntry> = self.files.iter().filter_map(inside).collect();
+        Self { unpacked_size: files.iter().map(|f| f.size).sum(), files, suffixed: self.suffixed }
+    }
+
     fn render(&self) -> String {
         use std::fmt::Write as _;
         let mut out = format!("jpm-index {} {}\n", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
@@ -586,11 +594,12 @@ impl Store {
     }
 
     /// A stored entry's files in `to` under their own names, as copies to edit: writable, an
-    /// executable still executable, no `node_modules`.
-    pub fn copy_out(&self, integrity: &str, to: &Path) -> Result<()> {
+    /// executable still executable, no `node_modules`. Only those under `at`, when it is not empty.
+    pub fn copy_out(&self, integrity: &str, at: &str, to: &Path) -> Result<()> {
         let index =
             self.index(integrity).ok_or_else(|| Error::new("ENOENT", format!("{integrity} is not in the store")))?;
-        let from = self.pkg_dir(integrity)?;
+        let index = if at.is_empty() { index } else { Arc::new(index.under(at)) };
+        let from = self.pkg_dir(integrity)?.join(at);
         fs::create_dir_all(to).map_err(|e| Error::io(&e, format!("cannot create {}", to.display())))?;
         for f in index.files.iter().filter(|f| f.path.split('/').all(|p| p != "node_modules")) {
             let at = to.join(&f.path);

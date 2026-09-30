@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
-use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root};
+use crate::graph::{Deps, Package, PeerKind, Peers, Resolution, Root, WITHIN};
 use crate::manifest::Manifest;
 use crate::pool::{self, Queue};
 use crate::project::{self, RootManifest, declared_peers, local_path, local_shape};
@@ -21,7 +21,7 @@ use crate::spec::{self, Kind, Spec};
 
 const ROOT: &str = "";
 
-pub type TarballReader<'a> = dyn Fn(&str, Option<&str>) -> Result<Arc<Manifest>> + Sync + 'a;
+pub type TarballReader<'a> = dyn Fn(&str, Option<&str>, &str) -> Result<Arc<Manifest>> + Sync + 'a;
 pub type OnPick<'a> = dyn Fn(&Package, &str) + Sync + 'a;
 
 pub struct Options<'a> {
@@ -35,7 +35,9 @@ pub struct Options<'a> {
     /// The directories the tops depend on by path.
     pub dirs: Vec<Dir>,
     /// Reads a tarball dependency's package.json, given its source and the integrity it is
-    /// pinned to, if any. `dist.integrity` in what comes back is its bytes' integrity.
+    /// pinned to, if any. `dist.integrity` in what comes back is its bytes' integrity. The third
+    /// argument is a directory in the tarball to read instead of its root (see `within`); one
+    /// the tarball lacks fails with `NO_DIR`.
     pub tarball: Option<&'a TarballReader<'a>>,
     /// Told each package as the walk picks it, before its dependencies are walked.
     pub on_pick: Option<&'a OnPick<'a>>,
@@ -141,6 +143,19 @@ struct Walk<'a> {
 
 /// Values computed once however many threads ask.
 type Memo<V> = Mutex<HashMap<String, Arc<std::sync::OnceLock<Result<V>>>>>;
+
+/// The code a `TarballReader` fails with for a directory the tarball does not have.
+pub const NO_DIR: &str = "ENODIR";
+
+/// A registry package's path dependency that could lead out of its own tarball.
+fn outside(range: &str) -> Error {
+    Error::new(
+        "EINVALIDSPEC",
+        format!(
+            "{range} is not a relative path inside the package, and only the root and workspaces may depend on a path elsewhere"
+        ),
+    )
+}
 
 /// `block-exotic-subdeps` refusing a package's own git or tarball-url dependency.
 pub fn exotic(from: &str, raw: &str) -> Error {
@@ -319,7 +334,8 @@ impl Walk<'_> {
             Some(Some(r)) => r.as_str(),
             None => range,
         };
-        let spec = spec::parse_dep(name, range)?;
+        let spec = spec::parse_dep(name, range)
+            .map_err(|e| if self.tops.contains_key(from) || !spec::names_path(range) { e } else { outside(range) })?;
         if spec.kind == Kind::Workspace && !self.tops.contains_key(from) {
             return Err(Error::new(
                 "EWORKSPACE",
@@ -347,14 +363,18 @@ impl Walk<'_> {
             if pinned.is_some() && !fresh && !self.opts.dedupe {
                 self.visit_locked(from, &key);
             } else {
-                let m = self.read(&source, pinned.as_deref())?;
+                let m = self.read(&source, pinned.as_deref(), "")?;
                 self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
             }
             push(source);
             return Ok(());
         }
         if spec.kind == Kind::Directory {
-            push(self.dir(from, &spec)?);
+            if self.tops.contains_key(from) {
+                push(self.dir(from, &spec)?);
+            } else if let Some(source) = self.within(from, &spec, range, fresh, queue)? {
+                push(source);
+            }
             return Ok(());
         }
         if spec.kind == Kind::Runtime {
@@ -379,7 +399,7 @@ impl Walk<'_> {
                     source
                 }
                 None => {
-                    let m = self.read(&spec.fetch_spec, None)?;
+                    let m = self.read(&spec.fetch_spec, None, "")?;
                     let source = m.dist.tarball.clone().unwrap_or_default();
                     self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
                     source
@@ -514,13 +534,13 @@ impl Walk<'_> {
         cell.get_or_init(|| Ok(self.opts.registry.manifest(&m.name, &m.version)?.libc.clone())).clone()
     }
 
-    fn read(&self, source: &str, pinned: Option<&str>) -> Result<Arc<Manifest>> {
+    fn read(&self, source: &str, pinned: Option<&str>, dir: &str) -> Result<Arc<Manifest>> {
         let Some(read) = self.opts.tarball else {
             return Err(Error::new("EINVALIDSPEC", format!("nothing reads tarballs here, so not {source}")));
         };
-        let cell =
-            self.picks.lock().unwrap_or_else(PoisonError::into_inner).entry(source.to_string()).or_default().clone();
-        cell.get_or_init(|| read(source, pinned)).clone()
+        let memo = if dir.is_empty() { source.to_string() } else { format!("{source} {dir}") };
+        let cell = self.picks.lock().unwrap_or_else(PoisonError::into_inner).entry(memo).or_default().clone();
+        cell.get_or_init(|| read(source, pinned, dir)).clone()
     }
 
     /// A path is read from the package.json that declares it, so only a top may have one.
@@ -629,6 +649,60 @@ impl Walk<'_> {
             s.records.insert(found.key(), found);
         }
         Ok(version)
+    }
+
+    /// A registry package's directory dependency, which can only be inside its own tarball. The
+    /// package itself (`link:.`) is no edge, as a self-dependency is none. A directory the
+    /// tarball has is a package of its own, `name@path:<package key>/<path>`: its files are that
+    /// subtree, and its package.json is walked as any other. One the tarball lacks is left out
+    /// with a warning (a monorepo publish that forgot it). A path out of the package, or one
+    /// `%`-encoded, is refused: it could reach anything on the machine installing it. A subfolder
+    /// package's own paths are read from where it is, and may reach the rest of the tarball.
+    fn within(&self, from: &str, spec: &Spec, range: &str, fresh: bool, queue: &Queue<Job>) -> Result<Option<String>> {
+        let found = lock(&self.state).records.get(from).map(|p| match p.within() {
+            Some((root, own)) => Some((root.to_string(), own.to_string())),
+            None => (p.local.is_none() && p.source.is_none()).then(|| (from.to_string(), String::new())),
+        });
+        let Some((root, own)) = found.flatten() else {
+            return Err(Error::new("EINVALIDSPEC", "only the root and workspaces may depend on a path"));
+        };
+        let sub = spec::join_path(&own, &spec.fetch_spec[5..]); // `link:` or `file:`
+        if range.contains('%') || sub == ".." || sub.starts_with("../") {
+            return Err(outside(range));
+        }
+        let skip = |why: &str| {
+            let line = format!("{from} depends on {}@{range}, {why}; left out", spec.name);
+            lock(&self.state).warnings.insert(line);
+            Ok(None)
+        };
+        if sub == own {
+            return Ok(None);
+        }
+        if sub.is_empty() {
+            return skip("the package that ships it");
+        }
+        // A key and a directory name: never a `(`, which would read as a peer suffix.
+        if !crate::tar::plain(&sub) || sub.contains(['(', ')']) {
+            return skip("a directory jpm cannot name");
+        }
+        let source = format!("{WITHIN}{root}/{sub}");
+        let key = format!("{}@{source}", spec.name);
+        if !fresh && !self.opts.dedupe && self.locked.is_some_and(|l| l.packages.contains_key(&key)) {
+            self.visit_locked(from, &key);
+            return Ok(Some(source));
+        }
+        let parent = lock(&self.state).records.get(&root).map(|p| (p.resolved.clone(), p.integrity.clone()));
+        let Some((resolved, integrity)) = parent else {
+            return Err(Error::new("ERESOLVE", format!("{root} was not resolved")));
+        };
+        match self.read(&resolved, Some(&integrity), &sub) {
+            Err(e) if e.code == NO_DIR => skip("which is not in its tarball"),
+            Err(e) => Err(e),
+            Ok(m) => {
+                self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
+                Ok(Some(source))
+            }
+        }
     }
 
     /// The locked version an edge can keep: one the lockfile has under this very key, the
@@ -1417,7 +1491,10 @@ fn record(name: &str, m: &Manifest, source: Option<&str>) -> Package {
     Package {
         name: name.to_string(),
         version: m.version.clone(),
-        resolved: source.map_or_else(|| m.dist.tarball.clone().unwrap_or_default(), str::to_string),
+        // A directory inside a package is fetched as that package is.
+        resolved: source
+            .filter(|s| !s.starts_with(WITHIN))
+            .map_or_else(|| m.dist.tarball.clone().unwrap_or_default(), str::to_string),
         integrity: m.integrity().unwrap_or_default(),
         source: source.map(str::to_string),
         optional: true,
