@@ -129,6 +129,9 @@ pub struct Registry {
     /// Names a kept document answered without asking; and names asked about again since.
     unasked: Mutex<HashSet<String>>,
     rechecked: Mutex<HashSet<String>>,
+    /// The documents this run asked the registry for, by cache key, each with whether one was
+    /// kept then: what this run keeps never decides where a pin is read from.
+    asked: Mutex<HashMap<String, bool>>,
 }
 
 impl Registry {
@@ -152,6 +155,7 @@ impl Registry {
             routes: Mutex::default(),
             unasked: Mutex::default(),
             rechecked: Mutex::default(),
+            asked: Mutex::default(),
         }
     }
 
@@ -201,6 +205,7 @@ impl Registry {
         if self.mode() == Some(CacheMode::Only) {
             return Err(Error::new("EOFFLINE", format!("offline: cannot ask the registry for {name}")));
         }
+        self.asked.lock().map_err(|_| poisoned())?.entry(key.clone()).or_insert(kept.is_some());
         let mut headers = vec![("accept", accept)];
         let etag = kept.as_ref().and_then(|d| d.etag.clone());
         if let Some(e) = &etag {
@@ -240,10 +245,20 @@ impl Registry {
         }
     }
 
-    /// Whether `key`'s kept document would answer without asking.
+    /// Whether `key`'s kept document answers without asking, as it did when the run began: one
+    /// asked for since is out, whether it was kept then or not.
     fn answers(&self, name: &str, key: &str) -> bool {
         let rechecked = || self.rechecked.lock().is_ok_and(|r| r.contains(name));
-        self.cache.as_ref().and_then(|c| c.get(key)).is_some_and(|doc| self.current(name, &doc)) && !rechecked()
+        let asked = || self.asked.lock().map_or(true, |a| a.contains_key(key));
+        self.cache.as_ref().and_then(|c| c.get(key)).is_some_and(|doc| self.current(name, &doc))
+            && !asked()
+            && !rechecked()
+    }
+
+    /// Whether `key`'s document was kept before this run, current or not.
+    fn kept_before(&self, key: &str) -> bool {
+        self.cache.as_ref().is_some_and(|c| c.file(key).is_file())
+            && self.asked.lock().is_ok_and(|a| a.get(key).is_none_or(|kept| *kept))
     }
 
     fn load_corgi(&self, name: &str) -> Result<Arc<Packument>> {
@@ -387,17 +402,13 @@ impl Registry {
     /// One pinned version, or `None` when nothing serves it. `exempt` looks past the release
     /// cutoff.
     fn pinned(&self, name: &str, version: &str, exempt: bool) -> Result<Option<Arc<Manifest>>> {
-        let known = self.corgis.lock().map_err(|_| poisoned())?.get(name).and_then(|c| c.get().cloned());
-        if let Some(Ok(doc)) = known
-            && let Some(m) = doc.version(version)
-        {
-            return Ok(Some(m));
-        }
         // An unscoped pin is asked for by its own route, past the release cutoff. When the
-        // route was never kept, a kept packument that answers without asking goes first.
+        // route was never kept, a packument kept from an earlier run that answers without
+        // asking goes first. Only what was kept before the run decides: never whether another
+        // edge has read the packument by then, so a pin comes from the same document every run.
         let unscoped = !name.starts_with('@');
         let url = self.path(name)?;
-        let route_kept = self.cache.as_ref().is_some_and(|c| c.file(&format!("full {url}/{version}")).is_file());
+        let route_kept = self.kept_before(&format!("full {url}/{version}"));
         if unscoped
             && (route_kept || !self.answers(name, &format!("corgi {url}")))
             && let Some(m) = self.route(name, version)?
@@ -960,6 +971,32 @@ mod tests {
         let pick = |c: &Config| Registry::new(c, None).pick(&parse_dep(name, "*").unwrap(), None, false).unwrap();
         assert_eq!(pick(&excluded).version, "2.0.0");
         assert_eq!(pick(&Config { before: None, ..config }).version, "2.0.0");
+    }
+
+    #[test]
+    fn reads_an_unscoped_pin_from_its_route_though_the_packument_is_in() {
+        let dist = r#""dist":{"tarball":"http://t/a.tgz","integrity":"sha512-AAAA"}"#;
+        let corgi = format!(
+            r#"{{"name":"a","dist-tags":{{"latest":"1.0.0"}},"versions":{{"1.0.0":{{"name":"a","version":"1.0.0",{dist}}}}}}}"#
+        );
+        let route = format!(r#"{{"name":"a","version":"1.0.0",{dist}}}"#);
+        let docs: HashMap<String, (Option<String>, Option<String>)> =
+            [("/a".to_string(), (Some(corgi), None)), ("/a/1.0.0".to_string(), (None, Some(route)))].into();
+        let dir = std::env::temp_dir().join(format!("jpm-pin-route-{}", std::process::id()));
+        // Without a cache, and with one the packument is kept in as this run reads it.
+        for metadata in [None, Some(dir.as_path())] {
+            let _ = std::fs::remove_dir_all(&dir);
+            let (base, asked) = registry_of(docs.clone());
+            let registry = Registry::new(&Config { registry: base, ..Config::default() }, metadata);
+            // Another edge's range has read the packument before the pin is asked for.
+            registry.packument("a").unwrap();
+            let m = registry.pick(&parse_dep("a", "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+            assert!(m.full, "{metadata:?}");
+            let asked = asked.lock().unwrap().clone();
+            let each = |kind: &str, path: &str| (kind.to_string(), path.to_string());
+            assert_eq!(asked, [each("corgi", "/a"), each("full", "/a/1.0.0")], "{metadata:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
