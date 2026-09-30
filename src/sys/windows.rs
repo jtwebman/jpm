@@ -266,6 +266,14 @@ impl Dir {
     pub fn link(&self, from: &Dir, from_rel: &str, rel: &str) -> io::Result<()> {
         std::fs::hard_link(from.path.join(from_rel), self.path.join(rel))
     }
+
+    pub fn create(&self, rel: &str, _mode: u32) -> io::Result<std::fs::File> {
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(self.path.join(rel))
+    }
+
+    pub fn is_dir(&self, rel: &str) -> bool {
+        self.path.join(rel).is_dir()
+    }
 }
 
 #[cfg(test)]

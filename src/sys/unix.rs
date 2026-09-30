@@ -120,6 +120,29 @@ impl Dir {
         linked
     }
 
+    /// The file `rel`, created (or emptied) for writing, with this mode if it is new.
+    pub fn create(&self, rel: &str, mode: u32) -> io::Result<std::fs::File> {
+        use std::os::fd::FromRawFd;
+        let mut fd = -1;
+        with_rel(rel, |p| {
+            let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_CLOEXEC;
+            // SAFETY: a valid fd and a NUL-terminated path that outlives the call.
+            fd = unsafe { libc::openat(self.raw(), p, flags, mode as libc::c_uint) };
+            fd
+        })?;
+        // SAFETY: `openat` returned a new fd that nothing else owns.
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    }
+
+    /// Whether `rel` is a directory, through a symlink as `Path::is_dir` goes.
+    pub fn is_dir(&self, rel: &str) -> bool {
+        let mut st = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: a valid fd, a NUL-terminated path that outlives the call, and room for a stat.
+        let found = with_rel(rel, |p| unsafe { libc::fstatat(self.raw(), p, st.as_mut_ptr(), 0) }).is_ok();
+        // SAFETY: `fstatat` succeeded, so it filled `st`.
+        found && unsafe { st.assume_init() }.st_mode & libc::S_IFMT == libc::S_IFDIR
+    }
+
     fn raw(&self) -> libc::c_int {
         use std::os::fd::AsRawFd;
         self.fd.as_raw_fd()
