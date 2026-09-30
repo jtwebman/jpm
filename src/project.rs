@@ -312,6 +312,10 @@ pub fn catalog_range(file: &Path, name: &str, spec: &str) -> Result<String> {
                 ))
             });
         }
+        // Not past the repository or the home directory: a catalog above them is someone else's.
+        if dir.join(".git").exists() || dir == crate::config::home() {
+            break;
+        }
     }
     Err(manifest_error(format!("{}: {name}@{spec}, but no catalogs are defined here or above", file.display())))
 }

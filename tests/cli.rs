@@ -1413,6 +1413,22 @@ fn reads_catalogs_from_package_json() {
     assert!(env.read("packages/one/node_modules/b/index.js").contains("b@1.1.0"));
 }
 
+/// A `catalog:` is looked up no higher than the repository: a catalog in a directory above it
+/// (a shared /tmp, another user's checkout) is not the project's.
+#[test]
+fn looks_for_catalogs_no_higher_than_the_repository() {
+    let r = registry();
+    let env = Env::new(&r);
+    std::fs::write(env.root.join("pnpm-workspace.yaml"), "catalog:\n  b: 1.1.0\n").unwrap();
+    env.manifest(json!({ "dependencies": { "b": "catalog:" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/b/index.js").contains("b@1.1.0"), "above the project, as pnpm finds it");
+    std::fs::create_dir_all(env.project().join(".git")).unwrap();
+    let out = env.jpm(&["install"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && err.contains("no catalogs are defined here or above"), "{err}");
+}
+
 #[test]
 fn hoists_one_of_every_package_for_undeclared_imports() {
     let r = registry();
