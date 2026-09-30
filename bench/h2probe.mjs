@@ -21,7 +21,7 @@ async function h1(conns) {
   return { ms: now() - t, bytes, heads };
 }
 async function h2(conns, streams) {
-  const sessions = Array.from({ length: conns }, () => http2.connect('https://registry.npmjs.org'));
+  const sessions = Array.from({ length: conns }, () => { const s = http2.connect('https://registry.npmjs.org', { settings: { initialWindowSize: 8 << 20 } }); s.on('connect', () => s.setLocalWindowSize(64 << 20)); return s; });
   let k = 0; const heads = []; let bytes = 0; const t = now();
   await pool(streams, (u) => new Promise((ok, fail) => {
     const s = sessions[k++ % conns]; const t0 = now();
@@ -39,8 +39,9 @@ function show(name, r) {
 for (let round = 0; round < 5; round++) {
   show('h1 32', await h1(32));
   show('h1 64', await h1(64));
+  show('h2 1x32', await h2(1, 32));
   show('h2 1x64', await h2(1, 64));
   show('h2 1x128', await h2(1, 128));
-  show('h2 2x256', await h2(2, 256));
+  show('h2 2x128', await h2(2, 128));
   show('h2 4x558', await h2(4, 558));
 }
