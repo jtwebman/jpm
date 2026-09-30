@@ -324,3 +324,31 @@ fn a_lockfile_cannot_swap_directories_that_share_a_name() {
     env.write("jpm.lock", &lock);
     env.ok(&["ci"]);
 }
+
+#[test]
+fn a_tree_with_a_directory_and_an_alias_installs_once() {
+    // A `file:` directory inside the project is read on every install, so the no-op is the
+    // linker's: nuxt's `@nuxt/cli: npm:@nuxt/cli-nightly@…` beside its fixtures' directories
+    // was linked again every time, and every entry with a bin rebuilt on Windows.
+    let r = Registry::start(vec![
+        pkg("tool", "1.0.0", json!({ "bin": { "tool": "cli.js" } })).file("cli.js", 0o755, "#!/usr/bin/env node\n"),
+        pkg("user", "1.0.0", json!({ "dependencies": { "tool": "1.0.0" } })),
+    ]);
+    let env = Env::new(&r);
+    // Entries in the project, which a relink checks one by one.
+    env.write(
+        ".npmrc",
+        "global-store=false
+",
+    );
+    env.write("fixture/package.json", r#"{ "name": "fixture", "version": "1.0.0" }"#);
+    env.manifest(json!({ "dependencies": { "cli": "npm:user@1.0.0", "fixture": "file:fixture" } }));
+    env.ok(&["install"]);
+    assert!(env.ok(&["install"]).contains("up to date"));
+    // Relinked, with every entry already right: none is rebuilt.
+    std::fs::remove_dir_all(env.path("node_modules/cli")).ok();
+    let _ = std::fs::remove_file(env.path("node_modules/cli"));
+    let out = env.ok(&["install"]);
+    assert!(!out.contains("repaired") && !out.contains("up to date"), "{out}");
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
