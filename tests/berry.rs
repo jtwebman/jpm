@@ -791,15 +791,17 @@ fn pnp_a_missing_peer_is_installed() {
 }
 
 #[test]
-fn pnp_a_peer_out_of_the_roots_range_gets_a_version_in_it() {
+fn pnp_a_peer_out_of_the_roots_range_links_the_roots() {
     // Yarn links the root's no-deps 2.0.0 to peer-deps-fixed (^1.0.0) with a warning (YN0060),
-    // pnpm too. jpm settles a peer only on a version in its range: the root's when it fits,
-    // else the newest that does, and so warns of nothing.
+    // and so do pnpm and jpm: one copy of the peer, not a second one in its range.
     let r = berry();
     let env = install(&r, json!({ "dependencies": { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } }), &[]);
     assert_eq!(walk(&env, "", &["peer-deps-fixed", "no-deps"]), walk(&env, "", &["no-deps"]));
-    let env = install(&r, json!({ "dependencies": { "peer-deps-fixed": "1.0.0", "no-deps": "2.0.0" } }), &[]);
-    assert_eq!(id(&env, "", &["peer-deps-fixed", "no-deps"]), "no-deps@1.1.0");
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "peer-deps-fixed": "1.0.0", "no-deps": "2.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("unmet peer no-deps@^1.0.0 of peer-deps-fixed@1.0.0"), "{out}");
+    assert_eq!(walk(&env, "", &["peer-deps-fixed", "no-deps"]), walk(&env, "", &["no-deps"]));
     assert_eq!(id(&env, "", &["no-deps"]), "no-deps@2.0.0");
 }
 
@@ -815,24 +817,25 @@ fn meta_an_optional_peer_is_not_installed() {
 #[test]
 fn meta_a_mismatched_peer_below_the_root() {
     // The root's no-deps 1.1.0 is out of the range of mismatched-peer-deps-lvl1 (<=1.0.1) and
-    // lvl2 (1.0.0). Yarn warns and links 1.1.0. jpm settles a peer only in its range, and the
-    // two that miss it share the newest version that fits both: one copy, 1.0.0.
+    // lvl2 (1.0.0). Yarn warns and links 1.1.0, and so do pnpm and jpm: one copy for all three.
     let r = berry();
     for (top, chain) in [
         ("mismatched-peer-deps-lvl1", &["mismatched-peer-deps-lvl1"][..]),
         ("mismatched-peer-deps-lvl0", &["mismatched-peer-deps-lvl0", "mismatched-peer-deps-lvl1"][..]),
     ] {
         let env = install(&r, json!({ "dependencies": { top: "1.0.0", "no-deps": "1.1.0" } }), &[]);
+        let root = walk(&env, "", &["no-deps"]);
         let mut at = chain.to_vec();
         at.push("no-deps");
-        let lvl1 = walk(&env, "", &at);
-        assert_eq!(id(&env, "", &at), "no-deps@1.0.0", "{top}");
+        assert_eq!(id(&env, "", &at), "no-deps@1.1.0", "{top}");
+        assert_eq!(walk(&env, "", &at), root, "{top}");
         at.pop();
         at.extend(["mismatched-peer-deps-lvl2", "no-deps"]);
-        assert_eq!(walk(&env, "", &at), lvl1, "{top}");
+        assert_eq!(walk(&env, "", &at), root, "{top}");
         if top == "mismatched-peer-deps-lvl0" {
-            assert_eq!(id(&env, "", &[top, "no-deps"]), "no-deps@1.1.0");
+            assert_eq!(walk(&env, "", &[top, "no-deps"]), root);
         }
+        assert!(env.lock()["packages"].get("no-deps@1.0.0").is_none(), "{top}");
     }
 }
 
