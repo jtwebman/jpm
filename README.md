@@ -226,6 +226,7 @@ A dependency can be a directory, given relative to the package.json that names i
   names in turn is installed too. This is npm's default (`install-links=false`). Its
   package.json is read on every install, so an edit there makes the lockfile stale, as an edit
   to a workspace's does. Its own lifecycle scripts do not run.
+- yarn's `portal:<dir>` is read as `file:<dir>`: the directory linked, its dependencies installed.
 - `file:<dir>` outside the project (`file:../sibling`) is linked as `link:` is, with a warning:
   installing its dependencies would mean writing its `node_modules`, and jpm writes nothing
   outside the project. Run `jpm install` in that directory for them.

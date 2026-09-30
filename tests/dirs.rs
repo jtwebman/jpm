@@ -99,6 +99,21 @@ fn installs_a_file_directory_as_a_workspace() {
 }
 
 #[test]
+fn installs_a_yarn_portal_as_a_file_directory() {
+    // storybook's scripts workspace takes its local eslint rules by `portal:`.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write("rules/package.json", r#"{ "name": "rules", "version": "1.0.0", "dependencies": { "b": "1.0.0" } }"#);
+    env.manifest(json!({ "name": "app", "dependencies": { "rules": "portal:./rules" } }));
+    env.ok(&["install"]);
+    leads(&env.project(), "rules", &env.project().join("rules"));
+    assert!(env.read("rules/node_modules/b/index.js").contains("b@1.0.0"));
+    assert_eq!(env.lock()["root"]["dependencies"]["rules"], "link:rules");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
+}
+
+#[test]
 fn links_a_directory_outside_the_project_without_writing_there() {
     let r = registry();
     let env = Env::new(&r);
