@@ -31,7 +31,7 @@ pub struct Config {
     /// `ignore-scripts`: run no install or lifecycle scripts.
     pub ignore_scripts: bool,
     /// pnpm's `block-exotic-subdeps`: only the root and workspaces may take a package from a git
-    /// repository or a tarball url.
+    /// repository or a tarball url. On unless the user says `false` (a project's .npmrc cannot).
     pub block_exotic_subdeps: bool,
     /// `legacy-peer-deps`: install no peers; link one only to what the tree already has.
     pub legacy_peer_deps: bool,
@@ -64,6 +64,7 @@ pub struct Flags {
     pub global_store: Option<bool>,
     pub legacy_peer_deps: Option<bool>,
     pub verify_node_signature: Option<bool>,
+    pub block_exotic_subdeps: Option<bool>,
 }
 
 type Layer = BTreeMap<String, String>;
@@ -254,8 +255,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         // Any layer can turn scripts off and none can turn them back on: a cloned repo's .npmrc
         // must not undo the user's own `ignore-scripts=true`.
         ignore_scripts: layers.iter().any(|l| l.get("ignore-scripts").is_some_and(|v| v == "true")),
-        // Likewise: a cloned repo's .npmrc cannot undo the user's own `block-exotic-subdeps=true`.
-        block_exotic_subdeps: layers.iter().any(|l| l.get("block-exotic-subdeps").is_some_and(|v| v == "true")),
+        // On, as in pnpm 10.26 and later; the project's own `false` is taken out before this.
+        block_exotic_subdeps: merged.get("block-exotic-subdeps").is_none_or(|v| v != "false"),
         legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
         cafile: set("cafile").map(PathBuf::from),
         // npm's ini reads `\n` in a quoted value as a line break.
@@ -367,6 +368,9 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     if let Some(l) = flags.legacy_peer_deps {
         cli.insert("legacy-peer-deps".into(), l.to_string());
     }
+    if let Some(b) = flags.block_exotic_subdeps {
+        cli.insert("block-exotic-subdeps".into(), b.to_string());
+    }
     if let Some(v) = flags.verify_node_signature {
         cli.insert("verify-node-signature".into(), v.to_string());
     }
@@ -383,8 +387,8 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
 const USER_ONLY: [&str; 5] = ["ca", "cafile", "proxy", "https-proxy", "http-proxy"];
 
 /// Take out of a project's layer what would weaken the checks the layers `below` it (global,
-/// user) make: the settings above, `strict-ssl=false`, `verify-node-signature=false`, and a
-/// release cutoff laxer than theirs. The keys taken out, as written.
+/// user) make: the settings above, `strict-ssl=false`, `block-exotic-subdeps=false`,
+/// `verify-node-signature=false`, and a release cutoff laxer than theirs. The keys taken out, as written.
 fn restrict_project(project: &mut Layer, below: &[Layer]) -> Result<Vec<String>> {
     let mut dropped = Vec::new();
     let mut take_out = |project: &mut Layer, key: &str, when: &dyn Fn(&str) -> bool| {
@@ -396,6 +400,9 @@ fn restrict_project(project: &mut Layer, below: &[Layer]) -> Result<Vec<String>>
         take_out(project, key, &|v| !matches!(v, "" | "null" | "false"));
     }
     take_out(project, "strict-ssl", &|v| v == "false");
+    if project.get("block-exotic-subdeps").is_some_and(|v| v == "false") {
+        take_out(project, "block-exotic-subdeps", &|_| true);
+    }
     if project.get("verify-node-signature").is_some_and(|v| v == "false") {
         take_out(project, "verify-node-signature", &|_| true);
     }
@@ -483,12 +490,17 @@ mod tests {
     }
 
     #[test]
-    fn block_exotic_subdeps_only_turns_on() {
+    fn block_exotic_subdeps_is_on_unless_the_user_turns_it_off() {
         let on: Layer = [("block-exotic-subdeps".into(), "true".into())].into();
         let off: Layer = [("block-exotic-subdeps".into(), "false".into())].into();
-        assert!(to_config(&[on.clone(), off.clone()], None).unwrap().block_exotic_subdeps, "a project cannot undo it");
-        assert!(!to_config(&[off], None).unwrap().block_exotic_subdeps);
-        assert!(!to_config(&[], None).unwrap().block_exotic_subdeps, "off by default");
+        assert!(to_config(&[], None).unwrap().block_exotic_subdeps, "on by default");
+        assert!(!to_config(std::slice::from_ref(&off), None).unwrap().block_exotic_subdeps);
+        assert!(!to_config(&[on.clone(), off.clone()], None).unwrap().block_exotic_subdeps, "a later layer wins");
+        assert!(to_config(&[off.clone(), on], None).unwrap().block_exotic_subdeps);
+        // Not the project's own file: its `false` is taken out.
+        let mut project = off;
+        assert_eq!(restrict_project(&mut project, &[]).unwrap(), ["block-exotic-subdeps"]);
+        assert!(to_config(&[project], None).unwrap().block_exotic_subdeps);
     }
 
     #[test]
@@ -539,7 +551,7 @@ mod tests {
             (project, dropped)
         };
         let (left, dropped) = restricted(
-            "strict-ssl=false\nca=x\ncafile=/c.pem\nproxy=http://p\nhttps-proxy=http://p\nhttp-proxy=http://p\nverify-node-signature=false\nmin-release-age=0\nregistry=https://r.test\n@s:registry=https://s.test\nnoproxy=a.test\nnode-mirror:release=https://m.test",
+            "strict-ssl=false\nca=x\ncafile=/c.pem\nproxy=http://p\nhttps-proxy=http://p\nhttp-proxy=http://p\nblock-exotic-subdeps=false\nverify-node-signature=false\nmin-release-age=0\nregistry=https://r.test\n@s:registry=https://s.test\nnoproxy=a.test\nnode-mirror:release=https://m.test",
             "",
         );
         assert_eq!(
@@ -551,6 +563,7 @@ mod tests {
                 "https-proxy",
                 "http-proxy",
                 "strict-ssl",
+                "block-exotic-subdeps",
                 "verify-node-signature",
                 "min-release-age"
             ]

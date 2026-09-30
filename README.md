@@ -282,10 +282,12 @@ jpm.lock, and belong in git's credential helper or ssh. `gist:` is not read yet.
   it pins one. A package's own git or tarball edge must be what its package.json (or the
   registry's copy of it) names. An edit to jpm.lock alone cannot put another repository, commit
   or url in its place: `--frozen-lockfile` fails, and `jpm install` resolves package.json again.
-- **Dependencies' repositories.** A registry package may depend on a git repository or a
-  tarball url, as with npm. `block-exotic-subdeps=true` in .npmrc (pnpm's setting; off by
-  default here) refuses that: only the root and workspaces may. Either way, for a repository no
-  package.json of the project names, git asks nothing: no credential prompt, askpass program or
+- **Dependencies' repositories.** Only the root and workspaces may take a package from a git
+  repository or a tarball url: a registry package that depends on one is refused, as pnpm 10.26
+  and later refuse it (`block-exotic-subdeps`, on by default). `block-exotic-subdeps=false` in
+  `~/.npmrc`, `npm_config_block_exotic_subdeps=false` or `--no-block-exotic-subdeps` allows it,
+  as npm does; a project's own .npmrc cannot. Either way, for a repository no package.json of
+  the project names, git asks nothing: no credential prompt, askpass program or
   Git Credential Manager window, and ssh runs in batch mode (no passphrase or host-key question)
   unless `GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand` runs it another way. For the
   project's own repositories, git asks on a terminal as it always does.
@@ -439,7 +441,7 @@ or `ignore-scripts=true` in .npmrc turns every script off.
 
 The project's `.npmrc` comes with the repository, so it cannot weaken what the others check:
 `ca`, `cafile`, `proxy`, `https-proxy`, `http-proxy`, `strict-ssl=false`,
-`verify-node-signature=false`, and a `min-release-age` or `before` that lets in newer versions
+`block-exotic-subdeps=false`, `verify-node-signature=false`, and a `min-release-age` or `before` that lets in newer versions
 than the user's setting (or the default) does, are ignored there with a warning naming them.
 Set them in `~/.npmrc`, the global npmrc, `npm_config_*` or a flag. A cloned repository could
 otherwise send the user's registry token through a proxy of its choosing. `registry`, scoped
