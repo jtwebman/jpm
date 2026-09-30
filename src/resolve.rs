@@ -423,7 +423,8 @@ impl Walk<'_> {
             push(edge(&version));
             return Ok(());
         }
-        let m = self.pick(&spec, fresh, self.tops.contains_key(from))?;
+        let top = self.tops.contains_key(from);
+        let m = self.pick(&spec, fresh, top, top || over.is_some())?;
         m.integrity()?;
         let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
@@ -457,12 +458,14 @@ impl Walk<'_> {
     /// Memoized on the fetched name and range, so two aliases of one package share a pick. A
     /// package's edge (not a top's) takes the version a top's own edge to that package gets
     /// where its range allows it, as pnpm and npm dedupe it: a root pinning 1.0.0 keeps a
-    /// dependency's ^1 off 1.1.0.
-    fn pick(&self, spec: &Spec, fresh: bool, top: bool) -> Result<Arc<Manifest>> {
+    /// dependency's ^1 off 1.1.0. `own` is a spec the project wrote: a top's edge, or an
+    /// override's.
+    fn pick(&self, spec: &Spec, fresh: bool, top: bool, own: bool) -> Result<Arc<Manifest>> {
         let key = format!(
-            "{}{}{}@{}",
+            "{}{}{}{}@{}",
             if fresh { "!" } else { "" },
             if top { "^" } else { "" },
+            if own { "=" } else { "" },
             spec.fetch_name,
             spec.fetch_spec
         );
@@ -476,13 +479,22 @@ impl Walk<'_> {
             let kept = if self.opts.dedupe && !fresh { self.kept(spec) } else { None };
             let preferred = self.preferred(spec);
             let direct = if top || exact.is_some() { None } else { self.direct(spec) };
-            let wanted = exact.or_else(|| kept.clone()).or_else(|| preferred.clone()).or_else(|| direct.clone());
             // A version a lockfile names was taken before: the release age is for new picks, and
-            // a top's pick has met it already.
-            let exempt = wanted.is_some() && (wanted == kept || wanted == preferred || wanted == direct);
+            // a top's pick has met it already. A version the project pins itself is what it asked
+            // for by name; one a package pins waits out the release age as a range's pick does.
+            let pinned = exact.as_deref().is_some_and(|v| own || self.pinned_by_top(spec, v));
+            let wanted = exact.or_else(|| kept.clone()).or_else(|| preferred.clone()).or_else(|| direct.clone());
+            let exempt = pinned || (wanted.is_some() && (wanted == kept || wanted == preferred || wanted == direct));
             self.opts.registry.pick(spec, wanted.as_deref(), exempt)
         })
         .clone()
+    }
+
+    /// Whether a top's own edge pins the version `spec` pins.
+    fn pinned_by_top(&self, spec: &Spec, version: &str) -> bool {
+        let tops = self.direct.get(&spec.fetch_name).into_iter().flatten();
+        tops.filter(|own| own.kind == Kind::Version)
+            .any(|own| semver::parse(&own.fetch_spec).is_some_and(|v| v.text == version))
     }
 
     /// The newest version a top's own registry edge to this package gets that `spec` allows.
@@ -497,7 +509,8 @@ impl Walk<'_> {
             }
             // As the top's edge takes it: the locked version while it fits, else a pick.
             let kept = if self.opts.dedupe { None } else { self.kept(own) };
-            let Some(version) = kept.or_else(|| self.pick(own, false, true).ok().map(|m| m.version.clone())) else {
+            let Some(version) = kept.or_else(|| self.pick(own, false, true, true).ok().map(|m| m.version.clone()))
+            else {
                 continue;
             };
             let v = semver::parse(&version).filter(|v| semver::satisfies_version(v, &spec.fetch_spec, false));
@@ -1050,7 +1063,7 @@ impl Walk<'_> {
                     return Some(j.range.clone());
                 }
                 spec::parse_dep(&j.name, &j.range)
-                    .and_then(|s| self.pick(&s, true, false))
+                    .and_then(|s| self.pick(&s, true, false, self.tops.contains_key(&j.from)))
                     .ok()
                     .map(|m| m.version.clone())
             })

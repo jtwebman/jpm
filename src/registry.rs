@@ -411,10 +411,16 @@ impl Registry {
     /// One pinned version, or `None` when nothing serves it. `exempt` looks past the release
     /// cutoff.
     fn pinned(&self, name: &str, version: &str, exempt: bool) -> Result<Option<Arc<Manifest>>> {
-        // An unscoped pin is asked for by its own route, past the release cutoff. When the
-        // route was never kept, a packument kept from an earlier run that answers without
-        // asking goes first. Only what was kept before the run decides: never whether another
-        // edge has read the packument by then, so a pin comes from the same document every run.
+        // A pin the release cutoff holds to is read from the packument as of the cutoff, as a
+        // range is: a route carries no publish date. An abbreviated document untouched since
+        // the cutoff proves its versions old; only a newer one sends for the full one's dates.
+        if !exempt && self.before.is_some() && !self.excluded(name) {
+            return Ok(self.packument(name).ok().and_then(|doc| doc.version(version)));
+        }
+        // Any other unscoped pin is asked for by its own route. When the route was never kept,
+        // a packument kept from an earlier run that answers without asking goes first. Only
+        // what was kept before the run decides: never whether another edge has read the
+        // packument by then, so a pin comes from the same document every run.
         let unscoped = !name.starts_with('@');
         let url = self.path(name)?;
         let route_kept = self.kept_before(&format!("full {url}/{version}"));
@@ -527,6 +533,20 @@ fn engine_ok(m: &Manifest) -> bool {
 /// `npm-pick-manifest`: a packument and a spec in, one manifest out.
 pub fn pick_manifest(doc: &Packument, spec: &Spec) -> Result<Arc<Manifest>> {
     let fail = || {
+        let pin = (spec.kind == Kind::Version).then(|| semver::parse(&spec.fetch_spec)).flatten();
+        if let (Some(before), Some(v)) = (&doc.before, &pin)
+            && let Some(date) = doc.held.get(&v.text)
+        {
+            return Error::new(
+                "ETARGET",
+                format!(
+                    "{}@{} is pinned exactly, but was published {date}, after the release cutoff {before} \
+                     (min-release-age); add {} to min-release-age-exclude (minimumReleaseAgeExclude in \
+                     pnpm-workspace.yaml) to let it in",
+                    spec.fetch_name, v.text, spec.fetch_name
+                ),
+            );
+        }
         if let Some(before) = &doc.before {
             return Error::new(
                 "ETARGET",

@@ -1731,6 +1731,64 @@ fn keeps_new_versions_an_imported_lockfile_names() {
 }
 
 #[test]
+fn a_package_pinning_a_version_waits_out_the_release_age() {
+    let fresh = json!({ "_published": "2999-01-01T00:00:00.000Z" });
+    let r = Registry::start(vec![
+        pkg("a", "1.0.0", json!({ "dependencies": { "b": "1.0.0" } })),
+        pkg("b", "1.0.0", fresh.clone()),
+        pkg("@s/fresh", "1.0.0", fresh),
+        pkg("c", "1.0.0", json!({ "dependencies": { "d": "1.0.0" } })),
+        pkg("d", "1.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    let aged = |args: &[&str]| env.command(args).env("npm_config_min_release_age", "1").output().unwrap();
+    // a pins b exactly, and b is too new: named, with who pins it, when it came out and the cutoff.
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0" } }));
+    let out = aged(&["lock"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{text}");
+    for part in [
+        "b@1.0.0 is pinned exactly, but was published 2999-01-01T00:00:00.000Z, after the release cutoff",
+        "min-release-age-exclude",
+        "required by a@1.0.0",
+    ] {
+        assert!(text.contains(part), "{part}: {text}");
+    }
+    // Excluded, it is let in.
+    env.write(".npmrc", "min-release-age-exclude=b\n");
+    let out = aged(&["lock"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.lock()["packages"].get("b@1.0.0").is_some());
+    std::fs::remove_file(env.path(".npmrc")).unwrap();
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    // The project's own pins are what it asked for: at the root, scoped or not, and in an
+    // override, however new. A package's pin to a version the root pins goes with it.
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0", "b": "1.0.0", "@s/fresh": "1.0.0" } }));
+    let out = aged(&["lock"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let lock = env.lock();
+    assert!(lock["packages"].get("b@1.0.0").is_some() && lock["packages"].get("@s/fresh@1.0.0").is_some());
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0" }, "overrides": { "b": "1.0.0" } }));
+    let out = aged(&["lock"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // A lockfile already resolved is installed as it is.
+    env.manifest(json!({ "dependencies": { "a": "^1.0.0" } }));
+    let out = aged(&["install"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.exists("node_modules/a"));
+    // A pin to an old version is proved old by the abbreviated document alone: d is asked for
+    // once, and never by its route.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "c": "^1.0.0" } }));
+    let asked = r.hits.lock().unwrap().len();
+    let out = env.command(&["lock"]).env("npm_config_min_release_age", "1").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let hits: Vec<String> = r.hits.lock().unwrap()[asked..].iter().filter(|h| h.starts_with("/d")).cloned().collect();
+    assert_eq!(hits, ["/d"]);
+}
+
+#[test]
 fn reads_the_release_age_in_pnpm_workspace_yaml() {
     let at = |date: &str| json!({ "_published": date });
     let r = Registry::start(vec![
