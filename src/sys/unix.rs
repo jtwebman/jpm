@@ -30,7 +30,12 @@ pub fn exec(command: &mut Command) -> io::Result<i32> {
     Err(command.exec())
 }
 
-pub fn leave_interrupts_to_children() {}
+/// Nothing to hold: unix delivers Ctrl+C to the whole process group.
+pub struct Interrupts;
+
+pub fn leave_interrupts_to_children() -> Interrupts {
+    Interrupts
+}
 
 /// A terminal takes escape sequences as they are.
 pub fn vt() -> bool {

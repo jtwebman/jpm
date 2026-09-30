@@ -15,8 +15,8 @@
 //!   CA bundle; none on macOS, whose keychain is not read yet.
 //! - `exec(command)`: run a command in place of this process, returning only on failure or,
 //!   where a process cannot be replaced, with the command's exit code.
-//! - `leave_interrupts_to_children()`: while children run, Ctrl+C is theirs to act on (Windows;
-//!   unix delivers it to the whole process group).
+//! - `leave_interrupts_to_children()`: while the value it returns lives (around a child's wait),
+//!   Ctrl+C is the children's to act on (Windows; unix delivers it to the whole process group).
 //! - `vt()`: whether stderr takes escape sequences (turned on for a Windows console that can).
 //! - `on_interrupt(undo)`: Ctrl+C writes `undo` to stderr before ending the process as before;
 //!   `None` stops that.

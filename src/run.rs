@@ -186,7 +186,7 @@ pub fn start_error(e: &std::io::Error, command: &Command) -> Error {
 
 /// Run to completion, sharing this process's stdio; the exit code, or 128 + a signal's number.
 pub fn wait(command: &mut Command) -> Result<i32> {
-    crate::sys::leave_interrupts_to_children();
+    let _children = crate::sys::leave_interrupts_to_children();
     let status = command.status().map_err(|e| start_error(&e, command))?;
 
     if let Some(code) = status.code() {
