@@ -2,9 +2,10 @@
 //! row's answer is node-semver's as npm asks it (`loose: true`); see that directory's README.
 //!
 //! Not run: increments.js and truncations.js (jpm never bumps or truncates a version) and the
-//! version-{gt,lt,not-gt,not-lt}-range.js tables (jpm has no gtr, ltr or outside). Rows with
+//! version-{gt,lt,not-gt,not-lt}-range.js tables and test/ranges/subset.js (jpm has no gtr, ltr,
+//! outside or subset: overrides match with intersects, as pnpm's do). Rows with
 //! `includePrerelease` run where jpm takes that flag (parsing and satisfies) and are skipped in
-//! comparator-intersection and subset, whose jpm functions have no such mode.
+//! comparator-intersection, whose jpm function has no such mode.
 
 use super::*;
 use serde_json::Value;
@@ -19,7 +20,6 @@ const TABLES: &[(&str, &str)] = &[
     ("range-exclude", include_str!("../../tests/conformance/semver/range-exclude.json")),
     ("range-intersection", include_str!("../../tests/conformance/semver/range-intersection.json")),
     ("comparator-intersection", include_str!("../../tests/conformance/semver/comparator-intersection.json")),
-    ("subset", include_str!("../../tests/conformance/semver/subset.json")),
 ];
 
 /// Rows where jpm answers otherwise on purpose: (table, first column, why).
@@ -80,12 +80,11 @@ fn answer(table: &str, row: &[Value]) -> Option<Value> {
             let (x, y) = (intersects(s(0), s(1)), intersects(s(1), s(0)));
             if x != y { Value::from("asymmetric") } else { Value::from(x) }
         }
-        "comparator-intersection" | "subset" if flag(2) => return None,
+        "comparator-intersection" if flag(2) => return None,
         "comparator-intersection" => {
             let (x, y) = (intersects(s(0), s(1)), intersects(s(1), s(0)));
             if x != y { Value::from("asymmetric") } else { Value::from(x) }
         }
-        "subset" => Value::from(subset(s(0), s(1))),
         _ => panic!("no runner for {table}"),
     })
 }

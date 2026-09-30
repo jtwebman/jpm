@@ -9,8 +9,7 @@ hand. `src/semver/conformance.rs` runs every row against jpm's semver.
   [LICENSE](LICENSE).
 - Generator: `tests/conformance/gen/semver.mjs`
 
-The tables come from `test/fixtures/*.js` at that commit, and `subset.json` from the table in
-`test/ranges/subset.js`. Each row keeps the fixture's inputs; its answer, the last column, is
+The tables come from `test/fixtures/*.js` at that commit. Each row keeps the fixture's inputs; its answer, the last column, is
 node-semver's own at that commit, called the way npm calls it (`loose: true`, which
 npm-package-arg and npm-pick-manifest pass). Where a fixture tests strict mode and the loose
 answer differs, the fixture's strict answer follows as an extra column, for the record. The
