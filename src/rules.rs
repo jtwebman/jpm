@@ -144,6 +144,14 @@ pub fn find<'a>(
     rules.iter().find(|o| o.matches(parent, name, range)).map(|o| o.value.as_deref())
 }
 
+/// Overrides written in npm's nested form, as rules: how bun.lock records whatever package.json
+/// said, a pnpm `a>b` or a yarn `**/a/b` nested under `a`, a `$name` read.
+pub fn npm_form(v: &Value) -> Vec<Override> {
+    let mut rules = Rules::default();
+    rules.npm(Some(v));
+    rules.overrides
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Rules {
     /// The root's package.json, which a `catalog:` value is read for.

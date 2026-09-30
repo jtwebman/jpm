@@ -302,7 +302,12 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
             overrides.same_as(&Value::Object(pnpm.map(|o| (o.selector(), o.value_text().into())).collect()))
         } else {
             let given = [doc.get("overrides"), doc.get("resolutions")].into_iter().flatten().find(|v| !v.is_null());
+            // bun writes the rules it read, not package.json's text: the same rules are the same.
+            let rule = |o: &rules::Override| (o.parent.clone(), o.name.clone(), o.range.clone(), o.value.clone());
             overrides.same_as(given.unwrap_or(&empty))
+                || (file == "bun.lock"
+                    && rules::npm_form(overrides).iter().map(rule).collect::<BTreeSet<_>>()
+                        == manifest.overrides.iter().map(rule).collect())
         };
         if !same {
             return Err(stale());
@@ -1433,8 +1438,11 @@ mod tests {
         "https://registry.npmjs.org".to_string()
     }
 
+    /// package.json as an install reads it: its overrides read too.
     fn manifest(doc: Value) -> RootManifest {
-        RootManifest::parse(&doc.to_string(), Path::new("package.json")).unwrap()
+        let mut m = RootManifest::parse(&doc.to_string(), Path::new("package.json")).unwrap();
+        crate::rules::read(Path::new(""), &m).unwrap().apply(&mut m).unwrap();
+        m
     }
 
     fn read(file: &str, text: &str, doc: Value) -> Result<ForeignLock> {
@@ -2339,3 +2347,7 @@ snapshots:
 #[cfg(test)]
 #[path = "../tests/conformance/arborist.rs"]
 mod arborist;
+
+#[cfg(test)]
+#[path = "../tests/conformance/bun_lock.rs"]
+mod bun_lock;
