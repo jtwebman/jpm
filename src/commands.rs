@@ -446,7 +446,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let prefetching = !ctx.opts.production && !ctx.dedupe;
     // Downloads start as the walk picks each package and go on past the plan: linking starts
     // once the plan is made, each entry waiting only for the packages it reads.
-    let fetcher = Fetcher::start(&store, if prefetching { pool::network_threads() } else { 0 });
+    let fetch_threads = std::env::var("JPM_FETCH_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(pool::network_threads);
+    let fetcher = Fetcher::start(&store, if prefetching { fetch_threads } else { 0 });
     let skipped: Mutex<BTreeMap<String, bool>> = Mutex::default();
     let on_pick = |pkg: &Package, from: &str| {
         let mut skipped = skipped.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1198,7 +1199,7 @@ fn resolve_lock(
         prefer,
         legacy_peers: ctx.config().legacy_peer_deps || prefer.is_some_and(|p| p.legacy_peers),
         block_exotic: ctx.config().block_exotic_subdeps,
-        threads: pool::network_threads(),
+        threads: std::env::var("JPM_RESOLVE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(pool::network_threads),
     };
     let mut resolution = resolve::resolve(&project.manifest, &options(locked.as_ref()))?;
     // Another pass lets kept ranges move onto versions a new range brought in.
