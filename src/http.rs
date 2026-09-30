@@ -501,16 +501,27 @@ impl Client {
         }
         let head = request_head(url, &path, &all, authorization)?;
         let key: PoolKey = (url.tls, url.host.clone(), url.port);
+        let t0 = crate::ui::ms();
         // A pooled connection the server has since closed fails at once: then a fresh one.
         if let Some(mut conn) = self.take(&key) {
             match exchange(&mut conn, &head) {
-                Ok((status, headers)) => return Ok(self.body(conn, key, status, headers)),
+                Ok((status, headers)) => {
+                    if crate::ui::trace_on() {
+                        eprintln!("head {t0} {t0} {} reused {}", crate::ui::ms(), url.target);
+                    }
+                    return Ok(self.body(conn, key, status, headers));
+                }
                 Err(e) if !is_stale(&e) => return Err(e),
                 Err(_) => {}
             }
         }
+        let t0 = crate::ui::ms();
         let mut conn = self.connect(url, proxy.as_ref())?;
+        let tc = crate::ui::ms();
         let (status, headers) = exchange(&mut conn, &head)?;
+        if crate::ui::trace_on() {
+            eprintln!("head {t0} {tc} {} new {}", crate::ui::ms(), url.target);
+        }
         Ok(self.body(conn, key, status, headers))
     }
 

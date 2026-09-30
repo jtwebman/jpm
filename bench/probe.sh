@@ -14,13 +14,10 @@ run() { # run <fixture> <cmd> <tag> [VAR=value...]
   echo "$(grep -E '^time|^phase' $OUT/tr-$f-$cmd-$tag.txt | tr '\n' ' ') $f $cmd $tag"
 }
 for f in nuxt next nitro; do run $f lock warmup >/dev/null; done
-for i in 1 2 3; do
-  for f in nuxt next nitro; do
-    run $f install fifo-$i
-    run $f install lifo-$i JPM_LIFO=1
-    run $f lock fifo-$i
-    run $f lock lifo-$i JPM_LIFO=1
-  done
+for i in 1 2 3 4 5 6; do
+  run nuxt install $i
+  run next install $i
+  run nuxt lock $i
 done
 prof() { # prof <fixture> <cmd>
   local f=$1 cmd=$2 d=$W/$1; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/$f/package.json $d/proj/
@@ -31,5 +28,3 @@ prof() { # prof <fixture> <cmd>
   perf report -i $W/p.data --no-children --sort comm --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -20 > $OUT/comm-$f-$cmd.txt
   rm -f $W/p.data
 }
-prof nuxt install
-prof nuxt lock
