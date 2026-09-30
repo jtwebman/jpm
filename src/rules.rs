@@ -509,6 +509,8 @@ mod tests {
         // pnpm: the edge's range lies inside.
         assert_eq!(at(None, "t", "^2.2.0"), Some(Some("3.0.0")));
         assert_eq!(at(None, "t", "^2.0.0"), None);
+        // The caret's `<3.0.0-0` is `<3.0.0` to the edge: a pin meant for it is not missed.
+        assert_eq!(at(None, "t", ">=2.2.0 <3.0.0"), Some(Some("3.0.0")));
         // yarn: the same range.
         assert_eq!(at(None, "u", "^1.0.0"), Some(Some("1.5.0")));
         assert_eq!(at(None, "u", "^1.1.0"), None);
