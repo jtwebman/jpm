@@ -93,10 +93,3 @@ write('comparator-intersection', ['a', 'b', 'includePrerelease', 'intersects'],
     const o = { includePrerelease: !!incPr }
     return row([a, b, !!incPr], semver.intersects(a, b, npm(o)), want, semver.intersects(a, b, o))
   }))
-
-// subset's table lives in its test file rather than in fixtures/.
-const subsetTest = readFileSync(join(src, 'test/ranges/subset.js'), 'utf8').replace(/\r\n/g, '\n')
-const subsetCases = new Function(`return ${subsetTest.match(/const cases = (\[[\s\S]*?\n\])\n/)[1]}`)()
-write('subset', ['sub', 'dom', 'includePrerelease', 'subset'],
-  subsetCases.map(([sub, dom, want, o]) =>
-    row([sub, dom, incPrOf(o)], semver.subset(sub, dom, npm(o)), want, semver.subset(sub, dom, o))))

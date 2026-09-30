@@ -121,7 +121,8 @@ impl Override {
             Some("") => self.value.as_deref().is_some_and(|v| semver::satisfies(v, range)),
             Some(r) => match self.by {
                 Manager::Npm => semver::intersects(range, r),
-                Manager::Pnpm => range == r || semver::subset(range, r),
+                // As pnpm's read-package-hook (isIntersectingRange) has it, not a subset.
+                Manager::Pnpm => range == r || semver::intersects(range, r),
                 Manager::Yarn => range == r,
             },
         }
@@ -553,11 +554,11 @@ mod tests {
         assert_eq!(at(None, "b", "^1.2.0"), Some(Some("1.1.0")));
         assert_eq!(at(None, "b", ">=0.5 <1.0.1"), Some(Some("1.1.0")));
         assert_eq!(at(None, "b", "^2"), None);
-        // pnpm: the edge's range lies inside.
+        // pnpm: the ranges meet, as its read-package-hook has it (isIntersectingRange).
         assert_eq!(at(None, "t", "^2.2.0"), Some(Some("3.0.0")));
-        assert_eq!(at(None, "t", "^2.0.0"), None);
-        // The caret's `<3.0.0-0` is `<3.0.0` to the edge: a pin meant for it is not missed.
+        assert_eq!(at(None, "t", "^2.0.0"), Some(Some("3.0.0")));
         assert_eq!(at(None, "t", ">=2.2.0 <3.0.0"), Some(Some("3.0.0")));
+        assert_eq!(at(None, "t", "<2.1.0"), None);
         // yarn: the same range.
         assert_eq!(at(None, "u", "^1.0.0"), Some(Some("1.5.0")));
         assert_eq!(at(None, "u", "^1.1.0"), None);

@@ -47,6 +47,20 @@ fn dep(lock: &Value, key: &str, name: &str) -> Value {
 }
 
 #[test]
+fn matches_a_pnpm_override_key_by_intersection_as_pnpm_does() {
+    // pnpm's read-package-hook applies `b@<1.5.0` to any edge whose range meets it, not only
+    // one inside it: a@1.1.0's `^1.1.0` reaches past 1.5.0 and still takes the override.
+    let r = registry();
+    let key = json!({ "dependencies": { "a": "1.1.0" }, "pnpm": { "overrides": { "b@<1.5.0": "1.0.0" } } });
+    let (_, lock, _) = installed(&r, key, &[]);
+    assert_eq!(dep(&lock, "a@1.1.0", "b"), "1.0.0");
+    // A key no version of the edge's range meets leaves it.
+    let apart = json!({ "dependencies": { "a": "1.1.0" }, "pnpm": { "overrides": { "b@>=2": "1.0.0" } } });
+    let (_, lock, _) = installed(&r, apart, &[]);
+    assert_eq!(dep(&lock, "a@1.1.0", "b"), "1.1.0");
+}
+
+#[test]
 fn applies_every_override_form() {
     let r = registry();
     let both = json!({ "a": "1.1.0", "c": "1.0.0" });
