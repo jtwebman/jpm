@@ -109,6 +109,22 @@ fn installs_a_yarn_portal_as_a_file_directory() {
     leads(&env.project(), "rules", &env.project().join("rules"));
     assert!(env.read("rules/node_modules/b/index.js").contains("b@1.0.0"));
     assert_eq!(env.lock()["root"]["dependencies"]["rules"], "link:rules");
+}
+
+#[test]
+fn links_a_workspace_protocol_path() {
+    // drizzle's integration tests take a workspace's build output by `workspace:../x/dist`.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "app", "workspaces": ["tests", "typebox"] }));
+    env.write("typebox/package.json", r#"{ "name": "typebox", "version": "1.0.0" }"#);
+    env.write("typebox/dist/package.json", r#"{ "name": "typebox", "version": "1.0.0", "main": "index.js" }"#);
+    env.write(
+        "tests/package.json",
+        r#"{ "name": "tests", "dependencies": { "typebox": "workspace:../typebox/dist" } }"#,
+    );
+    env.ok(&["install"]);
+    leads(&env.project().join("tests"), "typebox", &env.project().join("typebox/dist"));
     assert!(env.ok(&["install"]).contains("up to date"));
     env.ok(&["ci"]);
 }
