@@ -39,6 +39,9 @@ These are in the source repository only, never in jpm's binaries.
 | --- | --- | --- | --- |
 | [Project Wycheproof](https://github.com/C2SP/wycheproof) test vectors | Apache-2.0 | Copyright 2016 Google Inc. | `crates/crypto/tests/data`, `crates/pk/tests/data` (stored gzipped; the license is beside them as `WYCHEPROOF-LICENSE`) |
 | RFC test vectors (RFC 7748, 8032, 8439 and others) | IETF Trust | Copyright (c) the IETF Trust and the persons identified as the documents' authors | the crypto crates' tests, where each names its RFC |
+| [node-semver](https://github.com/npm/node-semver) test tables | ISC | Copyright (c) Isaac Z. Schlueter and Contributors | `tests/conformance/semver` (generated from them; the license is beside them) |
+| [npm-package-arg](https://github.com/npm/npm-package-arg) test cases | ISC | Copyright (c) npm, Inc. | `tests/conformance/npm-package-arg` (generated from them; the license is beside them) |
+| [hosted-git-info](https://github.com/npm/hosted-git-info) test cases | ISC | Copyright (c) 2015, Rebecca Turner | `tests/conformance/hosted-git-info` (generated from them; the license is beside them) |
 
 ---
 
@@ -70,6 +73,9 @@ SOFTWARE.
 ```
 
 ### ISC License (cmd-shim)
+
+The same terms cover node-semver, npm-package-arg and hosted-git-info, each under its own
+copyright line above; their full license files are beside their test data.
 
 ```
 The ISC License
