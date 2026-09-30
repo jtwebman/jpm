@@ -377,6 +377,92 @@ fn consumers_missing_one_peer_share_a_version_that_fits_them_all() {
 }
 
 #[test]
+fn a_peer_no_version_satisfies_takes_what_its_scope_has() {
+    // pnpm's registry-mock deadlock.b wants deadlock.c 2.0.0, which was never published, and its
+    // parent has 1.0.0: pnpm links that, with a warning, where jpm failed the install.
+    let r = Registry::start(vec![
+        pkg("host", "1.0.0", json!({})),
+        pkg("wants3", "1.0.0", json!({ "peerDependencies": { "host": "^3" } })),
+        pkg("mid", "1.0.0", json!({ "dependencies": { "wants3": "1.0.0", "host": "1.0.0" } })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "mid": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["wants3@1.0.0"]["dependencies"]["host"], "1.0.0");
+    assert!(out.contains("wants3@1.0.0 needs peer host@^3, which no version satisfies"), "{out}");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    // With nothing to take, it fails, as in pnpm.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "wants3": "1.0.0" } }));
+    assert!(!env.jpm(&["install"]).status.success());
+}
+
+#[test]
+fn a_peer_resolves_through_an_alias_of_its_package() {
+    // pnpm's registry-mock: abc's peer-a is the root's `peer-b: npm:@pnpm.e2e/peer-a@1.0.0`, and of
+    // several aliases of peer-c the newest, linked as the package itself.
+    let r = Registry::start(vec![
+        pkg("host", "1.0.0", json!({})),
+        pkg("host", "1.1.0", json!({})),
+        pkg("host", "1.2.0", json!({})),
+        pkg("user", "1.0.0", json!({ "peerDependencies": { "host": "^1" } })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "h": "npm:host@1.0.0", "user": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["user@1.0.0"]["dependencies"]["host"], "1.0.0");
+    assert!(env.read("node_modules/user/../host/index.js").contains("host@1.0.0"));
+
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "h1": "npm:host@1.0.0", "h2": "npm:host@1.1.0", "user": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["user@1.0.0"]["dependencies"]["host"], "1.1.0");
+    assert!(env.lock()["packages"].get("host@1.2.0").is_none());
+}
+
+#[test]
+fn an_optional_peer_it_also_depends_on_is_a_dependency() {
+    // pnpm's registry-mock has-optional-peer-as-dep: its own dependency was linked to nothing.
+    let r = Registry::start(vec![
+        pkg(
+            "lib",
+            "1.0.0",
+            json!({ "dependencies": { "dep": "1.0.0" }, "peerDependenciesMeta": { "dep": { "optional": true } } }),
+        ),
+        pkg("dep", "1.0.0", json!({})),
+        pkg("dep", "1.1.0", json!({})),
+    ]);
+    for root in [json!({ "lib": "1.0.0" }), json!({ "lib": "1.0.0", "dep": "1.1.0" })] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": root }));
+        env.ok(&["install"]);
+        assert_eq!(env.lock()["packages"]["lib@1.0.0"]["dependencies"]["dep"], "1.0.0", "{root}");
+        assert!(env.read("node_modules/lib/../dep/index.js").contains("dep@1.0.0"));
+    }
+}
+
+#[test]
+fn a_dependency_takes_the_version_the_project_gets() {
+    // pnpm's registry-mock pkg-with-1-dep under a root pinning its dependency: one copy, as pnpm
+    // and npm have it. A root range counts; a version out of range does not, nor an alias, as npm
+    // and yarn have it (pnpm takes the alias's version too).
+    let r = registry();
+    let b = |deps: serde_json::Value| {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": deps }));
+        env.ok(&["install"]);
+        let lock = env.lock();
+        assert!(env.ok(&["install"]).contains("up to date"));
+        lock["packages"]["a@1.0.0"]["dependencies"]["b"].as_str().unwrap().to_string()
+    };
+    assert_eq!(b(json!({ "a": "1.0.0" })), "1.1.0");
+    assert_eq!(b(json!({ "a": "1.0.0", "b": "1.0.0" })), "1.0.0");
+    assert_eq!(b(json!({ "a": "1.0.0", "b": "~1.0.0" })), "1.0.0");
+    assert_eq!(b(json!({ "a": "1.0.0", "x": "npm:b@1.0.0" })), "1.1.0");
+    assert_eq!(b(json!({ "a": "1.0.0", "b": "2.0.0" })), "1.1.0");
+}
+
+#[test]
 fn skips_other_platforms_builds() {
     let r = registry();
     let env = Env::new(&r);
