@@ -1112,8 +1112,7 @@ fn local_record(path: &str, m: &RootManifest) -> Result<Package> {
             format!("workspace path {path} is not a relative path inside the project"),
         ));
     }
-    let name =
-        m.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string());
+    let name = m.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| project::unnamed(path));
     // npm installs a workspace versioned `latest` (puppeteer's test package), or not at all.
     let version = m.version.clone().filter(|v| semver::is_exact(v)).unwrap_or_else(|| "0.0.0".into());
     if spec::parse_dep(&name, &version).is_err() {

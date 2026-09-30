@@ -418,7 +418,7 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
                 continue;
             }
             let manifest = read_manifest(&file)?;
-            let name = manifest.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| basename(&path));
+            let name = manifest.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| unnamed(&path));
             let version = manifest.version.clone().filter(|v| semver::is_exact(v)).unwrap_or_else(|| "0.0.0".into());
             let first = match &root {
                 Some((n, v)) if *n == name => Some((ROOT_PATH.to_string(), v.clone())),
@@ -451,8 +451,13 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
     Ok(found)
 }
 
-fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+/// The name of a workspace whose package.json has none: its directory's, made a package name
+/// (immich lists `.github`, which pnpm installs unnamed). Nothing links to it by that name.
+pub fn unnamed(path: &str) -> String {
+    let base = path.rsplit('/').next().unwrap_or(path).trim_start_matches(['.', '_']).to_ascii_lowercase();
+    let name: String =
+        base.chars().map(|c| if c.is_ascii_alphanumeric() || "-._~".contains(c) { c } else { '-' }).collect();
+    if name.is_empty() { "workspace".into() } else { name }
 }
 
 /// The project a directory belongs to, found by npm's walk up.
@@ -741,6 +746,13 @@ mod tests {
         let paths: Vec<String> = found(&dir).unwrap().into_iter().map(|w| w.path).collect();
         assert_eq!(paths, ["play/a", "play/c"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn names_an_unnamed_workspace_by_its_directory() {
+        assert_eq!(unnamed(".github"), "github");
+        assert_eq!(unnamed("packages/My Tool"), "my-tool");
+        assert_eq!(unnamed("x/._"), "workspace");
     }
 
     #[test]

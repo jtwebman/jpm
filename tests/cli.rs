@@ -1479,6 +1479,19 @@ fn takes_the_workspaces_of_package_json_and_pnpm_workspace_yaml_both() {
 }
 
 #[test]
+fn installs_a_workspace_with_no_name() {
+    // immich lists `.github`, whose package.json has only devDependencies and scripts.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root" }));
+    env.write("pnpm-workspace.yaml", "packages:\n  - .github\n");
+    env.write(".github/package.json", r#"{ "devDependencies": { "b": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    assert!(env.read(".github/node_modules/b/index.js").contains("b@1.0.0"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
+
+#[test]
 fn reads_catalogs_from_yarnrc_after_plugins() {
     let r = registry();
     let env = Env::new(&r);
