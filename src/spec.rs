@@ -192,7 +192,7 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
 
 /// The forms other managers read that jpm does not yet, refused by name rather than as a bad tag.
 fn unsupported(s: &str, raw: &str) -> Result<()> {
-    const PROTOCOLS: [&str; 5] = ["portal:", "catalog:", "jsr:", "exec:", "gist:"];
+    const PROTOCOLS: [&str; 4] = ["catalog:", "jsr:", "exec:", "gist:"];
     let lower = s.to_ascii_lowercase();
     if let Some(p) = PROTOCOLS.iter().find(|p| lower.starts_with(*p)) {
         return Err(invalid(format!("\"{p}\" dependencies are not supported yet (in package \"{raw}\")")));
@@ -358,6 +358,9 @@ fn path(s: &str, raw: &str) -> Result<Option<String>> {
         ("file:", p)
     } else if let Some(p) = s.strip_prefix("link:") {
         ("link:", p)
+    } else if let Some(p) = s.strip_prefix("portal:") {
+        // yarn's: the directory linked and its dependencies installed, as `file:` has it.
+        ("file:", p)
     } else if ["/", "\\", "./", ".\\", "../", "..\\", "~/", "~\\"].iter().any(|p| s.starts_with(p)) {
         ("file:", s)
     } else {
@@ -646,13 +649,16 @@ mod tests {
     fn names_the_forms_it_does_not_read() {
         let msg = |spec: &str| parse_dep("x", spec).unwrap_err().message;
         assert_eq!(msg("catalog:"), r#""catalog:" dependencies are not supported yet (in package "x@catalog:")"#);
-        for spec in ["portal:../x", "catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"] {
+        for spec in ["catalog:react18", "jsr:@std/fs@1", "exec:./gen.js", "gist:11081aaa"] {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }
         // A published package's patch lives in its own repository: the version, unpatched.
         assert_eq!(parse_dep("x", "patch:x@npm%3A1.2.3#~/.yarn/patches/x.patch").unwrap().fetch_spec, "1.2.3");
         assert_eq!(parse_dep("x", "patch:x@npm%3A^1#optional!builtin<compat/x>").unwrap().fetch_spec, "^1");
+        // yarn's portal: a directory, installed as `file:` has one.
+        let portal = parse_dep("x", "portal:./tools/x").unwrap();
+        assert_eq!((portal.kind, portal.fetch_spec.as_str()), (Kind::Directory, "file:tools/x"));
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
             assert!(parse_dep("x", spec).is_ok(), "{spec}");
