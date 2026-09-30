@@ -436,17 +436,19 @@ fn links_the_root_listed_as_a_workspace() {
     }));
     env.write("cli.js", "#!/bin/sh\necho root\n");
     env.write("a/package.json", r#"{ "name": "a", "dependencies": { "root": "workspace:*" } }"#);
-    // A fixture under its parent's name is left out while nothing links to that name.
+    // A fixture under its parent's name installs too, as pnpm has it (vite's playgrounds),
+    // while nothing links to that name.
     env.write("play/x/package.json", r#"{ "name": "x" }"#);
-    env.write("play/x/dir/package.json", r#"{ "name": "x" }"#);
+    env.write("play/x/dir/package.json", r#"{ "name": "x", "dependencies": { "b": "1.0.0" } }"#);
     let out = env.ok(&["install"]);
-    assert!(out.contains("workspaces play/x and play/x/dir are both named x; jpm installs only play/x"), "{out}");
+    assert!(!out.contains("both named"), "{out}");
+    assert!(env.read("play/x/dir/node_modules/b/index.js").contains("b@1.0.0"));
     // `../..` on unix, absolute as a junction: either way, the project itself.
     let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
     assert_eq!(real(env.project().join("a/node_modules/root")), real(env.project()));
     assert!(env.exists("a/node_modules/.bin/root-cli"));
     // Installed once, as the root.
-    assert!(env.exists("node_modules/b") && !env.exists("node_modules/root") && !env.exists("play/x/dir/node_modules"));
+    assert!(env.exists("node_modules/b") && !env.exists("node_modules/root"));
     let lock = env.lock();
     assert_eq!(lock["workspaces"]["a"]["dependencies"]["root"], "link:.");
     assert_eq!(lock["workspaces"]["."]["name"], "root");

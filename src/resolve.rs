@@ -147,17 +147,13 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
     let mut state = State::default();
     for (path, m) in &opts.workspaces {
         let found = local_record(path, m)?;
-        if let Some(other) = local.get(&found.name).map(|p: &Package| p.local.clone().unwrap_or_default()) {
-            return Err(Error::new(
-                "EWORKSPACE",
-                format!("workspaces {other} and {path} are both named {}", found.name),
-            ));
-        }
         let key = found.key();
         tops.insert(key.clone(), Top { prod: m.prod(), manifest: m.clone() });
         state.started.insert(key.clone());
         state.records.insert(key, found.clone());
-        local.insert(found.name.clone(), found);
+        // Of two with one name, the first is the one found by it (nothing links to it by name:
+        // `find_workspaces` refuses that).
+        local.entry(found.name.clone()).or_insert(found);
     }
     // The root listed as a workspace of its own: linked to by name, walked only as the root.
     if project::lists_root(manifest)

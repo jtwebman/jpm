@@ -409,9 +409,9 @@ fn patterns(m: &RootManifest) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// Every workspace under `dir`, pattern by pattern, sorted within one, each at its first match.
-/// Of two with one name the first is kept and the other left out with a warning, as pnpm lets
-/// a test fixture share its parent's name; but when something would link to that name, which
-/// one it means is ambiguous, and that is an error. The root, when it lists itself, is first.
+/// Two may share a name, as pnpm lets a test fixture share its parent's (vite's playgrounds):
+/// both install; but when something would link to that name, which one it means is ambiguous,
+/// and that is an error. The root, when it lists itself, is first.
 pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
     let (patterns, mut exclude) = patterns(m)?;
     exclude.push("**/node_modules/**".into());
@@ -440,8 +440,12 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
                 _ => found.iter().find(|w| w.name == name).map(|w| (w.path.clone(), w.version.clone())),
             };
             if let Some((first, first_version)) = first {
-                twins.push((first, first_version, path, version, name));
-                continue;
+                // One under the root's own name is a second copy of the root: left out.
+                let copy = first == ROOT_PATH;
+                twins.push((first, first_version, path.clone(), version.clone(), name.clone()));
+                if copy {
+                    continue;
+                }
             }
             found.push(Workspace { path, dir: at, name, version, manifest });
         }
@@ -461,7 +465,6 @@ pub fn find_workspaces(dir: &Path, m: &RootManifest) -> Result<Vec<Workspace>> {
                 "workspaces {first} and {path} are both named {name}, and a dependency on {name} could mean either"
             )));
         }
-        crate::ui::warn(&format!("workspaces {first} and {path} are both named {name}; jpm installs only {first}"));
     }
     Ok(found)
 }
@@ -744,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_first_of_two_workspaces_with_one_name() {
+    fn installs_both_of_two_workspaces_with_one_name() {
         let fixture = r#"{"name":"t","version":"0.0.0"}"#;
         let dir = tree(&[
             (".", r#"{"workspaces":["play/**"]}"#),
@@ -756,10 +759,10 @@ mod tests {
         // Something links to the name: ambiguous.
         let e = found(&dir).unwrap_err();
         assert!(e.message.contains("play/a and play/a/dir/b are both named t, and a dependency"), "{}", e.message);
-        // Nothing does: the first stays.
+        // Nothing does: both install, as pnpm installs them.
         std::fs::write(dir.join("play/c/package.json"), r#"{"name":"c","dependencies":{"t":"^2"}}"#).unwrap();
         let paths: Vec<String> = found(&dir).unwrap().into_iter().map(|w| w.path).collect();
-        assert_eq!(paths, ["play/a", "play/c"]);
+        assert_eq!(paths, ["play/a", "play/a/dir/b", "play/c"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
