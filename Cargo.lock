@@ -213,6 +213,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpm-http"
+version = "0.1.0"
+dependencies = [
+ "jpm-tls",
+ "rcgen",
+ "rustls",
+]
+
+[[package]]
 name = "jpm-pk"
 version = "0.1.0"
 dependencies = [
