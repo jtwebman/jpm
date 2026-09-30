@@ -64,6 +64,18 @@ pub fn quote(arg: &str, win: bool, batch: bool) -> String {
     format!("'{}'", arg.replace('\'', "'\\''"))
 }
 
+/// The program word of a line: under cmd.exe, plain quotes and no carets, as cmd.exe reads that
+/// word itself; a quote behind a caret is only a character, so the word would end at a space.
+/// A path holds no `"`.
+pub fn quote_program(word: &str, win: bool) -> String {
+    if !win {
+        return quote(word, false, false);
+    }
+    let bare = !word.is_empty() && !word.contains([' ', '\t', '&', '(', ')', '<', '>', '|', '^', '!', ',', ';', '=']);
+    let word = if bare { word.to_string() } else { format!("\"{word}\"") };
+    word.replace('%', "%%cd:~,%")
+}
+
 /// Two layers, as npm does it: quotes for the program's own argv parser, then carets for
 /// cmd.exe. A batch file's `%*` reads the carets once more, so there they are doubled; `%`
 /// becomes an expression that expands to `%`.
@@ -236,5 +248,14 @@ mod tests {
         assert_eq!(quote("x&y", true, true), "x^^^&y");
         assert_eq!(quote("50%", true, false), "50%%cd:~,%");
         assert_eq!(quote("a\"b", true, false), "^\"a\\^\"b^\"");
+    }
+
+    #[test]
+    fn quotes_a_program_for_cmd_plainly() {
+        assert_eq!(quote_program(r"C:\x\a.cmd", true), r"C:\x\a.cmd");
+        assert_eq!(quote_program(r"C:\my dir\a.cmd", true), r#""C:\my dir\a.cmd""#);
+        assert_eq!(quote_program(r"C:\a&b (1)\x.cmd", true), r#""C:\a&b (1)\x.cmd""#);
+        assert_eq!(quote_program(r"C:\100%\x.cmd", true), r"C:\100%%cd:~,%\x.cmd");
+        assert_eq!(quote_program("/my dir/a", false), "'/my dir/a'");
     }
 }

@@ -1326,14 +1326,17 @@ fn passes_arguments_through_scripts_and_shims() {
     let r = registry();
     let env = Env::new(&r);
     // The script names a bin: on Windows a .cmd shim, whose %* reads the arguments again, so
-    // an unescaped `&` would start a second command.
-    env.manifest(json!({ "scripts": { "show": "argv" }, "dependencies": { "argv": "1" } }));
-    env.ok(&["install"]);
+    // an unescaped `&` would start a second command. The project's path has a space: exec
+    // names the shim by that path, the one word cmd.exe reads itself.
+    let manifest = json!({ "scripts": { "show": "argv" }, "dependencies": { "argv": "1" } });
+    env.write("with space/package.json", &manifest.to_string());
+    let dir = env.project().join("with space");
+    assert!(env.command_in(&dir, &["install"]).output().unwrap().status.success());
     let args = ["a b", "x&y", "|pipe", "<in>", "50%", "^caret", "q\"uote", "(p)", "!b!", ""];
     for how in [&["run", "-s", "show"][..], &["exec", "-s", "argv"][..]] {
         let mut argv: Vec<&str> = how.to_vec();
         argv.extend(args);
-        let out = env.jpm(&argv);
+        let out = env.command_in(&dir, &argv).output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
         let got: serde_json::Value = serde_json::from_str(text.trim().lines().last().unwrap_or(""))
             .unwrap_or_else(|_| panic!("{how:?}: {text}{}", String::from_utf8_lossy(&out.stderr)));

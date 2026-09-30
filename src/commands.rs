@@ -2259,7 +2259,15 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
         crate::sys::exec(&mut cmd).map_err(|err| run::start_error(&err, &cmd))
     };
     let spawn = |words: &[String], installed: Option<&Path>| -> Result<i32> {
-        let head: Vec<String> = words.iter().map(|w| run::quote(w, cfg!(windows), false)).collect();
+        let head: Vec<String> = words
+            .iter()
+            .enumerate()
+            .map(
+                |(i, w)| {
+                    if i == 0 { run::quote_program(w, cfg!(windows)) } else { run::quote(w, cfg!(windows), false) }
+                },
+            )
+            .collect();
         let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd, &bins(installed));
         run_line(&run::shell_line(&head.join(" "), &e.args, batch), installed)
     };
