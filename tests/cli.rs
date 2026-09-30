@@ -915,6 +915,70 @@ fn shares_entries_through_the_global_store() {
 }
 
 #[test]
+fn names_global_entries_by_the_start_of_their_digest_and_never_trusts_the_name() {
+    let r = registry();
+    let env = Env::new(&r);
+    let links = env.store().join("v1/links");
+    let name_of = |target: &str| {
+        let rest = std::path::Path::new(target).strip_prefix(&links).unwrap().to_path_buf();
+        rest.components().next().unwrap().as_os_str().to_string_lossy().into_owned()
+    };
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    // b has no dependencies: one entry for every project, by name and version. a's name shows
+    // the start of its subgraph's digest, which the entry keeps whole.
+    let a = name_of(&link_of(&env.project(), "a"));
+    assert_eq!(a.len(), "a@1.1.0-".len() + 8, "{a}");
+    assert!(links.join("b@1.1.0").is_dir());
+    assert_eq!(std::fs::read_to_string(links.join(&a).join(".subgraph")).unwrap().len(), 43);
+
+    // Names made to collide (no digest shown at all): another project whose a has another b
+    // gets an entry of its own, named by more of its digest, and each sees its own b.
+    let plain = |dir: &std::path::Path| {
+        let out = env.command_in(dir, &["install"]).env("JPM_DIGEST_SHOWN", "0").output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    plain(&env.project());
+    assert_eq!(name_of(&link_of(&env.project(), "a")), "a@1.1.0");
+    r.publish(pkg("b", "1.2.0", json!({})));
+    let other = env.root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(env.project().join("package.json"), other.join("package.json")).unwrap();
+    plain(&other);
+    let theirs = name_of(&link_of(&other, "a"));
+    assert!(theirs.starts_with("a@1.1.0-") && theirs.len() == "a@1.1.0-".len() + 1, "{theirs}");
+    // a's b, beside the entry a links to (Windows would take `a/..` off by the letters).
+    let b_of = |dir: &std::path::Path| {
+        let a = std::fs::canonicalize(dir.join("node_modules").join("a")).unwrap();
+        std::fs::read_to_string(a.parent().unwrap().join("b").join("index.js")).unwrap_or_default()
+    };
+    assert!(b_of(&other).contains("b@1.2.0"));
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+
+    // An entry whose recorded digest is not this subgraph's is never taken, and never replaced.
+    let marker = links.join("a@1.1.0").join(".subgraph");
+    std::fs::write(&marker, "tampered-digest-0000000000000000000000000000").unwrap();
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    plain(&env.project());
+    let mine = name_of(&link_of(&env.project(), "a"));
+    assert!(mine != "a@1.1.0" && mine != theirs, "{mine}");
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "tampered-digest-0000000000000000000000000000");
+
+    // Nor is one with no digest at all: an older jpm's, or one whose build was cut short.
+    let unmarked = links.join(&mine);
+    let _ = std::process::Command::new("chmod").args(["u+w"]).arg(&unmarked).output();
+    std::fs::remove_file(unmarked.join(".subgraph")).unwrap();
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    plain(&env.project());
+    let next = name_of(&link_of(&env.project(), "a"));
+    assert!(next != mine && next != theirs && next != "a@1.1.0", "{next}");
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+    assert!(!unmarked.join(".subgraph").exists());
+}
+
+#[test]
 fn run_keeps_the_last_installs_global_store_choice() {
     // `jpm run` installs first: with nothing saying otherwise, as the last install did.
     let r = registry();

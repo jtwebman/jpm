@@ -41,6 +41,12 @@ pub const HOIST: &str = "node_modules";
 pub const HOOK: &str = "hoist.cjs";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+/// A global entry's file holding the whole digest of the subgraph it was built for: its name
+/// holds only the start of it.
+const DIGEST_FILE: &str = ".subgraph";
+/// The digest's characters a global entry's name starts with; more where another subgraph
+/// already holds the shorter name.
+const DIGEST_SHOWN: usize = 8;
 /// Files per job when one package's files are linked on several threads.
 const PLACE_CHUNK: usize = 256;
 
@@ -59,6 +65,9 @@ pub struct Options<'a> {
     pub hash: String,
     /// Each package's store entry name, by key.
     pub keys: HashMap<String, String>,
+    /// Each package's whole subgraph digest (`keys::full_digests`), by key, for the global store:
+    /// its entries are named by the start of it (see `name_shared`).
+    pub digests: HashMap<String, String>,
     /// The global virtual store: entries are built once there, for every project to link to.
     /// `None` builds every entry in the project's `.jpm`.
     pub global: Option<PathBuf>,
@@ -212,6 +221,8 @@ impl Dep<'_> {
 struct Entry<'a> {
     pkg: &'a Package,
     key: String,
+    /// A global entry's whole subgraph digest, which its name may show only the start of.
+    digest: Option<String>,
     /// `<key>/node_modules/<name>`, spelled with the platform's separator.
     home: String,
     /// Built in the global store, not the project.
@@ -352,7 +363,14 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         let home = sep(&format!("{key}/node_modules/{}", pkg.dir_name()));
         wanted.insert(
             id.clone(),
-            Entry { pkg, key: key.clone(), home, shared: opts.global.is_some(), build: opts.built.contains(id) },
+            Entry {
+                pkg,
+                key: key.clone(),
+                digest: None,
+                home,
+                shared: opts.global.is_some(),
+                build: opts.built.contains(id),
+            },
         );
     }
     // A `node_modules` this run makes holds nothing but what it links: those links are made
@@ -397,6 +415,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
                 e.shared = false;
             }
         }
+    }
+    if let Some(global) = opts.global.as_deref() {
+        name_shared(global, &mut wanted, &opts.digests);
     }
     let present: HashSet<String> = fs::read_dir(&entries_dir)
         .into_iter()
@@ -492,13 +513,23 @@ impl Linker<'_> {
     }
 
     /// Build the entry in the global store unless it is there (checked in full under `verify`).
+    /// One already there is taken only when it was built for this subgraph (see `name_shared`).
     fn materialize_global(&self, entry: &Entry, global: &Path) -> Result<()> {
         let fin = global.join(&entry.key);
+        let ours = || entry.digest.as_deref().is_none_or(|d| built_for(&fin, d));
+        let taken = || fail(format!("{} holds another subgraph's entry: install again", fin.display()));
+        if fin.is_dir() && !ours() {
+            return Err(taken());
+        }
         if !fin.is_dir() {
             let temp = global.join(format!(".tmp-{}", temp_suffix()));
             let (moved, built) = match self.move_in(entry, &temp) {
                 Ok(moved) => {
                     let built = self.build(entry, &temp, moved.is_some()).and_then(|()| {
+                        if let Some(digest) = &entry.digest {
+                            fs::write(temp.join(DIGEST_FILE), digest)
+                                .map_err(|e| Error::io(&e, format!("cannot write {}", temp.display())))?;
+                        }
                         seal(&temp);
                         fs::rename(&temp, &fin)
                             .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
@@ -516,7 +547,7 @@ impl Linker<'_> {
                     Counts::add(&self.counts.entries, 1);
                 }
                 // Another install built it first; its entry is as good as ours.
-                Err(_) if fin.is_dir() => {
+                Err(_) if fin.is_dir() && ours() => {
                     let kept = self.give_back(entry, moved);
                     remove_tree(&temp);
                     kept?;
@@ -587,6 +618,12 @@ impl Linker<'_> {
             return Err(e);
         }
         if entry.shared {
+            if let Some(digest) = &entry.digest
+                && let Err(e) = fs::write(temp.join(DIGEST_FILE), digest)
+            {
+                remove_tree(&temp);
+                return Err(Error::io(&e, format!("cannot write {}", temp.display())));
+            }
             seal(&temp);
         }
         let retired = root.join(format!(".tmp-{}", temp_suffix()));
@@ -1317,6 +1354,61 @@ fn replace_link(at: &Path, target: &str, within_dir: &Path, dir: bool) -> Result
         }
     }
     Ok(())
+}
+
+/// Names global entries by the start of their subgraph's digest, `<name>@<version>-<8 chars>`,
+/// and a package with no dependencies, which is the same in every project, `<name>@<version>`
+/// alone. Every link to an entry spells its name, and one of up to 59 bytes fits in its inode.
+/// The name is never trusted alone: an entry keeps its whole digest in `DIGEST_FILE`, and one
+/// there under the name with another digest (or none: an older jpm's, or one from elsewhere)
+/// is left be, and this subgraph named by more of its digest, as git lengthens a short hash.
+///
+/// The names are picked with the store's lock held shared, as other installs may be picking
+/// theirs: two that pick one name for two subgraphs at once (which takes two digests that start
+/// alike) race to rename their entry into place, and the loser stops with an error rather than
+/// link to the winner's. Run again, it picks a longer name.
+fn name_shared(global: &Path, wanted: &mut HashMap<String, Entry>, digests: &HashMap<String, String>) {
+    // Tests set how much of the digest names show; none makes every name collide.
+    let shown = std::env::var("JPM_DIGEST_SHOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(DIGEST_SHOWN);
+    let mut named: HashMap<String, (String, String)> = HashMap::new();
+    for (id, e) in wanted.iter_mut().filter(|(_, e)| e.shared) {
+        // `<name>@<version>-<digest>`, as `keys::store_keys` spells it: the name and version.
+        let Some(at) = e.key.len().checked_sub(23).filter(|at| e.key.as_bytes()[*at] == b'-') else { continue };
+        let Some(digest) = digests.get(id) else { continue };
+        let base = e.key[..at].to_string();
+        let (name, digest) = named
+            .entry(e.key.clone())
+            .or_insert_with(|| {
+                let p = e.pkg;
+                // Nothing below it or beside it, and its files the tarball's own: the same entry
+                // in every project.
+                let leaf = p.all_deps().is_empty()
+                    && p.peer_dependencies.as_ref().is_none_or(|d| d.is_empty())
+                    && p.patch.is_none()
+                    && p.within().is_none()
+                    && !e.build;
+                let lengths = (shown.clamp(1, digest.len())..digest.len()).step_by(2).chain([digest.len()]);
+                // None shown: every name as a leaf's, which tests use to make names collide.
+                let mut tries = (leaf || shown == 0)
+                    .then(|| base.clone())
+                    .into_iter()
+                    .chain(lengths.map(|n| format!("{base}-{}", &digest[..n])));
+                let name = tries.find(|name| {
+                    let at = global.join(name);
+                    !at.exists() || built_for(&at, digest)
+                });
+                (name.unwrap_or_else(|| e.key.clone()), digest.clone())
+            })
+            .clone();
+        e.home = sep(&format!("{name}/node_modules/{}", e.pkg.dir_name()));
+        e.key = name;
+        e.digest = Some(digest);
+    }
+}
+
+/// Whether the global entry at `at` was built for the subgraph with this digest.
+fn built_for(at: &Path, digest: &str) -> bool {
+    fs::read_to_string(at.join(DIGEST_FILE)).is_ok_and(|d| d == digest)
 }
 
 /// `at` names a place under `dir`: no `..` climbs out of it.

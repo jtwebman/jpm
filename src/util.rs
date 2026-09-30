@@ -76,6 +76,11 @@ pub fn short_hash(text: &str) -> String {
     to_base64_url(&digest(Alg::Sha256, text.as_bytes())[..16])
 }
 
+/// SHA-256 of `text`, all of it: 43 characters of base64url.
+pub fn full_hash(text: &str) -> String {
+    to_base64_url(&digest(Alg::Sha256, text.as_bytes()))
+}
+
 pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
     digest(Alg::Sha256, data.as_ref()).iter().map(|b| format!("{b:02x}")).collect()
 }

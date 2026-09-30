@@ -602,6 +602,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         production: ctx.opts.production,
         verify: ctx.opts.verify,
         hash: hash.clone(),
+        digests: if global.is_some() { crate::keys::full_digests(&resolution.packages) } else { HashMap::new() },
         keys,
         global,
         built: chosen.clone(),
@@ -794,12 +795,22 @@ fn short_keys(keys: HashMap<String, String>, res: &Resolution, built: &HashSet<S
     keys.into_iter().map(|(id, key)| (id, renamed.get(&key).cloned().unwrap_or(key))).collect()
 }
 
-/// An entry's package name and version, from its name with the subgraph's hash or without.
-fn entry_name_version(entry: &str) -> Option<(String, &str)> {
-    crate::keys::name_version(entry).or_else(|| {
-        let at = crate::graph::name_end(entry)?;
-        Some((entry[..at].replace('+', "/"), &entry[at + 1..]))
-    })
+/// The package name and version an entry's name can stand for: with the subgraph's whole hash,
+/// the start of it (a global entry) or none, and peers after it or not. Where a version could
+/// end in a prerelease or in the hash's start, both.
+fn entry_name_versions(entry: &str) -> Vec<(String, &str)> {
+    if let Some(found) = crate::keys::name_version(entry) {
+        return vec![found];
+    }
+    let plain = entry.split('(').next().unwrap_or(entry);
+    let Some(at) = crate::graph::name_end(plain) else { return Vec::new() };
+    let (name, version) = (plain[..at].replace('+', "/"), &plain[at + 1..]);
+    let digest = |tail: &str| tail.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let cut = (1..=22).filter_map(|n| {
+        let head = version.get(..version.len().checked_sub(n + 1)?)?;
+        (version.as_bytes()[head.len()] == b'-' && digest(&version[head.len() + 1..])).then_some(head)
+    });
+    std::iter::once(version).chain(cut).filter(|v| semver::parse(v).is_some()).map(|v| (name.clone(), v)).collect()
 }
 
 /// The global virtual store's entry directory, when it is wanted and the store can be written.
@@ -1243,7 +1254,7 @@ fn plan(
     let installed = state::read(dir).filter(|_| existing.is_none() && !ctx.dedupe).map(|s| {
         info(&format!("no {LOCKFILE}; resolving with the versions in node_modules preferred"));
         let mut prefer = resolve::Prefer::default();
-        for (name, version) in s.entries.iter().chain(&s.shared).filter_map(|e| entry_name_version(e)) {
+        for (name, version) in s.entries.iter().chain(&s.shared).flat_map(|e| entry_name_versions(e)) {
             prefer.versions.entry(name).or_default().push(version.to_string());
         }
         prefer
