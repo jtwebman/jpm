@@ -600,6 +600,7 @@ mod tests {
         std::fs::write(dir.join("outside.patch"), "x").unwrap();
         std::fs::write(project.join("big.patch"), vec![b'x'; (16 << 20) + 1]).unwrap();
         let outside = dir.join("outside.patch").to_string_lossy().into_owned();
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut cases = vec![
             ("../outside.patch", "is outside the project"),
             (outside.as_str(), "is outside the project"),
