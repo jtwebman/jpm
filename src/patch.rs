@@ -372,6 +372,16 @@ fn same(file_line: &[u8], (_, text, newline): &(u8, Vec<u8>, bool)) -> bool {
     ends == *newline && body[..trim(body)] == text[..trim(text)]
 }
 
+/// How a file's line is compared with a hunk's: `same` or `same_loosely`.
+type Matcher = fn(&[u8], &(u8, Vec<u8>, bool)) -> bool;
+
+/// `same`, but a context line may differ in the whitespace around it, as GNU patch's `-l` and
+/// bun allow (opencode's photon-node patch indents three context lines one space too far). A
+/// context line is written as the file has it, so this only chooses where a hunk goes.
+fn same_loosely(file_line: &[u8], l: &(u8, Vec<u8>, bool)) -> bool {
+    same(file_line, l) || l.0 == b' ' && file_line.trim_ascii() == l.1.trim_ascii()
+}
+
 /// The hunks applied to `data`, each at the line it names or the nearest place its old lines match.
 /// `crlf`: the patch lost its CRs on the way, and the file's lines end in CRLF.
 fn patch_file(data: &[u8], hunks: &[Hunk], file: &str, crlf: bool) -> std::result::Result<Vec<u8>, String> {
@@ -394,27 +404,30 @@ fn patch_file(data: &[u8], hunks: &[Hunk], file: &str, crlf: bool) -> std::resul
         } else if cursor + old.len() > lines.len() {
             None
         } else {
-            // The nearest start to `want` first, the lower of two, from `cursor` to the last.
+            // The nearest start to `want` first, the lower of two, from `cursor` to the last;
+            // exactly, then with context lines' whitespace let go.
             let last = lines.len() - old.len();
             let want = want.clamp(cursor, last);
-            let mut found = None;
-            for d in 0..=last - cursor {
-                let below = want.checked_sub(d).filter(|&at| at >= cursor);
-                let above = want.checked_add(d).filter(|&at| d > 0 && at <= last);
-                if below.is_none() && above.is_none() {
-                    break;
+            let mut search = |matches: Matcher| {
+                for d in 0..=last - cursor {
+                    let below = want.checked_sub(d).filter(|&at| at >= cursor);
+                    let above = want.checked_add(d).filter(|&at| d > 0 && at <= last);
+                    if below.is_none() && above.is_none() {
+                        break;
+                    }
+                    let found = [below, above].into_iter().flatten().find(|&at| {
+                        old.iter().enumerate().all(|(k, l)| {
+                            budget = budget.saturating_sub(1);
+                            budget > 0 && matches(lines[at + k], l)
+                        })
+                    });
+                    if found.is_some() || budget == 0 {
+                        return found;
+                    }
                 }
-                found = [below, above].into_iter().flatten().find(|&at| {
-                    old.iter().enumerate().all(|(k, l)| {
-                        budget = budget.saturating_sub(1);
-                        budget > 0 && same(lines[at + k], l)
-                    })
-                });
-                if found.is_some() || budget == 0 {
-                    break;
-                }
-            }
-            found
+                None
+            };
+            search(same).or_else(|| search(same_loosely))
         };
         let Some(at) = found else {
             return Err(format!("{file}: hunk #{} ({}) does not apply", n + 1, h.header));
@@ -613,7 +626,15 @@ mod tests {
         let dir3 = tree(&[("lib/x.js", "one\n\nthree\n")]);
         apply(&dir3, b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,3 +1,3 @@\n one\n\n-three\n+3\n", false).unwrap();
         assert_eq!(read(&dir3, "lib/x.js"), "one\n\n3\n");
-        for d in [dir, dir2, dir3] {
+        // Context lines indented one space too far, as opencode's photon-node patch has them:
+        // the file keeps its own. A removed line must still match as it is.
+        let dir4 = tree(&[("lib/x.js", "    ;\n};\n\nconst p = 1;\nnext\n")]);
+        let loose = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,5 +1,5 @@\n      ;\n  };\n  \n-const p = 1;\n+const p = 2;\n next\n";
+        apply(&dir4, loose, false).unwrap();
+        assert_eq!(read(&dir4, "lib/x.js"), "    ;\n};\n\nconst p = 2;\nnext\n");
+        let removed = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -4 +4 @@\n- const p = 2;\n+const p = 3;\n";
+        assert!(apply(&dir4, removed, false).unwrap_err().contains("does not apply"));
+        for d in [dir, dir2, dir3, dir4] {
             fs::remove_dir_all(d).unwrap();
         }
     }
