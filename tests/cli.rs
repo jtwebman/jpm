@@ -427,6 +427,35 @@ fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
 }
 
 #[test]
+fn links_a_workspace_under_another_name() {
+    // pnpm's `workspace:<name>@<range>`: prisma's examples take @internal/cli as `prisma`.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["cli", "ex", "other"] }));
+    env.write("cli/package.json", r#"{ "name": "@internal/cli", "version": "8.0.0-rc.13" }"#);
+    env.write("other/package.json", r#"{ "name": "other", "version": "1.0.0" }"#);
+    env.write(
+        "ex/package.json",
+        r#"{ "name": "ex", "dependencies": { "prisma": "workspace:@internal/cli@8.0.0-rc.13" } }"#,
+    );
+    env.ok(&["install"]);
+    let real = |p: &str| std::fs::canonicalize(env.path(p)).unwrap();
+    assert_eq!(real("ex/node_modules/prisma"), real("cli"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(real("ex/node_modules/prisma"), real("cli"));
+    // A lockfile edit pointing the name at another workspace is refused.
+    let lock = env
+        .read("jpm.lock")
+        .replace("prisma link:cli", "prisma link:other")
+        .replace("prisma@link:cli", "prisma@link:other");
+    env.write("jpm.lock", &lock);
+    let out = env.jpm(&["ci"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("which its specs do not name"), "{out:?}");
+}
+
+#[test]
 fn links_the_root_listed_as_a_workspace() {
     let r = registry();
     let env = Env::new(&r);

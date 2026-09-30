@@ -592,14 +592,29 @@ impl Walk<'_> {
                     s.records.insert(found.key(), found.clone());
                 }
             }
-            if spec.fetch_name != spec.name {
-                return fail(format!("workspace {} cannot be installed as {}", spec.fetch_name, spec.name));
-            }
             if !fits(&found.version, &spec.fetch_spec) {
                 return fail(format!(
                     "no workspace version of {} satisfies {} (have {})",
-                    spec.name, spec.fetch_spec, found.version
+                    spec.fetch_name, spec.fetch_spec, found.version
                 ));
+            }
+            if spec.fetch_name != spec.name {
+                // pnpm's `workspace:<name>@<range>` (prisma's `prisma`): the workspace linked under
+                // another name, as a `link:` directory is.
+                let alias = Package {
+                    name: spec.name.clone(),
+                    version: found.version.clone(),
+                    local: found.local.clone(),
+                    linked: true,
+                    bin: found.bin.clone(),
+                    ..Package::default()
+                };
+                let mut s = lock(&self.state);
+                if s.started.insert(alias.key()) {
+                    s.edges.insert(alias.key(), Vec::new());
+                    s.records.insert(alias.key(), alias.clone());
+                }
+                return Ok(Some(alias));
             }
             return Ok(Some(found.clone()));
         }
