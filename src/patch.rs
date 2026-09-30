@@ -35,11 +35,36 @@ impl Patch {
 
     /// Read the diff `path` names in `dir`, for its hash.
     pub fn read(dir: &Path, name: String, range: Option<String>, path: &str) -> Result<Self> {
-        let file = dir.join(path);
-        let text =
-            fs::read(&file).map_err(|e| Error::io(&e, format!("cannot read the patch {path}")).with_code("EPATCH"))?;
+        let text = read_inside(dir, path)?;
         Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text) })
     }
+}
+
+/// A patch is at most this big.
+const MAX_PATCH: u64 = 16 * 1024 * 1024;
+
+/// The bytes of `path` under `dir`: a regular file inside it, links followed, at most
+/// `MAX_PATCH`. The path comes from the repository's own settings, so `/dev/zero` or a link out
+/// of the project is refused, not read.
+fn read_inside(dir: &Path, path: &str) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let refuse = |why: String| Error::new("EPATCH", format!("the patch {path} {why}"));
+    let cannot = |e: std::io::Error| Error::io(&e, format!("cannot read the patch {path}")).with_code("EPATCH");
+    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+    let root = fs::canonicalize(dir).map_err(cannot)?;
+    let file = fs::canonicalize(dir.join(path)).map_err(cannot)?;
+    if !file.starts_with(&root) {
+        return Err(refuse(format!("is outside the project ({})", file.display())));
+    }
+    if !fs::metadata(&file).map_err(cannot)?.is_file() {
+        return Err(refuse("is not a file".into()));
+    }
+    let mut text = Vec::new();
+    fs::File::open(&file).and_then(|f| f.take(MAX_PATCH + 1).read_to_end(&mut text)).map_err(cannot)?;
+    if text.len() as u64 > MAX_PATCH {
+        return Err(refuse(format!("is over {} MiB", MAX_PATCH >> 20)));
+    }
+    Ok(text)
 }
 
 /// yarn's `patch:<source>#<path>[::<params>]` in place of `dep`'s range, its source url-encoded

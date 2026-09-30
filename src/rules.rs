@@ -590,4 +590,35 @@ mod tests {
         assert_eq!(r.apply(&mut m).unwrap_err().code, "EPATCH");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn reads_patches_only_from_inside_the_project() {
+        let dir = crate::store::tests::scratch("rules-patch-paths");
+        let project = dir.join("p");
+        std::fs::create_dir_all(project.join("sub")).unwrap();
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        std::fs::write(dir.join("outside.patch"), "x").unwrap();
+        std::fs::write(project.join("big.patch"), vec![b'x'; (16 << 20) + 1]).unwrap();
+        let outside = dir.join("outside.patch").to_string_lossy().into_owned();
+        let mut cases = vec![
+            ("../outside.patch", "is outside the project"),
+            (outside.as_str(), "is outside the project"),
+            ("sub", "is not a file"),
+            ("big.patch", "is over 16 MiB"),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("outside.patch"), project.join("link.patch")).unwrap();
+            cases.extend([("link.patch", "is outside the project"), ("/dev/zero", "is outside the project")]);
+        }
+        for (path, why) in cases {
+            let text =
+                format!(r#"{{ "pnpm": {{ "patchedDependencies": {{ "a": "{}" }} }} }}"#, path.replace('\\', "\\\\"));
+            let mut m = manifest(&text);
+            let e = read(&project, &m).unwrap().apply(&mut m).unwrap_err();
+            assert_eq!(e.code, "EPATCH");
+            assert!(e.message.starts_with(&format!("the patch {path} {why}")), "{path}: {}", e.message);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
