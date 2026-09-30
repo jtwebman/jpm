@@ -1,7 +1,9 @@
 //! A small HTTP/1.1 client over jpm-tls: pooled keep-alive connections, one DNS lookup per host,
 //! chunked and gzip bodies, redirects that keep credentials on their own host, retries with
 //! backoff, and proxies. TLS 1.3, and 1.2 with modern suites, trusting Mozilla's roots or the
-//! certificates `.npmrc` and NODE_EXTRA_CA_CERTS name.
+//! certificates `.npmrc` and NODE_EXTRA_CA_CERTS name. With `JPM_HTTP2`, https goes over HTTP/2
+//! (jpm-http) where the server offers it by ALPN, a few connections per host carrying every
+//! request; the rest (redirects, retries, gzip, caps) is the same either way.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -24,6 +26,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a connection may go without a byte before it is abandoned: silence, not slowness.
 const STALL: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 5;
+const USER_AGENT: &str = concat!("jpm/", env!("CARGO_PKG_VERSION"));
 const MAX_HEAD: usize = 64 * 1024;
 /// A registry document read whole into memory, after gunzip. Far above the largest packument.
 pub const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
@@ -158,9 +161,8 @@ fn same_origin(first: &Url, target: &Url) -> Result<bool> {
 /// refused: it would add a line of its own.
 fn request_head(url: &Url, path: &str, headers: &[(&str, &str)], authorization: Option<&str>) -> io::Result<String> {
     let mut head = format!(
-        "GET {path} HTTP/1.1\r\nhost: {}\r\nuser-agent: jpm/{}\r\naccept-encoding: gzip\r\n",
-        url.authority(),
-        env!("CARGO_PKG_VERSION")
+        "GET {path} HTTP/1.1\r\nhost: {}\r\nuser-agent: {USER_AGENT}\r\naccept-encoding: gzip\r\n",
+        url.authority()
     );
     for (k, v) in headers.iter().copied().chain(authorization.map(|a| ("authorization", a))) {
         if v.contains(['\r', '\n']) {
@@ -314,6 +316,10 @@ struct Client {
     proxies: Proxies,
     pool: Mutex<HashMap<PoolKey, Vec<Conn>>>,
     dns: Mutex<HashMap<String, Vec<SocketAddr>>>,
+    /// HTTP/2 connections, when `JPM_HTTP2` asks for them.
+    h2: Option<jpm_http::Pool>,
+    /// `tls` offering h2 before http/1.1, for the connections `h2` makes.
+    tls_h2: OnceLock<jpm_tls::Config>,
 }
 
 static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
@@ -355,8 +361,30 @@ impl Client {
             insecure_skip_verify,
             verified: Default::default(),
         }) as Box<dyn FnOnce() -> _ + Send>);
-        Self { tls, proxies: Proxies::new(config, env), pool: Mutex::default(), dns: Mutex::default() }
+        let h2 = http2(env);
+        let proxies = Proxies::new(config, env);
+        Self { tls, proxies, pool: Mutex::default(), dns: Mutex::default(), h2, tls_h2: OnceLock::new() }
     }
+
+    fn tls_h2(&self) -> &jpm_tls::Config {
+        self.tls_h2.get_or_init(|| jpm_tls::Config {
+            roots: self.tls.roots.clone(),
+            alpn: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            insecure_skip_verify: self.tls.insecure_skip_verify,
+            verified: Default::default(),
+        })
+    }
+}
+
+/// The HTTP/2 pool, or `None` for HTTP/1.1 only. `JPM_HTTP2=0` turns HTTP/2 off, and
+/// `JPM_HTTP2=n` turns it on with `n` connections per host (at most 8). Off when unset, for now.
+/// `JPM_HTTP2_STREAMS` caps the streams in flight to a host, split evenly between its
+/// connections; unset, each connection carries as many as the server allows.
+fn http2(env: &dyn Fn(&str) -> Option<String>) -> Option<jpm_http::Pool> {
+    let number = |name| env(name).and_then(|v| v.trim().parse::<usize>().ok());
+    let n = number("JPM_HTTP2").filter(|n| *n > 0)?.min(8);
+    let streams = number("JPM_HTTP2_STREAMS").filter(|s| *s > 0).map_or(jpm_http::MAX_STREAMS, |s| s.div_ceil(n));
+    Some(jpm_http::Pool::new(n, streams, STALL))
 }
 
 /// Mozilla's roots, as webpki-roots carries them.
@@ -498,6 +526,13 @@ impl Client {
         if absolute && let Some(auth) = proxy.as_ref().and_then(|p| p.auth.as_deref()) {
             all.push(("proxy-authorization", auth));
         }
+        // HTTP/2 when it is on and the server offers it, through a proxy's tunnel too.
+        if url.tls
+            && let Some(h2) = &self.h2
+            && let Some(r) = self.over_h2(h2, url, proxy.as_ref(), headers, authorization)?
+        {
+            return Ok(r);
+        }
         let head = request_head(url, &path, &all, authorization)?;
         let key: PoolKey = (url.tls, url.host.clone(), url.port);
         // A pooled connection the server has since closed fails at once: then a fresh one.
@@ -511,6 +546,43 @@ impl Client {
         let mut conn = self.connect(url, proxy.as_ref())?;
         let (status, headers) = exchange(&mut conn, &head)?;
         Ok(self.body(conn, key, status, headers))
+    }
+
+    /// A request over HTTP/2, or `None` when the host is known to speak only HTTP/1.1. A
+    /// connection just made on which ALPN picked HTTP/1.1 carries the request as HTTP/1.1.
+    fn over_h2(
+        self: &Arc<Self>,
+        h2: &jpm_http::Pool,
+        url: &Url,
+        proxy: Option<&Proxy>,
+        headers: &[(&str, &str)],
+        authorization: Option<&str>,
+    ) -> io::Result<Option<Streaming>> {
+        let mut all = vec![("user-agent", USER_AGENT), ("accept-encoding", "gzip")];
+        all.extend_from_slice(headers);
+        all.extend(authorization.map(|a| ("authorization", a)));
+        let authority = url.authority();
+        let req = jpm_http::Request { authority: &authority, path: &url.target, headers: &all };
+        let connect = || {
+            let tcp = self.tunnel(url, proxy)?;
+            let link = jpm_http::tls_link(jpm_tls::Stream::connect(tcp, &url.host, self.tls_h2())?, STALL)?;
+            if matches!(link, jpm_http::Link::H2(_)) && std::env::var_os("JPM_HTTP_LOG").is_some() {
+                eprintln!("http2 {}", crate::ui::clean(&url.host));
+            }
+            Ok(link)
+        };
+        match h2.get(&format!("{}:{}", url.host, url.port), connect, &req)? {
+            jpm_http::Got::H2(r) => {
+                let gzip = r.header("content-encoding").is_some_and(|e| e.to_ascii_lowercase().contains("gzip"));
+                Ok(Some(Streaming { status: r.status, headers: r.headers, body: Box::new(r.body), gzip }))
+            }
+            jpm_http::Got::H1(Some(tls)) => {
+                let mut conn = BufReader::with_capacity(128 * 1024, Stream::Tls(Box::new(tls)));
+                let (status, headers) = exchange(&mut conn, &request_head(url, &url.target, headers, authorization)?)?;
+                Ok(Some(self.body(conn, (true, url.host.clone(), url.port), status, headers)))
+            }
+            jpm_http::Got::H1(None) => Ok(None),
+        }
     }
 
     fn take(&self, key: &PoolKey) -> Option<Conn> {
@@ -550,10 +622,21 @@ impl Client {
     }
 
     fn connect(&self, url: &Url, proxy: Option<&Proxy>) -> io::Result<Conn> {
+        let tcp = self.tunnel(url, proxy)?;
+        let stream = if url.tls {
+            Stream::Tls(Box::new(jpm_tls::Stream::connect(tcp, &url.host, &self.tls)?))
+        } else {
+            Stream::Plain(tcp)
+        };
+        Ok(BufReader::with_capacity(128 * 1024, stream))
+    }
+
+    /// A TCP connection to the url's host, through the proxy's tunnel when https has a proxy.
+    fn tunnel(&self, url: &Url, proxy: Option<&Proxy>) -> io::Result<TcpStream> {
         if std::env::var_os("JPM_HTTP_LOG").is_some() {
             eprintln!("connect {}", crate::ui::clean(&url.host));
         }
-        let tcp = match proxy {
+        Ok(match proxy {
             Some(p) => {
                 let mut s = self.tcp(&p.url.host, p.url.port)?;
                 if url.tls {
@@ -571,13 +654,7 @@ impl Client {
                 s
             }
             None => self.tcp(&url.host, url.port)?,
-        };
-        let stream = if url.tls {
-            Stream::Tls(Box::new(jpm_tls::Stream::connect(tcp, &url.host, &self.tls)?))
-        } else {
-            Stream::Plain(tcp)
-        };
-        Ok(BufReader::with_capacity(128 * 1024, stream))
+        })
     }
 
     /// The body as a reader: framed by length or chunks, gunzipped when the server gzipped it,
@@ -1028,6 +1105,96 @@ mod tests {
         assert_eq!(got, b"tarball bytes");
         let r = get(&format!("{base}/b"), &[], &BTreeMap::new()).unwrap();
         assert_eq!((r.body.as_slice(), r.gzipped), (&b"plain"[..], None));
+    }
+
+    /// A response the test's HTTP/2 server sends: status, headers, body.
+    type Answer = (u16, Vec<(&'static str, String)>, Vec<u8>);
+
+    /// A one-connection HTTP/2 server over TLS that answers each request with the next of
+    /// `responses`, and a client that trusts it with HTTP/2 on. The server gets each request's
+    /// path, sent back to the test over the channel.
+    fn h2_server(responses: Vec<Answer>) -> (String, Arc<Client>, std::sync::mpsc::Receiver<String>) {
+        use jpm_http::{frame, hpack};
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut p = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        p.subject_alt_names.push(rcgen::SanType::IpAddress(std::net::Ipv4Addr::LOCALHOST.into()));
+        let cert = p.self_signed(&key).unwrap();
+        let anchor = Anchor::from_cert(Box::leak(cert.der().to_vec().into_boxed_slice())).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let mut config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(key.serialize_der().into()),
+            )
+            .unwrap();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("https://{}", listener.local_addr().unwrap());
+        let (paths, heard) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut s = rustls::StreamOwned::new(rustls::ServerConnection::new(Arc::new(config)).unwrap(), s);
+            s.read_exact(&mut [0; 24]).unwrap();
+            let mut out = Vec::new();
+            frame::put(&mut out, frame::SETTINGS, 0, 0, &[]);
+            let (mut decoder, mut buf) = (hpack::Decoder::default(), Vec::new());
+            for (status, headers, body) in responses {
+                let h = loop {
+                    s.write_all(&out).unwrap();
+                    out.clear();
+                    let h = frame::read(&mut s, 1 << 20, &mut buf).unwrap().unwrap().unwrap();
+                    if h.typ == frame::SETTINGS && h.flags & frame::ACK == 0 {
+                        frame::put(&mut out, frame::SETTINGS, frame::ACK, 0, &[]);
+                    }
+                    if h.typ == frame::HEADERS {
+                        break h;
+                    }
+                };
+                let fields = decoder.decode(&buf, 1 << 20).unwrap();
+                let path = fields.iter().find(|f| f.0 == b":path").unwrap().1.clone();
+                paths.send(String::from_utf8(path).unwrap()).unwrap();
+                let mut block = Vec::new();
+                hpack::encode(&mut block, ":status", &status.to_string(), false);
+                for (n, v) in &headers {
+                    hpack::encode(&mut block, n, v, false);
+                }
+                let end = if body.is_empty() { frame::END_STREAM } else { 0 };
+                frame::put(&mut out, frame::HEADERS, frame::END_HEADERS | end, h.stream, &block);
+                if !body.is_empty() {
+                    frame::put(&mut out, frame::DATA, frame::END_STREAM, h.stream, &body);
+                }
+            }
+            s.write_all(&out).unwrap();
+            while frame::read(&mut s, 1 << 20, &mut buf).is_ok_and(|f| f.is_some()) {}
+        });
+        let client = Client::new(Box::new(move || vec![anchor]), &Config::default(), &|n| {
+            (n == "JPM_HTTP2").then(|| "1".to_string())
+        });
+        (url, Arc::new(client), heard)
+    }
+
+    #[test]
+    fn follows_redirects_and_gunzips_over_http2() {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(b"{\"ok\":true}").unwrap();
+        let zipped = gz.finish().unwrap();
+        let (url, client, heard) = h2_server(vec![
+            (302, vec![("location", "/next".into())], Vec::new()),
+            (200, vec![("content-encoding", "gzip".into()), ("etag", "\"1\"".into())], zipped.clone()),
+            (304, vec![], Vec::new()),
+        ]);
+        let mut r = client.send(&format!("{url}/start"), &[("accept", "application/json")], &BTreeMap::new()).unwrap();
+        assert_eq!((r.status, r.gzip, r.header("etag").as_deref()), (200, true, Some("\"1\"")));
+        let mut body = Vec::new();
+        r.body.read_to_end(&mut body).unwrap();
+        assert_eq!(gunzip(&body, 100).unwrap(), b"{\"ok\":true}");
+        let r = client.send(&format!("{url}/again"), &[("if-none-match", "\"1\"")], &BTreeMap::new()).unwrap();
+        assert_eq!(r.status, 304);
+        // All three on the one connection the server accepts.
+        assert_eq!(heard.iter().take(3).collect::<Vec<_>>(), ["/start", "/next", "/again"]);
     }
 
     /// The proxies for an environment of `vars` and an .npmrc of `rc`.

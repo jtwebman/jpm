@@ -1,6 +1,6 @@
 //! A registry on localhost for end-to-end tests: packuments, per-version manifests and
-//! tarballs made in memory, served over HTTP/1.1 with keep-alive, plus helpers to run jpm
-//! against it with a private store and home.
+//! tarballs made in memory, served over HTTP/1.1 with keep-alive (and over TLS, HTTP/2 when the
+//! client asks for it by ALPN), plus helpers to run jpm against it with a private store and home.
 
 #![allow(dead_code)]
 
@@ -126,6 +126,8 @@ pub struct Registry {
     /// does, and how many are answered at once (see `Flight`).
     busy: Arc<AtomicUsize>,
     flight: Arc<Flight>,
+    /// Requests served over HTTP/2.
+    pub h2: Arc<AtomicUsize>,
 }
 
 /// Tarball requests in flight at once, counting only those from the `from`th on (0 is the first):
@@ -149,18 +151,24 @@ impl Registry {
         let delay = Arc::new(AtomicUsize::new(0));
         let slow = Arc::new(Mutex::new(BTreeMap::new()));
         let (busy, flight) = (Arc::new(AtomicUsize::new(0)), Arc::new(Flight::default()));
-        let (p, f, h, r, u, d, w) =
-            (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone(), slow.clone());
-        let (b, l) = (busy.clone(), flight.clone());
+        let server = Server {
+            pkgs: pkgs.clone(),
+            files: files.clone(),
+            hits: hits.clone(),
+            requests: requests.clone(),
+            base: url.clone(),
+            delay: delay.clone(),
+            slow: slow.clone(),
+            busy: busy.clone(),
+            flight: flight.clone(),
+        };
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (p, f, h, r, u, d, w) =
-                    (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone());
-                let (b, l) = (b.clone(), l.clone());
-                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d, &w, &b, &l));
+                let server = server.clone();
+                std::thread::spawn(move || serve(stream, &server));
             }
         });
-        Self { url, pkgs, files, hits, requests, delay, slow, busy, flight }
+        Self { url, pkgs, files, hits, requests, delay, slow, busy, flight, h2: Arc::default() }
     }
 
     /// The next `n` tarball requests are answered 503 at once.
@@ -212,7 +220,7 @@ impl Registry {
 pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = rustls::ServerConfig::builder_with_provider(provider)
+    let mut config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
@@ -221,43 +229,109 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
         )
         .unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     let config = Arc::new(config);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("https://{}", listener.local_addr().unwrap());
-    let pkgs = Arc::new(Mutex::new(pkgs));
-    let files = Arc::new(Mutex::new(BTreeMap::new()));
-    let hits = Arc::new(Mutex::new(Vec::new()));
-    let requests = Arc::new(AtomicUsize::new(0));
-    let delay = Arc::new(AtomicUsize::new(0));
-    let slow = Arc::new(Mutex::new(BTreeMap::new()));
-    let (p, f, h, r, u, d, w) =
-        (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone(), slow.clone());
+    let server = Server {
+        pkgs: Arc::new(Mutex::new(pkgs)),
+        files: Arc::default(),
+        hits: Arc::default(),
+        requests: Arc::default(),
+        base: url.clone(),
+        delay: Arc::default(),
+        slow: Arc::default(),
+        busy: Arc::default(),
+        flight: Arc::default(),
+    };
+    let h2 = Arc::new(AtomicUsize::new(0));
+    let registry = Registry {
+        url,
+        pkgs: server.pkgs.clone(),
+        files: server.files.clone(),
+        hits: server.hits.clone(),
+        requests: server.requests.clone(),
+        delay: server.delay.clone(),
+        slow: server.slow.clone(),
+        busy: server.busy.clone(),
+        flight: server.flight.clone(),
+        h2: h2.clone(),
+    };
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let (p, f, h, r, u, d, w, c) =
-                (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone(), config.clone());
+            let (server, config, h2) = (server.clone(), config.clone(), h2.clone());
             std::thread::spawn(move || {
-                let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
-                serve(tls, &p, &f, &h, &r, &u, &d, &w, &AtomicUsize::new(0), &Flight::default())
+                let mut tls = rustls::StreamOwned::new(rustls::ServerConnection::new(config).unwrap(), stream);
+                while tls.conn.is_handshaking() {
+                    if tls.conn.complete_io(&mut tls.sock).is_err() {
+                        return;
+                    }
+                }
+                if tls.conn.alpn_protocol() == Some(b"h2") { serve_h2(tls, &server, &h2) } else { serve(tls, &server) }
             });
         }
     });
-    Registry { url, pkgs, files, hits, requests, delay, slow, busy: Arc::default(), flight: Arc::default() }
+    registry
 }
 
-#[allow(clippy::too_many_arguments)]
-fn serve(
-    stream: impl Read + Write,
-    pkgs: &Mutex<Vec<Pkg>>,
-    files: &Mutex<BTreeMap<String, Vec<u8>>>,
-    hits: &Mutex<Vec<String>>,
-    requests: &AtomicUsize,
-    base: &str,
-    delay: &AtomicUsize,
-    slow: &Mutex<BTreeMap<String, u64>>,
-    busy: &AtomicUsize,
-    flight: &Flight,
-) {
+/// What a registry answers from, shared by its connections.
+#[derive(Clone)]
+struct Server {
+    pkgs: Arc<Mutex<Vec<Pkg>>>,
+    files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    hits: Arc<Mutex<Vec<String>>>,
+    requests: Arc<AtomicUsize>,
+    base: String,
+    delay: Arc<AtomicUsize>,
+    slow: Arc<Mutex<BTreeMap<String, u64>>>,
+    busy: Arc<AtomicUsize>,
+    flight: Arc<Flight>,
+}
+
+impl Server {
+    /// The status line and body for a GET of `path`, sent with the credential `auth` (as
+    /// " authorization: ..." or empty), and whether it is a tarball `Flight` counts: then
+    /// `sent` is called once it has gone.
+    fn reply(&self, path: &str, auth: &str) -> (&'static str, Vec<u8>, bool) {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        // The path, then any credential it came with, for tests that check where tokens go.
+        self.hits.lock().unwrap().push(format!("{path}{auth}"));
+        let tarball = path.contains("/-/");
+        // A busy registry says so at once.
+        let busy =
+            tarball && self.busy.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_ok();
+        let flight = &self.flight;
+        let counted = tarball && flight.seen.fetch_add(1, Ordering::Relaxed) >= flight.from.load(Ordering::Relaxed);
+        if counted {
+            let now = flight.now.fetch_add(1, Ordering::Relaxed) + 1;
+            flight.most.fetch_max(now, Ordering::Relaxed);
+        }
+        let ms = self.delay.load(Ordering::Relaxed);
+        if ms > 0 && tarball && !busy {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        }
+        let late = self.slow.lock().unwrap().get(path.split('?').next().unwrap_or(path)).copied();
+        if let Some(ms) = late {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        let file = self.files.lock().unwrap().get(path).cloned();
+        let (status, bytes) = match file {
+            _ if busy => ("503 Service Unavailable", b"{}".to_vec()),
+            Some(body) => ("200 OK", body),
+            None => answer(&path.replace("%2f", "/").replace("%2F", "/"), &self.pkgs.lock().unwrap(), &self.base),
+        };
+        (status, bytes, counted)
+    }
+
+    /// A tarball `reply` counted has been sent.
+    fn sent(&self, counted: bool) {
+        if counted {
+            self.flight.now.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+fn serve(stream: impl Read + Write, server: &Server) {
     let mut reader = BufReader::new(stream);
     loop {
         let mut line = String::new();
@@ -281,31 +355,7 @@ fn serve(
         }
         let mut body = vec![0; length];
         let _ = reader.read_exact(&mut body);
-        requests.fetch_add(1, Ordering::Relaxed);
-        // The path, then any credential it came with, for tests that check where tokens go.
-        hits.lock().unwrap().push(format!("{path}{auth}"));
-        let tarball = path.contains("/-/");
-        // A busy registry says so at once.
-        let busy = tarball && busy.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_ok();
-        let counted = tarball && flight.seen.fetch_add(1, Ordering::Relaxed) >= flight.from.load(Ordering::Relaxed);
-        if counted {
-            let now = flight.now.fetch_add(1, Ordering::Relaxed) + 1;
-            flight.most.fetch_max(now, Ordering::Relaxed);
-        }
-        let ms = delay.load(Ordering::Relaxed);
-        if ms > 0 && tarball && !busy {
-            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
-        }
-        let late = slow.lock().unwrap().get(path.split('?').next().unwrap_or(&path)).copied();
-        if let Some(ms) = late {
-            std::thread::sleep(std::time::Duration::from_millis(ms));
-        }
-        let file = files.lock().unwrap().get(&path).cloned();
-        let (status, bytes) = match file {
-            _ if busy => ("503 Service Unavailable", b"{}".to_vec()),
-            Some(body) => ("200 OK", body),
-            None => answer(&path.replace("%2f", "/").replace("%2F", "/"), &pkgs.lock().unwrap(), base),
-        };
+        let (status, bytes, counted) = server.reply(&path, &auth);
         let head = format!(
             "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: keep-alive\r\n\r\n",
             bytes.len()
@@ -313,11 +363,63 @@ fn serve(
         let writer = reader.get_mut();
         let sent =
             writer.write_all(head.as_bytes()).and_then(|()| writer.write_all(&bytes)).and_then(|()| writer.flush());
-        if counted {
-            flight.now.fetch_sub(1, Ordering::Relaxed);
-        }
+        server.sent(counted);
         if sent.is_err() {
             return;
+        }
+    }
+}
+
+/// HTTP/2, one request at a time, built on jpm-http's frames and HPACK. It keeps no windows:
+/// the client's (2 MiB a stream, 8 MiB the connection) hold every body a test serves.
+fn serve_h2(mut s: impl Read + Write, server: &Server, served: &AtomicUsize) {
+    use jpm_http::{frame, hpack};
+    let mut preface = [0; 24];
+    if s.read_exact(&mut preface).is_err() || preface[..] != *frame::PREFACE {
+        return;
+    }
+    let mut out = Vec::new();
+    frame::put(&mut out, frame::SETTINGS, 0, 0, &[]);
+    let (mut decoder, mut block, mut buf) = (hpack::Decoder::default(), Vec::new(), Vec::new());
+    loop {
+        if s.write_all(&out).and_then(|()| s.flush()).is_err() {
+            return;
+        }
+        out.clear();
+        let Ok(Some(Ok(h))) = frame::read(&mut s, 1 << 24, &mut buf) else { return };
+        match h.typ {
+            frame::SETTINGS if h.flags & frame::ACK == 0 => frame::put(&mut out, frame::SETTINGS, frame::ACK, 0, &[]),
+            frame::PING if h.flags & frame::ACK == 0 => frame::put(&mut out, frame::PING, frame::ACK, 0, &buf),
+            frame::HEADERS | frame::CONTINUATION => {
+                if h.typ == frame::HEADERS {
+                    block.clear();
+                }
+                block.extend_from_slice(&buf);
+                if h.flags & frame::END_HEADERS == 0 {
+                    continue;
+                }
+                let Ok(fields) = decoder.decode(&block, 1 << 20) else { return };
+                let field = |name: &[u8]| {
+                    fields.iter().find(|(n, _)| n == name).map(|(_, v)| String::from_utf8_lossy(v).into_owned())
+                };
+                let path = field(b":path").unwrap_or_default();
+                let auth = field(b"authorization").map(|a| format!(" authorization: {a}")).unwrap_or_default();
+                served.fetch_add(1, Ordering::Relaxed);
+                let (status, bytes, counted) = server.reply(&path, &auth);
+                let mut head = Vec::new();
+                hpack::encode(&mut head, ":status", &status[..3], false);
+                hpack::encode(&mut head, "content-length", &bytes.len().to_string(), false);
+                hpack::encode(&mut head, "content-type", "application/json", false);
+                let end = if bytes.is_empty() { frame::END_STREAM } else { 0 };
+                frame::put(&mut out, frame::HEADERS, frame::END_HEADERS | end, h.stream, &head);
+                let chunks: Vec<&[u8]> = bytes.chunks(frame::DEFAULT_MAX_FRAME).collect();
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let end = if i + 1 == chunks.len() { frame::END_STREAM } else { 0 };
+                    frame::put(&mut out, frame::DATA, end, h.stream, chunk);
+                }
+                server.sent(counted);
+            }
+            _ => {}
         }
     }
 }
