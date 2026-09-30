@@ -110,7 +110,7 @@ struct State {
     edges: HashMap<String, Vec<Edge>>,
     started: HashSet<String>,
     dead: HashMap<String, Error>,
-    soft_peers: HashMap<String, Vec<(String, String)>>,
+    soft_peers: BTreeMap<String, Vec<(String, String)>>,
     hard_peers: Vec<(String, String, String)>,
     warnings: BTreeSet<String>,
     /// Ends the walk: yarn.lock lacks a range a frozen install needs.
@@ -1132,33 +1132,37 @@ impl Walk<'_> {
     }
 
     /// An optional peer never installs anything, but a consumer sees a version already here.
+    /// Each is settled against the tree the walk and the required peers made, never against
+    /// another optional peer wired before it: in whatever order they come, the same edges.
     fn wire_soft_peers(&self) {
         let mut s = lock(&self.state);
-        let mut up = parent_index(&s);
+        let up = parent_index(&s);
         let shipped = self.shipped(&s);
         let all = by_name(&s.records, &|_| true);
         let prod = by_name(&s.records, &|k| shipped.contains(k));
-        let soft: Vec<(String, Vec<(String, String)>)> =
-            s.soft_peers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        for (key, peers) in soft {
-            let pool = if shipped.contains(&key) { &prod } else { &all };
+        let soft = std::mem::take(&mut s.soft_peers);
+        let mut wired = Vec::new();
+        for (key, peers) in &soft {
+            let pool = if shipped.contains(key) { &prod } else { &all };
             for (name, range) in peers {
-                let Some(list) = s.edges.get(&key) else { break };
-                if list.iter().any(|e| e.name == name) {
+                let Some(list) = s.edges.get(key) else { break };
+                if list.iter().any(|e| e.name == *name) {
                     continue;
                 }
-                let best = self.parents_peer(&s, &up, &key, &name, &range, &all).or_else(|| {
-                    match self.scoped(&mut s, &up, &key, &name, &range) {
+                let best = self.parents_peer(&s, &up, key, name, range, &all).or_else(|| {
+                    match self.scoped(&mut s, &up, key, name, range) {
                         Some(Scoped::Link(v)) => Some(v),
                         _ => None,
                     }
                 });
-                if let Some(best) = best.or_else(|| self.settle_on(&s, &key, &name, &range, pool))
-                    && let Some(list) = s.edges.get_mut(&key)
-                {
-                    up.entry(format!("{name}@{best}")).or_default().push(key.clone());
-                    list.push(Edge { name, version: best, optional: true });
+                if let Some(best) = best.or_else(|| self.settle_on(&s, key, name, range, pool)) {
+                    wired.push((key, Edge { name: name.clone(), version: best, optional: true }));
                 }
+            }
+        }
+        for (key, edge) in wired {
+            if let Some(list) = s.edges.get_mut(key) {
+                list.push(edge);
             }
         }
     }
