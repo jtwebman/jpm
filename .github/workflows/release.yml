@@ -20,7 +20,7 @@ jobs:
         include:
           # Linux: glibc builds under the plain names, linked against glibc 2.17 (as rustup's
           # own builds are) so they run on CentOS 7, Debian 8 and Ubuntu 14.04 and later.
-          # musl's malloc made the static builds a third slower on a big install.
+          # musl's malloc made the static builds 12-25% slower on a big install, with 14-35% more CPU.
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, asset: jpm-linux-x64, glibc: "2.17", run: true }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, asset: jpm-linux-arm64, glibc: "2.17", run: true }
           # 32-bit Raspberry Pi OS (Pi 2 and later).
