@@ -7,6 +7,7 @@
 //! walk, round by round until nothing new is fetched.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
@@ -92,6 +93,13 @@ struct Job {
     peer: bool,
 }
 
+/// What a job waits on, off its thread: a pick another job is making, or the document another
+/// job is reading. A thread that blocked on either would be one read fewer in flight.
+enum Wait {
+    Pick(String),
+    Document(String),
+}
+
 /// A peer found in its consumer's scope: an edge to link, or an alias's version to fetch as the
 /// package itself.
 enum Scoped {
@@ -137,6 +145,11 @@ struct Walk<'a> {
     runtimes: Memo<Package>,
     /// The tops' own registry edges, overrides applied, by the package they fetch.
     direct: HashMap<String, Vec<Spec>>,
+    /// Jobs set aside until what they wait on is in, each queued again by the first job to
+    /// finish after it is.
+    parked: Mutex<Vec<(Wait, Job)>>,
+    /// Off for the jobs a drain left parked, which then block: nothing else would wake them.
+    parking: AtomicBool,
 }
 
 /// Values computed once however many threads ask.
@@ -235,6 +248,8 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         libcs: Mutex::default(),
         runtimes: Mutex::default(),
         direct,
+        parked: Mutex::default(),
+        parking: AtomicBool::new(true),
     };
     let res = walk.run()?;
     // Peers only linked to what the tree has, as yarn 1 and npm's legacy mode link them, are
@@ -268,35 +283,103 @@ impl Walk<'_> {
 
     fn drain(&self, jobs: Vec<Job>) -> Result<()> {
         pool::run(self.opts.threads, jobs, |job, queue| self.edge(job, queue));
+        // Whatever is still parked waits on something no job is doing: it runs now, and blocks.
+        let left: Vec<Job> = std::mem::take(&mut *self.parked.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_iter()
+            .map(|(_, job)| job)
+            .collect();
+        if !left.is_empty() {
+            self.parking.store(false, Ordering::Relaxed);
+            pool::run(self.opts.threads, left, |job, queue| self.edge(job, queue));
+            self.parking.store(true, Ordering::Relaxed);
+        }
         lock(&self.state).fatal.take().map_or(Ok(()), Err)
     }
 
     fn edge(&self, job: Job, queue: &Queue<Job>) {
-        let Job { from, name, range, optional, fresh, peer } = job;
         if lock(&self.state).fatal.is_some() {
             return;
         }
-        if let Err(error) = self.try_edge(&from, &name, &range, optional, fresh, queue) {
-            // Offline, a skipped optional would be locked out for good, where online it is fetched.
-            let mut s = lock(&self.state);
-            if peer && matches!(error.code, "ETARGET" | "ENOVERSIONS") {
-                s.unfetched.push((from, name, range, error));
+        match self.try_edge(&job.from, &job.name, &job.range, job.optional, job.fresh, queue) {
+            Ok(None) => {}
+            Ok(Some(wait)) => self.park(wait, job, queue),
+            Err(error) => self.failed(job, error),
+        }
+        self.unpark(queue);
+    }
+
+    fn failed(&self, job: Job, error: Error) {
+        let Job { from, name, range, optional, peer, .. } = job;
+        // Offline, a skipped optional would be locked out for good, where online it is fetched.
+        let mut s = lock(&self.state);
+        if peer && matches!(error.code, "ETARGET" | "ENOVERSIONS") {
+            s.unfetched.push((from, name, range, error));
+            return;
+        }
+        if !optional || error.code == "EOFFLINE" {
+            let who = if from.is_empty() { "root" } else { &from };
+            let error =
+                Error::new(error.code, format!("{} — resolving {name}@{range} (required by {who})", error.message));
+            // Out of date is out of date: the rest of the walk would only download more.
+            if error.code == "ELOCK" && self.opts.prefer.is_some_and(|p| p.only) {
+                s.fatal.get_or_insert(error);
                 return;
             }
-            if !optional || error.code == "EOFFLINE" {
-                let who = if from.is_empty() { "root" } else { &from };
-                let error =
-                    Error::new(error.code, format!("{} — resolving {name}@{range} (required by {who})", error.message));
-                // Out of date is out of date: the rest of the walk would only download more.
-                if error.code == "ELOCK" && self.opts.prefer.is_some_and(|p| p.only) {
-                    s.fatal.get_or_insert(error);
-                    return;
-                }
-                die(&mut s.dead, from, error);
-            } else {
-                let who = if from.is_empty() { "root".to_string() } else { from };
-                s.warnings.insert(format!("skipped optional {name}@{range} of {who}: {}", error.message));
+            die(&mut s.dead, from, error);
+        } else {
+            let who = if from.is_empty() { "root".to_string() } else { from };
+            s.warnings.insert(format!("skipped optional {name}@{range} of {who}: {}", error.message));
+        }
+    }
+
+    /// What a pick would wait on another job for, if anything.
+    fn wait_for(&self, spec: &Spec, fresh: bool, top: bool) -> Option<Wait> {
+        if !self.parking.load(Ordering::Relaxed) {
+            return None;
+        }
+        let key = pick_key(spec, fresh, top);
+        match self.picks.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
+            Some(cell) if cell.get().is_some() => return None,
+            Some(_) => return Some(Wait::Pick(key)),
+            None => {}
+        }
+        self.opts.registry.reading(&spec.fetch_name).then(|| Wait::Document(spec.fetch_name.clone()))
+    }
+
+    /// Whether another job is still at it.
+    fn waiting(&self, wait: &Wait) -> bool {
+        match wait {
+            Wait::Pick(key) => {
+                self.picks.lock().unwrap_or_else(PoisonError::into_inner).get(key).is_some_and(|c| c.get().is_none())
             }
+            Wait::Document(name) => self.opts.registry.reading(name),
+        }
+    }
+
+    /// Set a job aside until what it waits on is in. Checked under the lock `unpark` takes, and
+    /// the job doing it unparks once it is done: never missed.
+    fn park(&self, wait: Wait, job: Job, queue: &Queue<Job>) {
+        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.waiting(&wait) {
+            parked.push((wait, job));
+        } else {
+            drop(parked);
+            queue.push_front(job);
+        }
+    }
+
+    /// Queue again, ahead of the rest, every parked job whose wait is over: it needs no request.
+    fn unpark(&self, queue: &Queue<Job>) {
+        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        if parked.is_empty() {
+            return;
+        }
+        let (done, still): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut *parked).into_iter().partition(|(wait, _)| !self.waiting(wait));
+        *parked = still;
+        drop(parked);
+        for (_, job) in done {
+            queue.push_front(job);
         }
     }
 
@@ -308,10 +391,10 @@ impl Walk<'_> {
         optional: bool,
         fresh: bool,
         queue: &Queue<Job>,
-    ) -> Result<()> {
+    ) -> Result<Option<Wait>> {
         let over = self.overridden(from, name, range);
         let range = match &over {
-            Some(None) => return Ok(()),
+            Some(None) => return Ok(None),
             Some(Some(r)) if !self.tops.contains_key(from) && to_workspace(name, r) => {
                 lock(&self.state).warnings.insert(workspace_override(name, r));
                 range
@@ -351,21 +434,21 @@ impl Walk<'_> {
                 self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
             }
             push(source);
-            return Ok(());
+            return Ok(None);
         }
         if spec.kind == Kind::Directory {
             push(self.dir(from, &spec)?);
-            return Ok(());
+            return Ok(None);
         }
         if spec.kind == Kind::Runtime {
             if !self.tops.contains_key(from) {
                 lock(&self.state)
                     .warnings
                     .insert(format!("{from} declares {name}@{range}; only the root and workspaces install a runtime"));
-                return Ok(());
+                return Ok(None);
             }
             push(self.runtime(from, &spec, fresh)?);
-            return Ok(());
+            return Ok(None);
         }
         if spec.kind == Kind::Git {
             // The locked commit while the spec that chose it stands: a branch is not followed
@@ -386,13 +469,13 @@ impl Walk<'_> {
                 }
             };
             push(source);
-            return Ok(());
+            return Ok(None);
         }
         if self.tops.contains_key(from)
             && let Some(ws) = self.local_for(&spec, from)?
         {
             push(ws.edge_version());
-            return Ok(());
+            return Ok(None);
         }
         // An alias is keyed by the package it installs, not only by the name it takes.
         let alias = (spec.fetch_name != spec.name).then_some(spec.fetch_name.as_str());
@@ -401,9 +484,13 @@ impl Walk<'_> {
         if let Some(version) = kept {
             self.visit_locked(from, &format!("{}@{}", spec.name, edge(&version)));
             push(edge(&version));
-            return Ok(());
+            return Ok(None);
         }
-        let m = self.pick(&spec, fresh, self.tops.contains_key(from))?;
+        let top = self.tops.contains_key(from);
+        if let Some(wait) = self.wait_for(&spec, fresh, top) {
+            return Ok(Some(wait));
+        }
+        let m = self.pick(&spec, fresh, top)?;
         m.integrity()?;
         let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
@@ -422,7 +509,7 @@ impl Walk<'_> {
             }
         }
         push(edge(&m.version));
-        Ok(())
+        Ok(None)
     }
 
     fn overrides(&self) -> &[Override] {
@@ -439,13 +526,7 @@ impl Walk<'_> {
     /// where its range allows it, as pnpm and npm dedupe it: a root pinning 1.0.0 keeps a
     /// dependency's ^1 off 1.1.0.
     fn pick(&self, spec: &Spec, fresh: bool, top: bool) -> Result<Arc<Manifest>> {
-        let key = format!(
-            "{}{}{}@{}",
-            if fresh { "!" } else { "" },
-            if top { "^" } else { "" },
-            spec.fetch_name,
-            spec.fetch_spec
-        );
+        let key = pick_key(spec, fresh, top);
         let cell = self.picks.lock().unwrap_or_else(PoisonError::into_inner).entry(key).or_default().clone();
         cell.get_or_init(|| {
             // An exact version or the locked version dedupe prefers is asked for by version.
@@ -1394,6 +1475,11 @@ fn crawl<'a>(
         }
     }
     seen
+}
+
+/// A pick's memo key: the fetched name and range, and whether it skips the lockfile or is a top's.
+fn pick_key(spec: &Spec, fresh: bool, top: bool) -> String {
+    format!("{}{}{}@{}", if fresh { "!" } else { "" }, if top { "^" } else { "" }, spec.fetch_name, spec.fetch_spec)
 }
 
 /// Only a linux build that does not say its libc needs the full manifest's word on it.

@@ -69,6 +69,14 @@ impl<T> Queue<T> {
         s.1 += 1;
         self.ready.notify_one();
     }
+
+    /// A job to run ahead of those queued.
+    pub fn push_front(&self, job: T) {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        s.0.push_front(job);
+        s.1 += 1;
+        self.ready.notify_one();
+    }
 }
 
 /// Marks a job done even when it panics, so the other threads never wait on it forever.

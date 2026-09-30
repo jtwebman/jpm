@@ -2366,6 +2366,48 @@ fn a_locked_package_keeps_its_edges_whichever_edge_reaches_it_first() {
     assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["c"], "1.0.0");
 }
 
+/// Edges that wait on a document another edge is reading, or on a pick another edge is making,
+/// are set aside rather than holding a thread, and every one is walked once it is in: the lock
+/// is whole, and the same, whichever document comes last.
+#[test]
+fn edges_waiting_on_one_document_are_each_walked_once_it_is_in() {
+    let mut pkgs = vec![
+        pkg("shared", "1.0.0", json!({ "dependencies": { "leaf": "^1.0.0" } })),
+        pkg("shared", "1.1.0", json!({ "dependencies": { "leaf": "^2.0.0" } })),
+        pkg("leaf", "1.0.0", json!({})),
+        pkg("leaf", "2.0.0", json!({})),
+    ];
+    let ranges = ["^1.0.0", "1.0.0", "~1.1.0"];
+    let mut deps = serde_json::Map::new();
+    for i in 0..12 {
+        pkgs.push(pkg(&format!("p{i}"), "1.0.0", json!({ "dependencies": { "shared": ranges[i % 3] } })));
+        deps.insert(format!("p{i}"), json!("1.0.0"));
+    }
+    let r = Registry::start(pkgs);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": deps }));
+    let mut first: Option<String> = None;
+    for slow in [&["shared"][..], &["shared", "leaf"], &[]] {
+        r.slow_documents(slow, 300);
+        let _ = std::fs::remove_dir_all(env.store().join("metadata"));
+        let _ = std::fs::remove_file(env.path("jpm.lock"));
+        env.ok(&["lock"]);
+        let lock = env.read("jpm.lock");
+        match &first {
+            None => first = Some(lock),
+            Some(f) => assert!(lock == *f, "{slow:?} slow:\n{lock}\nnot\n{f}"),
+        }
+    }
+    r.slow_documents(&[], 0);
+    let lock = env.lock();
+    for i in 0..12 {
+        let want = if ranges[i % 3] == "1.0.0" { "1.0.0" } else { "1.1.0" };
+        assert_eq!(lock["packages"][format!("p{i}@1.0.0")]["dependencies"]["shared"], want, "p{i}");
+    }
+    assert_eq!(lock["packages"]["shared@1.0.0"]["dependencies"]["leaf"], "1.0.0");
+    assert_eq!(lock["packages"]["shared@1.1.0"]["dependencies"]["leaf"], "2.0.0");
+}
+
 /// The store's entries, `v1/pkg/<shard>/<name>`: a directory, or a link into a global entry.
 fn store_entries(store: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();

@@ -351,6 +351,11 @@ impl Registry {
         memo(&self.corgis, name, || self.load_corgi(name))
     }
 
+    /// Whether a thread is reading the document `packument` answers for `name` right now.
+    pub fn reading(&self, name: &str) -> bool {
+        self.corgis.lock().is_ok_and(|m| m.get(name).is_some_and(|cell| cell.get().is_none()))
+    }
+
     /// One version's full manifest by its own route, or `None` where nothing serves it.
     fn route(&self, name: &str, version: &str) -> Result<Option<Arc<Manifest>>> {
         memo(&self.routes, &format!("{name}@{version}"), || {
