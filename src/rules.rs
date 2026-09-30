@@ -141,6 +141,8 @@ pub fn find<'a>(
     if range.starts_with("runtime:") {
         return None;
     }
+    // A parent installed under an alias is the package it is, as npm and pnpm match a parent.
+    let parent = parent.map(|(n, v)| crate::graph::split_alias(v).unwrap_or((n, v)));
     rules.iter().find(|o| o.matches(parent, name, range)).map(|o| o.value.as_deref())
 }
 
@@ -326,7 +328,7 @@ impl Rules {
 
     /// `name`, `name@range`, `parent@range>name@range`, and `-` to take the edge out.
     fn pnpm(&mut self, v: Option<&Value>, file: &str) {
-        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+        for (key, value) in entries(v) {
             match (pnpm_selector(key), value.as_str()) {
                 (Some(sel), Some(value)) => self.push(Manager::Pnpm, sel, value),
                 _ => ui::warn(&format!("{file}: override {key} is not one jpm reads; it is ignored")),
@@ -338,7 +340,7 @@ impl Rules {
     /// itself. npm applies a nested one anywhere under the parent; jpm keeps one copy of each
     /// version, so to the parent's own dependencies, and a deeper one to its nearest parent's.
     fn npm(&mut self, v: Option<&Value>) {
-        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+        for (key, value) in entries(v) {
             self.npm_rule(&[], key, value);
         }
     }
@@ -374,7 +376,7 @@ impl Rules {
     /// yarn: `name`, `**/name`, `parent/name`, each name maybe `@range` (berry's `npm:` taken off).
     /// A longer path is read as its last parent's, which jpm cannot tell apart.
     fn yarn(&mut self, v: Option<&Value>) {
-        for (key, value) in v.and_then(Value::as_object).into_iter().flatten() {
+        for (key, value) in entries(v) {
             let skip = || ui::warn(&format!("package.json resolutions {key} is not one jpm reads; it is ignored"));
             let Some(value) = value.as_str() else {
                 skip();
@@ -462,6 +464,11 @@ impl Rules {
         out.sort_by_key(Override::rank);
         Ok(out)
     }
+}
+
+/// A field's rules, less its `//` keys: comments, as package.json has them (bun skips them too).
+fn entries(v: Option<&Value>) -> impl Iterator<Item = (&String, &Value)> {
+    v.and_then(Value::as_object).into_iter().flatten().filter(|(k, _)| !k.starts_with("//"))
 }
 
 /// A yarn path's package names: a scoped name holds a `/` of its own.
@@ -576,6 +583,10 @@ mod tests {
         assert_eq!(at(None, "c", "^1"), None);
         assert_eq!(at(Some(("q", "1.2.0")), "r", "*"), Some(None));
         assert_eq!(at(Some(("q", "2.0.0")), "r", "*"), None);
+        // A parent under an alias is its package (bun's nested-overrides "through an alias").
+        assert_eq!(at(Some(("q1", "npm:q@1.2.0")), "r", "*"), Some(None));
+        assert_eq!(at(Some(("q2", "npm:q@2.0.0")), "r", "*"), None);
+        assert_eq!(at(Some(("q", "npm:x@1.0.0")), "r", "*"), None);
         // Convergence: only where the version fits the edge's range.
         assert_eq!(at(None, "s", "^4.0.5"), Some(Some("4.0.6")));
         assert_eq!(at(None, "s", "^3"), None);

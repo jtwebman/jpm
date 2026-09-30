@@ -487,4 +487,29 @@ mod tests {
         let e = filter_platform(res, &platform()).unwrap_err();
         assert_eq!((e.code, e.message.contains("(required by a@1.0.0)")), ("EBADPLATFORM", true), "{}", e.message);
     }
+
+    /// bun's test/cli/install/architecture-match.test.ts, on linux x64. Two of its lists bun
+    /// matches and npm-install-checks does not: `any` counts only alone, and a list of other
+    /// names with a negation needs one of them to match.
+    #[test]
+    fn matches_platform_lists_as_npm_does() {
+        let cpu = |list: &[&str]| matches(v(list).as_ref(), "x64");
+        let os = |list: &[&str]| matches(v(list).as_ref(), "linux");
+        for yes in [&[][..], &["any"], &["any", "x64"], &["x64"], &["!ia32"], &["!ia32", "x64"], &["ia32", "x64"]] {
+            assert!(cpu(yes), "{yes:?}");
+        }
+        assert!(cpu(&["!mips", "!ia32"]) && cpu(&["wombo.com", "x64"]));
+        for no in [&["wombo.com"][..], &["ia32"], &["any", "!x64"], &["!x64"], &["!ia32", "!x64"], &["!x64", "x64"]] {
+            assert!(!cpu(no), "{no:?}");
+        }
+        for yes in [&[][..], &["any"], &["any", "linux"], &["linux"], &["!sunos"], &["!sunos", "linux"]] {
+            assert!(os(yes), "{yes:?}");
+        }
+        assert!(os(&["sunos", "linux"]) && os(&["!aix", "!sunos"]));
+        for no in [&["aix"][..], &["any", "!linux"], &["!linux"], &["!sunos", "!linux"], &["!linux", "linux"]] {
+            assert!(!os(no), "{no:?}");
+        }
+        // bun says yes to both.
+        assert!(!cpu(&["wombo.com", "any"]) && !os(&["wombo.com", "!aix"]));
+    }
 }

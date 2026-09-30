@@ -1325,7 +1325,10 @@ fn read_tarball(ctx: &Ctx, store: &Store, dir: &Path, source: &str, pinned: Opti
     let doc = RootManifest::parse(&text, Path::new(&where_))?.doc;
     let mut m = Manifest::from_json(&text).map_err(|e| e.context(&where_))?;
     // A repository need not say its version, and npm runs its `prepare` as it installs one.
+    // Its archive holds no node_modules: what it bundles, npm installs as it packs it.
     if git {
+        let bundled = std::mem::take(&mut m.bundled);
+        m.dependencies.extend(bundled);
         if m.version.is_empty() {
             m.version = "0.0.0".into();
         }
