@@ -49,7 +49,7 @@ pub fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>)
 /// `get`, its body refused past `cap` bytes.
 pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>, cap: u64) -> Result<Response> {
     retry(url, |u| {
-        let mut r = client().send(u, headers, auth)?;
+        let mut r = send_hedged(u, headers, auth)?;
         let sent = read_capped(&mut r.body, cap).map_err(|e| read_error(u, &e))?;
         let (body, gzipped) = if r.gzip {
             let body = gunzip(&sent, cap).map_err(|e| read_error(u, &e))?;
@@ -71,7 +71,7 @@ pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, S
 /// A GET whose body is read as it arrives, with its declared length; retried like `get` until
 /// the body starts.
 pub fn open(url: &str, auth: &BTreeMap<String, String>) -> Result<(Box<dyn Read + Send>, Option<u64>)> {
-    let r = retry(url, |u| client().send(u, &[], auth))?;
+    let r = retry(url, |u| send_hedged(u, &[], auth))?;
     match r.status {
         200..=299 => {
             let length = r.header("content-length").and_then(|v| v.parse().ok());
@@ -80,6 +80,47 @@ pub fn open(url: &str, auth: &BTreeMap<String, String>) -> Result<(Box<dyn Read 
         }
         404 => Err(Error::new("E404", format!("Tarball {url} returned 404"))),
         s => Err(Error::new("ENETWORK", format!("Tarball {url} returned {s}"))),
+    }
+}
+
+fn hedge_ms() -> u64 {
+    static MS: OnceLock<u64> = OnceLock::new();
+    *MS.get_or_init(|| std::env::var("JPM_HEDGE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
+}
+
+/// Throwaway: a second request on a fresh thread when the first has no head after JPM_HEDGE_MS.
+fn send_hedged(u: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>) -> Result<Streaming> {
+    let ms = hedge_ms();
+    if ms == 0 {
+        return client().send(u, headers, auth);
+    }
+    let url = u.to_string();
+    let hs: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let auth = Arc::new(auth.clone());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let go = |which: u8| {
+        let (url, hs, auth, tx) = (url.clone(), hs.clone(), auth.clone(), tx.clone());
+        std::thread::spawn(move || {
+            let h: Vec<(&str, &str)> = hs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let _ = tx.send((which, client().send(&url, &h, &auth)));
+        });
+    };
+    go(0);
+    let t0 = crate::ui::ms();
+    let first = match rx.recv_timeout(Duration::from_millis(ms)) {
+        Ok((_, r)) => return r,
+        Err(_) => {
+            go(1);
+            rx.recv().map_err(|_| Error::new("ENETWORK", "hedge lost"))?
+        }
+    };
+    let (which, r) = first;
+    if crate::ui::trace_on() {
+        eprintln!("hedge {t0} {} won={which} {u}", crate::ui::ms());
+    }
+    match r {
+        Ok(r) => Ok(r),
+        Err(_) => rx.recv().map_err(|_| Error::new("ENETWORK", "hedge lost"))?.1,
     }
 }
 
