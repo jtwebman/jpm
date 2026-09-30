@@ -157,6 +157,8 @@ struct FileDiff {
     new: Option<String>,
     mode: Option<u32>,
     hunks: Vec<Hunk>,
+    /// The git blob id the file had, from `index <old>..<new>`: at least 7 hex digits.
+    old_blob: Option<String>,
 }
 
 #[derive(Debug)]
@@ -343,6 +345,11 @@ fn parse(text: &[u8]) -> std::result::Result<(Diffs, bool), String> {
             d.mode = mode(r);
         } else if field(b"deleted file mode ").is_some() {
             d.new = None;
+        } else if let Some(r) = field(b"index ") {
+            let old = r.split(|&b| b == b'.').next().unwrap_or_default();
+            if (7..=40).contains(&old.len()) && old.iter().all(u8::is_ascii_hexdigit) {
+                d.old_blob = Some(String::from_utf8_lossy(old).to_ascii_lowercase());
+            }
         } else if let Some(r) = field(b"new mode ") {
             d.mode = mode(r);
         } else if let Some(r) = field(b"rename from ") {
@@ -489,7 +496,10 @@ pub fn apply(dir: &Path, text: &[u8], sealed: bool) -> std::result::Result<(), S
         let crlf = converted && data.windows(2).any(|w| w == b"\r\n");
         let patched = patch_file(&data, &d.hunks, name, crlf)?;
         let Some(new) = &d.new else {
-            if !patched.is_empty() {
+            // git may write a deletion with no lines at all (bluesky's react-native-svg patch):
+            // then the blob id it names says the file is the one it meant, as `git apply` checks.
+            let named = d.hunks.is_empty() && d.old_blob.as_deref().is_some_and(|b| git_blob(&data).starts_with(b));
+            if !patched.is_empty() && !named {
                 return Err(format!("{name}: the file to delete holds more than the patch removes"));
             }
             fs::remove_file(dir.join(name)).map_err(io)?;
@@ -507,6 +517,15 @@ pub fn apply(dir: &Path, text: &[u8], sealed: bool) -> std::result::Result<(), S
         write(&at, &patched, d.mode.unwrap_or(mode), sealed).map_err(io)?;
     }
     Ok(())
+}
+
+/// The id git gives `data` as a blob: the SHA-1 of `blob <length>\0` and the bytes, in hex.
+fn git_blob(data: &[u8]) -> String {
+    use jpm_crypto::hash::{Alg, Hasher};
+    let mut h = Hasher::new(Alg::Sha1);
+    h.update(format!("blob {}\0", data.len()).as_bytes());
+    h.update(data);
+    h.finish().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(unix)]
@@ -637,6 +656,22 @@ mod tests {
         for d in [dir, dir2, dir3, dir4] {
             fs::remove_dir_all(d).unwrap();
         }
+    }
+
+    #[test]
+    fn deletes_a_file_git_names_by_its_blob() {
+        // No lines, only the blob id, as git may write a deletion: `hello\n` is ce01362.
+        let dir = tree(&[("gone.txt", "hello\n"), ("kept.txt", "hello\n")]);
+        let delete = |file: &str, id: &str| {
+            format!("diff --git a/{file} b/{file}\ndeleted file mode 100644\nindex {id}..0000000\n")
+        };
+        apply(&dir, delete("gone.txt", "ce01362").as_bytes(), false).unwrap();
+        assert!(!dir.join("gone.txt").exists());
+        let err = apply(&dir, delete("kept.txt", "e69de29").as_bytes(), false).unwrap_err();
+        assert!(err.contains("holds more than the patch removes"), "{err}");
+        assert!(dir.join("kept.txt").exists());
+        assert_eq!(git_blob(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
