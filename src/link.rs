@@ -106,6 +106,12 @@ impl Arrivals {
         self.changed.notify_all();
     }
 
+    /// Whether `wait` would wait: a worker is left, and `integrity` is not done with yet.
+    pub fn pending(&self, integrity: &str) -> bool {
+        let s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        s.1 > 0 && !s.0.contains(integrity)
+    }
+
     /// Until `integrity` is done with, or no worker is left to bring it.
     pub fn wait(&self, integrity: &str) {
         let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
