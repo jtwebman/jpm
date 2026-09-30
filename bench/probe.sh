@@ -14,18 +14,16 @@ run() { # run <fixture> <cmd> <tag> [VAR=value...]
   echo "$(grep -E '^time|^phase' $OUT/tr-$f-$cmd-$tag.txt | tr '\n' ' ') $f $cmd $tag"
 }
 for f in nuxt next nitro; do run $f lock warmup >/dev/null; done
-for i in 1 2 3 4 5 6 7 8; do
-  run nuxt install h0-$i
-  run nuxt install h100-$i JPM_HEDGE_MS=100
-  run next install h0-$i
-  run next install h100-$i JPM_HEDGE_MS=100
-done
 prof() { # prof <fixture> <cmd>
   local f=$1 cmd=$2 d=$W/$1; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/$f/package.json $d/proj/
   (cd $d/proj && sudo -E env HOME=$d/home JPM_STORE=$d/home/store perf record -F 2999 --call-graph dwarf,16384 -o $W/p.data $JPM $cmd --ignore-scripts >/dev/null 2>&1)
   sudo chmod a+r $W/p.data; sudo chown -R $(id -u):$(id -g) $W
   perf report -i $W/p.data --children --sort symbol --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -250 > $OUT/incl-$f-$cmd.txt
   perf report -i $W/p.data --no-children --sort symbol --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -150 > $OUT/self-$f-$cmd.txt
+  perf report -i $W/p.data --children --sort symbol --stdio -g caller,0.5,callee,function,percent --percent-limit 2 --symbol-filter=jpm:: 2>/dev/null | head -2500 > $OUT/callers-$f-$cmd.txt
   perf report -i $W/p.data --no-children --sort comm --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -20 > $OUT/comm-$f-$cmd.txt
   rm -f $W/p.data
 }
+prof nuxt lock
+prof nuxt install
+prof next lock
