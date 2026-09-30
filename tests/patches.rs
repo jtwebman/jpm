@@ -183,6 +183,24 @@ fn a_patch_changes_the_entries_above_it() {
 }
 
 #[test]
+fn applies_a_workspaces_yarn_patch_from_its_own_directory() {
+    // backstage's and twenty's workspaces name patches: by a path from the workspace, or from
+    // the root under `~/`.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".yarn/patches/b-npm-1.0.0-abc.patch", &diff("b@1.0.0", "from the workspace"));
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"] }));
+    let dep = "patch:b@npm%3A1.0.0#../../.yarn/patches/b-npm-1.0.0-abc.patch";
+    env.write("packages/w/package.json", &json!({ "name": "w", "dependencies": { "b": dep } }).to_string());
+    env.ok(&["install"]);
+    assert_eq!(env.read("packages/w/node_modules/b/index.js"), "module.exports = 'from the workspace'");
+    let dep = "patch:b@npm%3A1.0.0#~/.yarn/patches/b-npm-1.0.0-abc.patch";
+    env.write("packages/w/package.json", &json!({ "name": "w", "dependencies": { "b": dep } }).to_string());
+    env.ok(&["install"]);
+    assert_eq!(env.read("packages/w/node_modules/b/index.js"), "module.exports = 'from the workspace'");
+}
+
+#[test]
 fn applies_yarns_patch_protocol() {
     let r = registry();
     let env = Env::new(&r);
