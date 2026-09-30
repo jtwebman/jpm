@@ -131,6 +131,10 @@ pub fn find<'a>(
     name: &str,
     range: &str,
 ) -> Option<Option<&'a str>> {
+    // An override of the npm package `bun` or `node` is not one of the runtime jpm installs.
+    if range.starts_with("runtime:") {
+        return None;
+    }
     rules.iter().find(|o| o.matches(parent, name, range)).map(|o| o.value.as_deref())
 }
 
