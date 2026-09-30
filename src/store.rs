@@ -540,6 +540,9 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     let mut made: HashSet<PathBuf> = HashSet::new();
     let mut folded: HashMap<String, String> = HashMap::new();
     let mut manifest: Option<Vec<u8>> = None;
+    // The buffer the files this thread writes itself pass through, one for the whole tarball:
+    // one per file was 65 MB allocated and zeroed on nuxt.
+    let mut copy: Vec<u8> = Vec::new();
     let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
     // Past the first files, small bodies go to writer threads: one tarball of thousands of files
     // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
@@ -604,9 +607,13 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 out.write_all(&data).map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
                 manifest = Some(data);
             } else {
-                // Only as big as the file: 32 downloads unpack at once, and most files are small.
-                let mut buf = vec![0u8; usize::try_from(size).unwrap_or(COPY_BUF).clamp(1, COPY_BUF)];
-                copy_body(body, &mut out, &mut buf, &file)?;
+                // Only as big as the tarball's biggest such file: 32 downloads unpack at once,
+                // and most files are small.
+                let want = usize::try_from(size).unwrap_or(COPY_BUF).clamp(1, COPY_BUF);
+                if copy.len() < want {
+                    copy.resize(want, 0);
+                }
+                copy_body(body, &mut out, &mut copy[..want], &file)?;
             }
             Ok(())
         });
