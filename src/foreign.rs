@@ -493,8 +493,22 @@ impl Target {
 }
 
 /// The root's three groups as a file records them.
+/// The root's groups, its required peers among the dependencies where no group names them, as
+/// `RootManifest::install_own_peers` has it: npm, pnpm and bun install them. Optional peers are
+/// npm's `peerDependenciesMeta` or bun's `optionalPeers`.
 fn groups_of(top: Option<&Value>) -> [Deps; 3] {
-    GROUPS.map(|g| deps(top.and_then(|t| t.get(g))))
+    let mut groups = GROUPS.map(|g| deps(top.and_then(|t| t.get(g))));
+    let get = |k: &str| top.and_then(|t| t.get(k));
+    let optional = |n: &str| {
+        list(get("optionalPeers")).iter().any(|p| p == n)
+            || truthy(get("peerDependenciesMeta").and_then(|m| m.get(n)).and_then(|m| m.get("optional")))
+    };
+    for (name, range) in deps(get("peerDependencies")) {
+        if !optional(&name) && groups.iter().all(|g| !g.contains_key(&name)) {
+            groups[0].insert(name, range);
+        }
+    }
+    groups
 }
 
 /// The root's recorded ranges and its edges, each name resolved by `target`.

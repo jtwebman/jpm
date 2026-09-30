@@ -205,6 +205,7 @@ impl Ctx {
             rules.workspace_patches(&w.path, &mut w.manifest);
         }
         rules.apply(&mut manifest)?;
+        manifest.install_own_peers();
         self.patched = manifest.patches.iter().map(|p| p.hash.as_str()).collect::<Vec<_>>().join(",");
         // Only for a repository the project names itself may git ask for credentials.
         for m in std::iter::once(&manifest).chain(workspaces.iter().map(|w| &w.manifest)) {
@@ -1472,6 +1473,7 @@ fn apply(edit: &mut Edit) -> Result<()> {
         Some(w) => w.manifest = m,
         None => {
             p.rules.apply(&mut m)?;
+            m.install_own_peers();
             p.manifest = m;
         }
     }

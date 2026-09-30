@@ -219,6 +219,22 @@ fn adds_and_removes() {
 }
 
 #[test]
+fn installs_the_roots_own_required_peers() {
+    // As npm, pnpm and bun do; an optional one is left out.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({
+        "peerDependencies": { "host": "^1", "b": "1.0.0" },
+        "peerDependenciesMeta": { "b": { "optional": true } }
+    }));
+    env.ok(&["install", "--production"]);
+    assert!(env.read("node_modules/host/index.js").contains("host@1.0.0"));
+    assert!(!env.exists("node_modules/b"));
+    assert!(env.ok(&["install", "--production"]).contains("up to date"));
+    assert!(!env.read("package.json").contains("dependencies\""), "package.json is left as it is");
+}
+
+#[test]
 fn settles_peers_against_the_tree() {
     let r = registry();
     let env = Env::new(&r);
