@@ -26,7 +26,7 @@ const STALL: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 5;
 const MAX_HEAD: usize = 64 * 1024;
 /// A registry document read whole into memory, after gunzip. Far above the largest packument.
-const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
+pub const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
 
 pub struct Response {
     pub status: u16,
@@ -35,6 +35,9 @@ pub struct Response {
     /// Seconds a cache in front of the registry has held its copy.
     pub age: Option<u64>,
     pub body: Vec<u8>,
+    /// The body as the server sent it, when it gzipped it: what a cache can keep, a third of the
+    /// size or less, for nothing.
+    pub gzipped: Option<Vec<u8>>,
 }
 
 /// A GET, retried on a busy server, a 5xx or a dropped connection. A 4xx is an answer, not a
@@ -47,13 +50,20 @@ pub fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>)
 pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>, cap: u64) -> Result<Response> {
     retry(url, |u| {
         let mut r = client().send(u, headers, auth)?;
-        let body = read_capped(&mut r.body, cap).map_err(|e| read_error(u, &e))?;
+        let sent = read_capped(&mut r.body, cap).map_err(|e| read_error(u, &e))?;
+        let (body, gzipped) = if r.gzip {
+            let body = gunzip(&sent, cap).map_err(|e| read_error(u, &e))?;
+            (body, Some(sent))
+        } else {
+            (sent, None)
+        };
         Ok(Response {
             status: r.status,
             etag: r.header("etag"),
             cache_control: r.header("cache-control"),
             age: r.header("age").and_then(|a| a.parse().ok()),
             body,
+            gzipped,
         })
     })
 }
@@ -65,7 +75,8 @@ pub fn open(url: &str, auth: &BTreeMap<String, String>) -> Result<(Box<dyn Read 
     match r.status {
         200..=299 => {
             let length = r.header("content-length").and_then(|v| v.parse().ok());
-            Ok((r.body, length))
+            let body: Box<dyn Read + Send> = if r.gzip { Box::new(Gunzip(GzDecoder::new(r.body))) } else { r.body };
+            Ok((body, length))
         }
         404 => Err(Error::new("E404", format!("Tarball {url} returned 404"))),
         s => Err(Error::new("ENETWORK", format!("Tarball {url} returned {s}"))),
@@ -121,6 +132,13 @@ fn read_capped(body: &mut impl Read, cap: u64) -> io::Result<Vec<u8>> {
         return Err(io::Error::other(format!("more than {cap} bytes")));
     }
     Ok(out)
+}
+
+/// Gzipped bytes unpacked, refused past `cap` bytes.
+pub fn gunzip(data: &[u8], cap: u64) -> io::Result<Vec<u8>> {
+    // Boxed as a streamed body is, so both are the one decoder in the binary.
+    let data: Box<dyn Read + Send + '_> = Box::new(data);
+    read_capped(&mut GzDecoder::new(data), cap)
 }
 
 /// Whether a redirect may be followed with the first url's credentials: same scheme, host and
@@ -419,11 +437,12 @@ fn anchors(pem: &str) -> Result<Vec<Anchor<'static>>> {
     Ok(out)
 }
 
-/// A response whose body has not been read yet.
+/// A response whose body has not been read yet: as sent, still gzipped when `gzip`.
 struct Streaming {
     status: u16,
     headers: Vec<(String, String)>,
     body: Box<dyn Read + Send>,
+    gzip: bool,
 }
 
 impl Streaming {
@@ -572,8 +591,7 @@ impl Client {
         };
         let gzip = get("content-encoding").is_some_and(|e| e.contains("gzip"));
         let raw = Body { conn: Some(conn), frame, keep, key, client: self.clone() };
-        let body: Box<dyn Read + Send> = if gzip { Box::new(Gunzip(GzDecoder::new(raw))) } else { Box::new(raw) };
-        Streaming { status, headers, body }
+        Streaming { status, headers, body: Box::new(raw), gzip }
     }
 }
 
@@ -662,9 +680,9 @@ impl Body {
 /// A gzipped body. The decoder stops at the end of the gzip stream, before the framing that
 /// follows it (a chunked body's last, empty chunk); that is read too, or the connection could
 /// not go back to the pool.
-struct Gunzip(GzDecoder<Body>);
+struct Gunzip<R>(GzDecoder<R>);
 
-impl Read for Gunzip {
+impl<R: Read> Read for Gunzip<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.0.read(buf)?;
         if n == 0 && !buf.is_empty() {
@@ -982,9 +1000,30 @@ mod tests {
         let body = gz.finish().unwrap();
         let mut full =
             format!("HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\ncontent-length: {}\r\n\r\n", body.len()).into_bytes();
-        full.extend(body);
+        full.extend(&body);
         let base = serve(vec![b"HTTP/1.1 302 Found\r\nlocation: /next\r\ncontent-length: 0\r\n\r\n".to_vec(), full]);
-        assert_eq!(get(&format!("{base}/start"), &[], &BTreeMap::new()).unwrap().body, b"{\"ok\":true}");
+        let r = get(&format!("{base}/start"), &[], &BTreeMap::new()).unwrap();
+        assert_eq!(r.body, b"{\"ok\":true}");
+        // The bytes as sent come too, for a cache to keep.
+        assert_eq!(r.gzipped, Some(body));
+    }
+
+    #[test]
+    fn streams_a_gzipped_body_unpacked_and_hands_a_plain_one_as_is() {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(b"tarball bytes").unwrap();
+        let body = gz.finish().unwrap();
+        let mut zipped =
+            format!("HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\ncontent-length: {}\r\n\r\n", body.len()).into_bytes();
+        zipped.extend(&body);
+        let plain = b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nplain".to_vec();
+        let base = serve(vec![zipped, plain]);
+        let (mut r, _) = open(&format!("{base}/a"), &BTreeMap::new()).unwrap();
+        let mut got = Vec::new();
+        r.read_to_end(&mut got).unwrap();
+        assert_eq!(got, b"tarball bytes");
+        let r = get(&format!("{base}/b"), &[], &BTreeMap::new()).unwrap();
+        assert_eq!((r.body.as_slice(), r.gzipped), (&b"plain"[..], None));
     }
 
     /// The proxies for an environment of `vars` and an .npmrc of `rc`.

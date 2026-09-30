@@ -220,7 +220,7 @@ impl Registry {
                 if let Some(c) = self.cache.as_ref().filter(|_| !control.contains("no-store")) {
                     let max_age =
                         control.split(',').find_map(|d| d.trim().strip_prefix("max-age=").and_then(|v| v.parse().ok()));
-                    c.set(&key, &response.body, at, response.etag.as_deref(), max_age);
+                    c.set(&key, &response.body, response.gzipped.as_deref(), at, response.etag.as_deref(), max_age);
                 }
                 Ok(response.body)
             }
@@ -544,13 +544,16 @@ pub fn pick_manifest(doc: &Packument, spec: &Spec) -> Result<Arc<Manifest>> {
 
 struct Kept {
     body: Vec<u8>,
+    /// The bytes after the head line as the file holds them: the body, or the body gzipped.
+    stored: Vec<u8>,
     etag: Option<String>,
     /// When the registry's copy was current, in epoch ms.
     at: i64,
     max_age: Option<i64>,
 }
 
-/// One file per url and media type: a JSON head line, then the body as the registry sent it.
+/// One file per url and media type: a JSON head line, then the body as the registry sent it,
+/// gzipped when it came gzipped (a third of the size or less, and nothing spent compressing).
 struct DocCache {
     dir: PathBuf,
     mode: CacheMode,
@@ -582,7 +585,7 @@ impl DocCache {
     }
 
     fn get(&self, key: &str) -> Option<Kept> {
-        let bytes = std::fs::read(self.file(key)).ok()?;
+        let mut bytes = std::fs::read(self.file(key)).ok()?;
         let end = bytes.iter().position(|b| *b == b'\n')?;
         let head = crate::json::parse(std::str::from_utf8(&bytes[..end]).ok()?).ok()?;
         if head.get("key")?.as_str()? != key {
@@ -591,20 +594,33 @@ impl DocCache {
         let number = |k: &str| {
             head.get(k).and_then(|v| if let crate::json::Value::Number(n) = v { n.parse().ok() } else { None })
         };
+        let stored = bytes.split_off(end + 1);
+        // A JSON body starts with `{`, never with gzip's magic bytes.
+        let body = if stored.starts_with(&[0x1f, 0x8b]) {
+            http::gunzip(&stored, http::MAX_DOCUMENT).ok()?
+        } else {
+            stored.clone()
+        };
         Some(Kept {
-            body: bytes[end + 1..].to_vec(),
+            body,
+            stored,
             etag: head.get("etag").and_then(crate::json::Value::as_str).map(str::to_string),
             at: number("at")?,
             max_age: number("maxAge"),
         })
     }
 
-    fn set(&self, key: &str, body: &[u8], at: i64, etag: Option<&str>, max_age: Option<i64>) {
+    /// Keep `body`, as `gzipped` when the registry sent it so.
+    fn set(&self, key: &str, body: &[u8], gzipped: Option<&[u8]>, at: i64, etag: Option<&str>, max_age: Option<i64>) {
         // A captive portal's page, say, is never kept.
         let trimmed = body.trim_ascii();
         if !(trimmed.starts_with(b"{") && trimmed.ends_with(b"}")) {
             return;
         }
+        self.write(key, gzipped.unwrap_or(body), at, etag, max_age);
+    }
+
+    fn write(&self, key: &str, stored: &[u8], at: i64, etag: Option<&str>, max_age: Option<i64>) {
         let file = self.file(key);
         let mut head = crate::json::Object::new();
         head.insert("at", at.into());
@@ -617,7 +633,7 @@ impl DocCache {
         }
         let mut data = crate::json::to_string(&head.into()).into_bytes();
         data.push(b'\n');
-        data.extend_from_slice(body);
+        data.extend_from_slice(stored);
         if let Some(parent) = file.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -628,7 +644,7 @@ impl DocCache {
     /// The registry said it has not changed: current as of `at`.
     fn touch(&self, key: &str, at: i64) {
         if let Some(kept) = self.get(key) {
-            self.set(key, &kept.body, at, kept.etag.as_deref(), kept.max_age);
+            self.write(key, &kept.stored, at, kept.etag.as_deref(), kept.max_age);
         }
     }
 }
@@ -702,6 +718,46 @@ mod tests {
     }
 
     #[test]
+    fn keeps_documents_as_the_registry_sent_them() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("jpm-docs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = DocCache { dir: dir.clone(), mode: CacheMode::Only };
+        let body = br#"{"name":"a","versions":{}}"#;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(body).unwrap();
+        let gz = gz.finish().unwrap();
+        let key = "corgi https://r.test/a";
+        let on_disk = || {
+            let bytes = std::fs::read(cache.file(key)).unwrap();
+            bytes[bytes.iter().position(|b| *b == b'\n').unwrap() + 1..].to_vec()
+        };
+        // Gzipped as it came, read back unpacked.
+        cache.set(key, body, Some(&gz), 1, Some("\"e\""), None);
+        assert_eq!(on_disk(), gz);
+        let kept = cache.get(key).unwrap();
+        assert_eq!((kept.body.as_slice(), kept.at, kept.etag.as_deref()), (&body[..], 1, Some("\"e\"")));
+        // Touched: the same bytes, a new time.
+        cache.touch(key, 2);
+        assert_eq!(on_disk(), gz);
+        assert_eq!(cache.get(key).unwrap().at, 2);
+        // A body that came plain is kept plain, as every document was before.
+        cache.set(key, body, None, 3, None, None);
+        assert_eq!(on_disk(), body);
+        assert_eq!(cache.get(key).unwrap().body, body);
+        // A page that is not a document is never kept, gzipped or not.
+        cache.set("corgi https://r.test/b", b"<html>", Some(&gz), 3, None, None);
+        assert!(cache.get("corgi https://r.test/b").is_none());
+        // A torn gzip reads as nothing kept.
+        let file = cache.file(key);
+        let text = std::fs::read(&file).unwrap();
+        let head = &text[..=text.iter().position(|b| *b == b'\n').unwrap()];
+        std::fs::write(&file, [head, &gz[..gz.len() / 2]].concat()).unwrap();
+        assert!(cache.get(key).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn keeps_publish_dates_beside_the_full_document() {
         let dir = std::env::temp_dir().join(format!("jpm-times-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -710,7 +766,7 @@ mod tests {
         let cache = DocCache { dir: dir.clone(), mode: CacheMode::Only };
         let keep = |date: &str| {
             let body = format!(r#"{{"name":"a","versions":{{"1.0.0":{{}}}},"time":{{"1.0.0":"{date}"}}}}"#);
-            cache.set("full https://r.test/a", body.as_bytes(), 0, None, None);
+            cache.set("full https://r.test/a", body.as_bytes(), None, 0, None, None);
         };
         let side = dir.join("r.test/a/_full.times");
         keep("2020-01-01");
