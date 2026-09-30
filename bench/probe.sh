@@ -14,16 +14,20 @@ run() { # run <fixture> <cmd> <tag> [VAR=value...]
   echo "$(grep -E '^time|^phase' $OUT/tr-$f-$cmd-$tag.txt | tr '\n' ' ') $f $cmd $tag"
 }
 for f in nuxt next nitro; do run $f lock warmup >/dev/null; done
-prof() { # prof <fixture> <cmd>
-  local f=$1 cmd=$2 d=$W/$1; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/$f/package.json $d/proj/
-  (cd $d/proj && sudo -E env HOME=$d/home JPM_STORE=$d/home/store perf record -F 2999 --call-graph dwarf,16384 -o $W/p.data $JPM $cmd --ignore-scripts >/dev/null 2>&1)
+for c in 32 64 32 64; do
+  d=$W/nuxt; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/nuxt/package.json $d/proj/
+  (cd $d/proj && env HOME=$d/home JPM_STORE=$d/home/store JPM_CONCURRENCY=$c perf stat -e task-clock,context-switches,cpu-migrations,page-faults,instructions,cycles -o $OUT/stat-$c.txt -a --append $JPM lock >/dev/null 2>&1)
+done
+cat $OUT/stat-*.txt
+prof() { # prof <fixture> <cmd> <tag> [VAR=value]
+  local f=$1 cmd=$2 tag=$3 d=$W/$1; shift 3; wipe $d; mkdir -p $d/proj $d/home; cp $FIX/$f/package.json $d/proj/
+  (cd $d/proj && sudo -E env HOME=$d/home JPM_STORE=$d/home/store "$@" perf record -F 4999 -g -o $W/p.data $JPM $cmd --ignore-scripts >/dev/null 2>&1)
   sudo chmod a+r $W/p.data; sudo chown -R $(id -u):$(id -g) $W
-  perf report -i $W/p.data --children --sort symbol --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -250 > $OUT/incl-$f-$cmd.txt
-  perf report -i $W/p.data --no-children --sort symbol --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -150 > $OUT/self-$f-$cmd.txt
-  perf report -i $W/p.data --children --sort symbol --stdio -g caller,0.5,callee,function,percent --percent-limit 2 --symbol-filter=jpm:: 2>/dev/null | head -2500 > $OUT/callers-$f-$cmd.txt
-  perf report -i $W/p.data --no-children --sort comm --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -20 > $OUT/comm-$f-$cmd.txt
+  perf report -i $W/p.data --no-children --sort dso,symbol --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -150 > $OUT/self-$f-$cmd-$tag.txt
+  perf report -i $W/p.data --no-children --sort comm --stdio -g none 2>/dev/null | grep -E '^ +[0-9]' | head -20 > $OUT/comm-$f-$cmd-$tag.txt
   rm -f $W/p.data
 }
-prof nuxt lock
-prof nuxt install
-prof next lock
+prof nuxt lock c32 JPM_CONCURRENCY=32
+prof nuxt lock c64 JPM_CONCURRENCY=64
+prof nuxt lock c32b JPM_CONCURRENCY=32
+prof nuxt lock c64b JPM_CONCURRENCY=64
