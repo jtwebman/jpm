@@ -40,9 +40,14 @@ pub struct Response {
 /// A GET, retried on a busy server, a 5xx or a dropped connection. A 4xx is an answer, not a
 /// fault, and comes back for the caller to judge.
 pub fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>) -> Result<Response> {
+    get_capped(url, headers, auth, MAX_DOCUMENT)
+}
+
+/// `get`, its body refused past `cap` bytes.
+pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>, cap: u64) -> Result<Response> {
     retry(url, |u| {
         let mut r = client().send(u, headers, auth)?;
-        let body = read_capped(&mut r.body, MAX_DOCUMENT).map_err(|e| read_error(u, &e))?;
+        let body = read_capped(&mut r.body, cap).map_err(|e| read_error(u, &e))?;
         Ok(Response {
             status: r.status,
             etag: r.header("etag"),

@@ -31,6 +31,12 @@ const NODE_DIST: &str = "https://nodejs.org/download/release";
 const UNOFFICIAL: &str = "https://unofficial-builds.nodejs.org/download/release";
 /// Node's release keys, one file per key fingerprint. `JPM_NODE_KEYS_URL` replaces it, for tests.
 const RELEASE_KEYS: &str = "https://raw.githubusercontent.com/nodejs/release-keys/HEAD/keys";
+/// The most jpm reads of each release document, far past the real ones (2026: index.json 330 KB,
+/// SHASUMS256.txt 3 KB, a signature under 1 KB, the largest release key 15 KB).
+const MAX_INDEX: u64 = 32 << 20;
+const MAX_SHASUMS: u64 = 1 << 20;
+const MAX_SIG: u64 = 64 << 10;
+const MAX_KEY: u64 = 1 << 20;
 
 /// One platform's build: `platform` is `<os>-<cpu>`, `-musl` added for a musl build, in Node's
 /// spelling. `file` is where it is: for Node a file under the release's directory on the mirror
@@ -112,10 +118,14 @@ pub fn apply(p: &mut Package, base_for: &dyn Fn(&str) -> String) {
 /// The package a runtime range resolves to: the newest version it allows, or `pinned` (a
 /// version already locked or preferred), with every platform's build.
 pub fn resolve(name: &str, range: &str, pinned: Option<&str>, registry: &Registry) -> Result<Package> {
+    if let Some(v) = pinned {
+        check_version(name, v)?;
+    }
     let (version, variants) = match name {
         "node" => node(range, pinned, registry)?,
         _ => from_npm(name, range, pinned, registry)?,
     };
+    check_version(name, &version)?;
     if variants.is_empty() {
         return Err(Error::new("ENOVERSIONS", format!("{name}@{version} has no builds jpm can install")));
     }
@@ -130,11 +140,21 @@ pub fn resolve(name: &str, range: &str, pinned: Option<&str>, registry: &Registr
     Ok(p)
 }
 
-fn fetch(registry: &Registry, url: &str) -> Result<Vec<u8>> {
+/// A runtime's version becomes part of urls and a store entry's name: an exact version, and
+/// nothing that could be read as a path.
+pub fn check_version(name: &str, version: &str) -> Result<()> {
+    let pathlike = version.contains(['/', '\\']) || version.contains("..") || version.contains(char::is_control);
+    if pathlike || !semver::is_exact(version) {
+        return Err(Error::new("EINVALIDSPEC", format!("{name}@runtime:{version:?} is not an exact version")));
+    }
+    Ok(())
+}
+
+fn fetch(registry: &Registry, url: &str, cap: u64) -> Result<Vec<u8>> {
     if registry.offline() {
         return Err(Error::new("EOFFLINE", format!("offline: cannot read {url}")));
     }
-    let r = crate::http::get(url, &[], registry.auth())?;
+    let r = crate::http::get_capped(url, &[], registry.auth(), cap)?;
     match r.status {
         200 => Ok(r.body),
         404 => Err(Error::new("E404", format!("{url} returned 404"))),
@@ -142,8 +162,8 @@ fn fetch(registry: &Registry, url: &str) -> Result<Vec<u8>> {
     }
 }
 
-fn download(registry: &Registry, url: &str) -> Result<String> {
-    String::from_utf8(fetch(registry, url)?).map_err(|_| Error::new("ENETWORK", format!("{url} is not text")))
+fn download(registry: &Registry, url: &str, cap: u64) -> Result<String> {
+    String::from_utf8(fetch(registry, url, cap)?).map_err(|_| Error::new("ENETWORK", format!("{url} is not text")))
 }
 
 /// A release's `SHASUMS256.txt` (`text`, from `url`) must be signed by one of Node's release
@@ -152,7 +172,7 @@ fn check_signature(registry: &Registry, version: &str, url: &str, text: &str) ->
     let refused = |why: &str| {
         Error::new("ESIGNATURE", format!("Node.js {version}: {url} is not signed by a Node.js release key: {why}"))
     };
-    let sig = match fetch(registry, &format!("{url}.sig")) {
+    let sig = match fetch(registry, &format!("{url}.sig"), MAX_SIG) {
         Err(e) if e.code == "E404" => {
             return Err(Error::new(
                 "ESIGNATURE",
@@ -174,7 +194,7 @@ fn check_signature(registry: &Registry, version: &str, url: &str, text: &str) ->
         return Ok(());
     }
     let base = std::env::var("JPM_NODE_KEYS_URL").unwrap_or_else(|_| RELEASE_KEYS.to_string());
-    let armored = fetch(registry, &format!("{base}/{name}.asc"))
+    let armored = fetch(registry, &format!("{base}/{name}.asc"), MAX_KEY)
         .map_err(|e| e.context(format_args!("Node.js {version}: cannot read release key {name}")))?;
     crate::pgp::verify(text.as_bytes(), &sig, &key, &armored).map_err(refused)?;
     if let Some(file) = kept
@@ -191,23 +211,32 @@ fn node(range: &str, pinned: Option<&str>, registry: &Registry) -> Result<(Strin
         Some(v) => v,
         None => {
             let url = format!("{}/index.json", mirror());
-            let index = crate::json::parse(&download(registry, &url)?).map_err(|e| e.context(&url))?;
+            let index = crate::json::parse(&download(registry, &url, MAX_INDEX)?).map_err(|e| e.context(&url))?;
             pick_node(&index, range)?
         }
     };
+    check_version("node", &version)?;
     let url = format!("{}/v{version}/SHASUMS256.txt", mirror());
-    let text = download(registry, &url)?;
+    let text = download(registry, &url, MAX_SHASUMS)?;
     if *VERIFY.get().unwrap_or(&true) {
         check_signature(registry, &version, &url, &text)?;
     }
-    let mut variants = node_variants(&text, &version, "");
+    // A signature says who wrote the list, not which release it is for: it must be this
+    // version's, source archive and all, or another signed release's list could stand in.
+    let refused = |why: String| Error::new("EINTEGRITY", format!("Node.js {version}: {url} {why}"));
+    let mut variants = node_variants(&text, &version, "").map_err(refused)?;
+    let source = format!("node-v{version}.tar.gz");
+    if !text.lines().any(|l| l.split_once("  ").is_some_and(|(_, f)| f == source)) {
+        return Err(refused(format!("does not list {source}, so it is not this release's list")));
+    }
     // nodejs.org's releases have unofficial musl builds beside them, for the platforms theirs lack.
     // Their list is signed by no release key: it is trusted as far as its TLS download, as pnpm
-    // trusts it.
+    // trusts it. It has no source archive, and is otherwise held to the same form.
     if mirror() == NODE_DIST {
         let base = format!("{UNOFFICIAL}/v{version}/");
-        if let Ok(text) = download(registry, &format!("{base}SHASUMS256.txt")) {
-            let more = node_variants(&text, &version, &base).into_iter().filter(|v| v.platform.ends_with("-musl"));
+        let listed = download(registry, &format!("{base}SHASUMS256.txt"), MAX_SHASUMS);
+        if let Some(found) = listed.ok().and_then(|text| node_variants(&text, &version, &base).ok()) {
+            let more = found.into_iter().filter(|v| v.platform.ends_with("-musl"));
             let more: Vec<Variant> = more.filter(|m| !variants.iter().any(|v| v.platform == m.platform)).collect();
             variants.extend(more);
         }
@@ -249,14 +278,23 @@ pub fn pick_node(index: &Value, range: &str) -> Result<String> {
 }
 
 /// Each build a `SHASUMS256.txt` lists that jpm installs: `node-v<V>-<os>-<cpu>.tar.gz` and
-/// `win-<cpu>/node.exe`, with `base` before the file when it is not on the mirror.
-pub fn node_variants(text: &str, version: &str, base: &str) -> Vec<Variant> {
+/// `win-<cpu>/node.exe`, with `base` before the file when it is not on the mirror. The list is
+/// refused whole unless every line is `<sha256 in lowercase hex>  <path>` and every file named
+/// for a version is named for `version`: a signed document that merely holds such a line, or
+/// another release's list, is not this release's.
+pub fn node_variants(text: &str, version: &str, base: &str) -> std::result::Result<Vec<Variant>, String> {
     let prefix = format!("node-v{version}-");
     let mut out = Vec::new();
-    for line in text.lines() {
-        let Some((hex, file)) = line.trim().split_once(char::is_whitespace) else { continue };
-        let file = file.trim().trim_start_matches('*');
-        let Some(digest) = from_hex(hex).filter(|d| d.len() == 32) else { continue };
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        let bad = || format!("is not a list of sha256 sums: {:?}", line.chars().take(100).collect::<String>());
+        let (hex, file) = line.split_once("  ").ok_or_else(bad)?;
+        let well_formed = !hex.bytes().any(|b| b.is_ascii_uppercase())
+            && !file.contains(char::is_whitespace)
+            && crate::tar::plain(file);
+        let Some(digest) = from_hex(hex).filter(|d| d.len() == 32 && well_formed) else { return Err(bad()) };
+        if let Some(other) = file.split('/').find(|seg| other_version(seg, version)) {
+            return Err(format!("lists {other}, which is not Node.js {version}'s"));
+        }
         let platform = match file.strip_prefix("win-").and_then(|f| f.strip_suffix("/node.exe")) {
             Some(cpu) => format!("win32-{}", node_cpu(cpu)),
             None => {
@@ -275,7 +313,16 @@ pub fn node_variants(text: &str, version: &str, base: &str) -> Vec<Variant> {
             file: format!("{base}{file}"),
         });
     }
-    out
+    Ok(out)
+}
+
+/// Whether a file name is some version's other than `version`: `node-v<digit>...` that is not
+/// `node-v<version>` then `-` or `.`.
+fn other_version(name: &str, version: &str) -> bool {
+    let Some(rest) = name.strip_prefix("node-v").filter(|r| r.starts_with(|c: char| c.is_ascii_digit())) else {
+        return false;
+    };
+    !rest.strip_prefix(version).is_some_and(|r| r.starts_with(['-', '.']))
 }
 
 /// Node's download names to `process.arch`.
@@ -376,7 +423,14 @@ pub fn check_variant(name: &str, v: &Variant) -> std::result::Result<(), String>
     if !plain(&v.platform) {
         return Err(format!("variant {:?} is not a platform", v.platform));
     }
-    crate::integrity::Integrity::parse(&v.integrity).map_err(|e| e.message)?;
+    // What a release lists (sha256) or a registry gives (sha512); never sha1.
+    let integrity = crate::integrity::Integrity::parse(&v.integrity).map_err(|e| e.message)?;
+    if !matches!(integrity.algorithm, "sha256" | "sha384" | "sha512") {
+        return Err(format!(
+            "variant {} has a {} integrity, and a runtime needs sha256 or stronger",
+            v.platform, integrity.algorithm
+        ));
+    }
     let ok = match name {
         "node" => v.file.starts_with("https://") || crate::tar::plain(&v.file),
         _ => v.file.starts_with('@') && crate::spec::check_name(&v.file, &v.file).is_ok(),
@@ -424,8 +478,6 @@ mod tests {
     #[test]
     fn reads_the_builds_a_shasums_file_lists() {
         let text = "\
-dLsPOoAw  bad-hex.tar.gz
-74bb0f3a80307c52942dc3ed84517b8f54386770 short.tar.gz
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  node-v22.0.0-linux-x64.tar.gz
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  node-v22.0.0-linux-x64.tar.xz
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  node-v22.0.0-linux-armv7l.tar.gz
@@ -436,10 +488,10 @@ dLsPOoAw  bad-hex.tar.gz
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  node-v22.0.0.tar.gz
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  win-x64/node.exe
 74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  win-x64/node.lib
-74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  node-v21.0.0-linux-arm64.tar.gz
+74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d  x64/node-v22.0.0-x64.msi
 ";
         let found: Vec<(String, String)> =
-            node_variants(text, "22.0.0", "").into_iter().map(|v| (v.platform, v.file)).collect();
+            node_variants(text, "22.0.0", "").unwrap().into_iter().map(|v| (v.platform, v.file)).collect();
         let want = [
             ("linux-x64", "node-v22.0.0-linux-x64.tar.gz"),
             ("linux-arm", "node-v22.0.0-linux-armv7l.tar.gz"),
@@ -448,9 +500,60 @@ dLsPOoAw  bad-hex.tar.gz
             ("win32-x64", "win-x64/node.exe"),
         ];
         assert_eq!(found, want.map(|(a, b)| (a.to_string(), b.to_string())));
-        let v = &node_variants(text, "22.0.0", "https://x/")[0];
+        let v = &node_variants(text, "22.0.0", "https://x/").unwrap()[0];
         assert_eq!(v.integrity, "sha256-dLsPOoAwfFKUIcPthFF7j1Q4Z3CfQeU81z35nmRCr00=");
         assert_eq!(v.file, "https://x/node-v22.0.0-linux-x64.tar.gz");
+        // The real lists read whole, each its own version's and no other's.
+        for (v, other) in [("24.12.0", "24.21.0"), ("24.21.0", "26.5.1"), ("26.5.1", "24.12.0")] {
+            let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/node");
+            let real = std::fs::read_to_string(format!("{dir}/v{v}-SHASUMS256.txt")).unwrap();
+            assert!(node_variants(&real, v, "").unwrap().iter().any(|b| b.platform == "win32-x64"), "{v}");
+            let err = node_variants(&real, other, "").unwrap_err();
+            assert!(err.contains(&format!("which is not Node.js {other}'s")), "{err}");
+        }
+    }
+
+    /// A line of any other shape refuses the whole list: a signed document that is not a list of
+    /// sums (a git commit, say) holding one line that looks like one is not a release's list.
+    #[test]
+    fn refuses_a_list_not_all_sums() {
+        let sum = "74bb0f3a80307c529421c3ed84517b8f543867709f41e53cd73df99e6442af4d";
+        let good = format!("{sum}  node-v22.0.0.tar.gz\n{sum}  win-x64/node.exe\n");
+        assert_eq!(node_variants(&good, "22.0.0", "").unwrap().len(), 1);
+        assert!(node_variants(&format!("{good}\n\n"), "22.0.0", "").is_ok(), "blank lines are fine");
+        let commit = format!(
+            "tree 0123456789abcdef0123456789abcdef01234567\nauthor Someone <a@b> 1700000000 +0000\n\n\
+             deps: update something\n\n{sum}  win-x64/node.exe\n"
+        );
+        for bad in [
+            commit,
+            format!("{good}dLsPOoAw  bad-hex.tar.gz\n"),
+            format!("{good}{}  short.tar.gz\n", &sum[..40]),
+            format!("{good}{}  upper.tar.gz\n", sum.to_ascii_uppercase()),
+            format!("{good}{sum} one-space.tar.gz\n"),
+            format!("{good}{sum} *binary-mark.tar.gz\n"),
+            format!("{good}{sum}   three-spaces.tar.gz\n"),
+            format!("{good}{sum}  two words\n"),
+            format!("{good}{sum}  ../up.tar.gz\n"),
+            format!("{good}{sum}  /abs.tar.gz\n"),
+            format!("{good}  {sum}  indented.tar.gz\n"),
+            format!("{good}{sum}  \n"),
+            format!("{good}{sum}  node-v21.0.0-linux-x64.tar.gz\n"),
+            format!("{good}{sum}  node-v22.0.00-linux-x64.tar.gz\n"),
+            format!("{good}{sum}  x64/node-v2.0.0-x64.msi\n"),
+        ] {
+            assert!(node_variants(&bad, "22.0.0", "").is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_runtime_version_is_exact_and_no_path() {
+        for good in ["22.0.0", "1.2.3-rc.1", "0.0.0-x-y"] {
+            check_version("node", good).unwrap();
+        }
+        for bad in ["22", "^22.0.0", "22.0.0/../x", "22.0.0\\x", "1.0.0-a..b", "1.0.0-a\n", "v22.0.0", "1.0.0+b", ""] {
+            assert_eq!(check_version("node", bad).unwrap_err().code, "EINVALIDSPEC", "{bad:?}");
+        }
     }
 
     #[test]
@@ -488,5 +591,12 @@ dLsPOoAw  bad-hex.tar.gz
         assert!(check_variant("node", &v("linux-x64", "md5-x", "a.tar.gz")).is_err());
         assert!(check_variant("bun", &v("linux-x64", sha, "bun")).is_err());
         assert!(check_variant("deno", &v("linux-x64", sha, "@deno/../x")).is_err());
+        // A runtime's integrity is sha256 or stronger, as its release or registry gives it.
+        let sha1 = "sha1-dLsPOoAwfFKUIcPthFF7j1Q4Z3A=";
+        let err = check_variant("node", &v("linux-x64", sha1, "a.tar.gz")).unwrap_err();
+        assert!(err.contains("sha1 integrity"), "{err}");
+        assert!(check_variant("bun", &v("linux-x64", sha1, "@oven/bun-linux-x64")).is_err());
+        let sha512 = format!("sha512-{}", "A".repeat(86) + "==");
+        assert!(check_variant("bun", &v("linux-x64", &sha512, "@oven/bun-linux-x64")).is_ok());
     }
 }

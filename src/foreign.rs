@@ -610,6 +610,9 @@ fn read_pnpm(text: &str) -> Result<Source> {
             if let Some(v) =
                 r.strip_prefix(crate::runtime::PROTOCOL).filter(|_| crate::runtime::NAMES.contains(&name.as_str()))
             {
+                crate::runtime::check_version(name, v).map_err(|_| {
+                    fail(format!("pnpm-lock.yaml locks {name} at runtime:{v:?}, which is not a version"))
+                })?;
                 let variants = package_index
                     .get(format!("{name}@{r}").as_str())
                     .and_then(|p| p.get("resolution")?.get("variants")?.as_array());

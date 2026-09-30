@@ -47,6 +47,7 @@ fn serve_node(r: &Registry, releases: &[(&str, Option<&str>)]) {
             sums.push_str(&format!("{hex}  {file}\n"));
             r.serve(&format!("/dist/v{v}/{file}"), bytes);
         }
+        sums.push_str(&format!("{}  node-v{v}.tar.gz\n", "cd".repeat(32)));
         sums.push_str(&format!("{}  win-x64/node.exe\n", "ab".repeat(32)));
         r.serve(&format!("/dist/v{v}/SHASUMS256.txt"), sums.into_bytes());
     }
@@ -548,4 +549,48 @@ fn real_node_releases_verify() {
         );
         std::fs::remove_file(env.project().join("jpm.lock")).unwrap();
     }
+}
+
+/// A signature says who wrote a list, not which release it is for: another release's signed
+/// list, served as this one's, is refused; so is a list without this release's source archive,
+/// or one far larger than any release's.
+#[test]
+fn refuses_a_list_that_is_not_this_releases() {
+    let (r, env) = release_site(true);
+    let other = "99.0.0";
+    env.manifest(json!({ "devDependencies": { "node": format!("runtime:{other}") } }));
+    r.serve(&format!("/dist/v{other}/SHASUMS256.txt"), fixture(&format!("v{SIGNED}-SHASUMS256.txt")));
+    r.serve(&format!("/dist/v{other}/SHASUMS256.txt.sig"), fixture(&format!("v{SIGNED}-SHASUMS256.txt.sig")));
+    let err = refused(&r, &env, "/keys", &[]);
+    assert!(
+        err.contains(&format!("lists node-v{SIGNED}-")) && err.contains(&format!("not Node.js {other}'s")),
+        "{err}"
+    );
+    // This version's builds, but not its source archive: not the release's list.
+    let sums = String::from_utf8(fixture(&format!("v{SIGNED}-SHASUMS256.txt"))).unwrap();
+    let source = format!("  node-v{SIGNED}.tar.gz");
+    let without: String = sums.lines().filter(|l| !l.ends_with(&source)).map(|l| format!("{l}\n")).collect();
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt"), without.into_bytes());
+    env.manifest(json!({ "devDependencies": { "node": "runtime:24" } }));
+    let err = refused(&r, &env, "/keys", &["--no-verify-node-signature"]);
+    assert!(err.contains(&format!("does not list node-v{SIGNED}.tar.gz")), "{err}");
+    r.serve(&format!("/dist/v{SIGNED}/SHASUMS256.txt"), vec![b'a'; (1 << 20) + 1]);
+    let err = refused(&r, &env, "/keys", &["--no-verify-node-signature"]);
+    assert!(err.contains("more than 1048576 bytes"), "{err}");
+}
+
+/// pnpm-lock.yaml's runtime version names urls and a store entry: one that is not a version is
+/// refused before anything is fetched.
+#[test]
+fn refuses_a_pnpm_runtime_that_is_no_version() {
+    let (r, env) = setup(&RELEASES);
+    env.manifest(json!({
+        "devEngines": { "runtime": { "name": "node", "version": "^22.0.0", "onFail": "download" } },
+    }));
+    for v in ["22.11.0/../../../../ESCAPED", "22", "22.11.0\\\\x"] {
+        env.write("pnpm-lock.yaml", &pnpm_lock(v, "sha256-dLsPOoAwfFKUIcPthFF7j1Q4Z3CfQeU81z35nmRCr00="));
+        let err = fails(&env, &["install", "--frozen-lockfile"]);
+        assert!(err.contains("which is not a version"), "{v}: {err}");
+    }
+    assert!(!r.hits.lock().unwrap().iter().any(|h| h.starts_with("/dist/")), "nothing fetched");
 }
