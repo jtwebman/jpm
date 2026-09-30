@@ -2137,7 +2137,8 @@ snapshots:
                 .to_string();
         let start = std::time::Instant::now();
         let source = read_npm(&text).unwrap();
-        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
+        // Quadratic takes seconds here; a debug build on a busy CI runner can take a second.
+        assert!(start.elapsed().as_millis() < 2000, "{:?}", start.elapsed());
         assert_eq!(source.nodes[0].name, "a");
         assert_eq!(source.nodes[0].dependencies.len(), 20);
     }
