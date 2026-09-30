@@ -911,9 +911,11 @@ impl Linker<'_> {
             return index.files.iter().try_for_each(place);
         }
         // A package of thousands of files (next has 8,000) would take one thread for seconds
-        // while the others finish and wait: its files go to every core in chunks.
-        let chunks: Vec<&[FileEntry]> = index.files.chunks(PLACE_CHUNK).collect();
-        pool::map(pool::disk_threads(), chunks, |c| c.iter().try_for_each(place)).into_iter().collect()
+        // while the others finish and wait: its files go to every core in chunks, each
+        // directory's in one, as a directory takes one new name at a time.
+        pool::map(pool::disk_threads(), chunks_by_dir(&index.files, PLACE_CHUNK), |c| c.into_iter().try_for_each(place))
+            .into_iter()
+            .collect()
     }
 
     /// Windows shims for a bin whose file, once linked, is `file`; its `#!` read from the store.
@@ -1162,6 +1164,29 @@ impl Linker<'_> {
             }
         }
     }
+}
+
+/// `files` in chunks of about `size`, each directory's files all in one chunk: threads linking
+/// into one directory wait on each other. Directories in the order they first appear.
+fn chunks_by_dir(files: &[FileEntry], size: usize) -> Vec<Vec<&FileEntry>> {
+    let mut dirs: Vec<Vec<&FileEntry>> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    for f in files {
+        let dir = f.path.rsplit_once('/').map_or("", |(d, _)| d);
+        let i = *at.entry(dir).or_insert_with(|| {
+            dirs.push(Vec::new());
+            dirs.len() - 1
+        });
+        dirs[i].push(f);
+    }
+    let mut chunks: Vec<Vec<&FileEntry>> = Vec::new();
+    for dir in dirs {
+        match chunks.last_mut() {
+            Some(last) if last.len() + dir.len() <= size => last.extend(dir),
+            _ => chunks.push(dir),
+        }
+    }
+    chunks
 }
 
 fn dep_pkg<'a>(deps: &'a [(String, Dep)], name: &str) -> Option<&'a Package> {
@@ -1430,4 +1455,20 @@ fn top_standing(nm: &Path, top: &RootLinks, shared: bool) -> bool {
 fn entries_standing(st: &State, present: &HashSet<String>) -> bool {
     st.entries.iter().all(|k| present.contains(k))
         && ((st.entries.is_empty() && st.shared.is_empty()) || present.contains(HOIST))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunks_keep_each_directory_whole() {
+        let f = |p: &str| FileEntry { path: p.into(), size: 0, exec: false };
+        let files = [f("a"), f("lib/x"), f("b"), f("lib/y"), f("lib/sub/z"), f("c"), f("d"), f("e/1")];
+        let chunks = chunks_by_dir(&files, 3);
+        let paths: Vec<Vec<&str>> = chunks.iter().map(|c| c.iter().map(|f| f.path.as_str()).collect()).collect();
+        // The top's four files stay together past the size; the rest fill chunks up to it.
+        assert_eq!(paths, [vec!["a", "b", "c", "d"], vec!["lib/x", "lib/y", "lib/sub/z"], vec!["e/1"]]);
+        assert!(chunks_by_dir(&[], 3).is_empty());
+    }
 }
