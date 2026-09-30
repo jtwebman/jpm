@@ -241,6 +241,20 @@ impl Packument {
         found
     }
 
+    /// Another packument of the same document, to cut without touching this one.
+    pub fn copy(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            tags: self.tags.clone(),
+            modified: self.modified.clone(),
+            time: self.time.clone(),
+            text: self.text.clone(),
+            spans: self.spans.clone(),
+            parsed: Mutex::default(),
+            before: self.before.clone(),
+        }
+    }
+
     /// As the registry stood at `before` (epoch ms): later versions gone, and a tag on one moved to
     /// the highest version at or below it that is left. A version with no date passes.
     pub fn until(mut self, times: &Map, before: i64) -> Self {

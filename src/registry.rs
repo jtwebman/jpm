@@ -247,6 +247,17 @@ impl Registry {
     }
 
     fn load_corgi(&self, name: &str) -> Result<Arc<Packument>> {
+        // A scoped package named for linux is nearly always a linux build: its libc is only in
+        // the full document, as are the publish dates the release cutoff reads, so the walk
+        // would ask for that next. Asked for first, it is one request instead of two. The name
+        // only decides which document is asked for; what the package is, and where it runs,
+        // is read from the document. Without one (offline, say), the abbreviated one serves.
+        if name.starts_with('@')
+            && name.contains("linux")
+            && let Ok(full) = self.full(name)
+        {
+            return Ok(self.cut(name, full));
+        }
         let url = self.path(name)?;
         let bytes = match self.document(name, &url, CORGI, false) {
             // A registry that chokes on the abbreviated media type gets asked for the full one.
@@ -266,6 +277,16 @@ impl Registry {
         }
         let times = self.times(name, &doc)?;
         Ok(Arc::new(doc.until(&times, before)))
+    }
+
+    /// A full document as the registry stood at the release cutoff, by its own dates.
+    fn cut(&self, name: &str, full: Arc<Packument>) -> Arc<Packument> {
+        let Some(before) = self.before.filter(|_| !self.excluded(name)) else { return full };
+        let modified = full.time.get("modified").or(full.modified.as_ref());
+        if modified.and_then(|m| parse_date(m)).is_some_and(|m| m <= before) {
+            return full;
+        }
+        Arc::new(full.copy().until(&full.time, before))
     }
 
     /// Publish dates for every version, from the full document.
@@ -833,5 +854,124 @@ mod tests {
         let star = |d: &Packument| pick_manifest(d, &parse_dep("a", "*").unwrap()).unwrap().version.clone();
         assert_eq!(star(&doc(&["3.0.0-rc.0", "1.0.0", "2.0.0"])), "2.0.0");
         assert_eq!(star(&doc(&["1.0.0-beta.1"])), "1.0.0-beta.1");
+    }
+
+    type Asked = Arc<Mutex<Vec<(String, String)>>>;
+
+    /// A registry of documents by path, each `(abbreviated, full)`, either missing (a 404).
+    /// Every request is kept as `(kind, path)`, the kind `corgi` or `full` by what it accepts.
+    fn registry_of(docs: HashMap<String, (Option<String>, Option<String>)>) -> (String, Asked) {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked: Asked = Arc::default();
+        let (docs, a) = (Arc::new(docs), asked.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let (docs, asked) = (docs.clone(), a.clone());
+                std::thread::spawn(move || {
+                    let mut reader = std::io::BufReader::new(stream);
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                        let mut corgi = false;
+                        line.clear();
+                        while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                            corgi |= line.to_ascii_lowercase().starts_with("accept: application/vnd.npm.install-v1");
+                            line.clear();
+                        }
+                        asked.lock().unwrap().push((if corgi { "corgi" } else { "full" }.to_string(), path.clone()));
+                        let body = docs.get(&path).and_then(|(c, f)| if corgi { c.clone() } else { f.clone() });
+                        let (status, body) = body.map_or(("404 Not Found", "{}".to_string()), |b| ("200 OK", b));
+                        let head = format!("HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n", body.len());
+                        if reader.get_mut().write_all(format!("{head}{body}").as_bytes()).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (base, asked)
+    }
+
+    /// A platform package's two documents: each `(version, published)` for `os`, the full one
+    /// with its libc and dates.
+    fn platform_docs(name: &str, os: &str, versions: &[(&str, &str)]) -> (Option<String>, Option<String>) {
+        let manifest = |v: &str, libc: &str| {
+            format!(
+                r#""{v}":{{"name":"{name}","version":"{v}","os":["{os}"],"cpu":["x64"]{libc},"dist":{{"tarball":"http://t/t.tgz","integrity":"sha512-AAAA"}}}}"#
+            )
+        };
+        let latest = versions.last().unwrap().0;
+        let doc = |libc: &str, extra: String| {
+            let list: Vec<String> = versions.iter().map(|(v, _)| manifest(v, libc)).collect();
+            format!(
+                r#"{{"name":"{name}","dist-tags":{{"latest":"{latest}"}},"versions":{{{}}}{extra}}}"#,
+                list.join(",")
+            )
+        };
+        let newest = versions.iter().map(|(_, t)| *t).max().unwrap();
+        let times: Vec<String> = versions.iter().map(|(v, t)| format!(r#""{v}":"{t}""#)).collect();
+        let corgi = doc("", format!(r#","modified":"{newest}""#));
+        let full = doc(r#","libc":["glibc"]"#, format!(r#","time":{{"modified":"{newest}",{}}}"#, times.join(",")));
+        (Some(corgi), Some(full))
+    }
+
+    #[test]
+    fn reads_a_scoped_linux_package_from_its_full_document_alone() {
+        let old = "2000-01-01T00:00:00.000Z";
+        let (linux, darwin) = ("@s/binding-linux-x64-gnu", "@s/binding-darwin-x64");
+        let docs = [
+            ("/@s%2fbinding-linux-x64-gnu".to_string(), platform_docs(linux, "linux", &[("1.0.0", old)])),
+            ("/@s%2fbinding-darwin-x64".to_string(), platform_docs(darwin, "darwin", &[("1.0.0", old)])),
+        ];
+        let (base, asked) = registry_of(docs.into_iter().collect());
+        let config = Config { registry: base, before: Some(now_ms()), ..Config::default() };
+        let registry = Registry::new(&config, None);
+        let m = registry.pick(&parse_dep(linux, "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+        assert_eq!((m.version.as_str(), m.libc.clone()), ("1.0.0", Some(vec!["glibc".to_string()])));
+        // libc, and the release cutoff's dates, came with it: nothing more is asked.
+        assert_eq!(registry.manifest(linux, "1.0.0").unwrap().libc, Some(vec!["glibc".to_string()]));
+        registry.pick(&parse_dep(darwin, "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+        let asked = asked.lock().unwrap().clone();
+        let each = |kind: &str, path: &str| (kind.to_string(), path.to_string());
+        assert_eq!(asked, [each("full", "/@s%2fbinding-linux-x64-gnu"), each("corgi", "/@s%2fbinding-darwin-x64")]);
+    }
+
+    #[test]
+    fn cuts_a_full_document_at_the_release_cutoff_by_its_own_dates() {
+        let name = "@s/tool-linux-x64";
+        let versions = [("1.0.0", "2000-01-01T00:00:00.000Z"), ("2.0.0", "2999-01-01T00:00:00.000Z")];
+        let docs = [("/@s%2ftool-linux-x64".to_string(), platform_docs(name, "linux", &versions))];
+        let (base, _) = registry_of(docs.into_iter().collect());
+        let config = Config { registry: base.clone(), before: Some(now_ms()), ..Config::default() };
+        let registry = Registry::new(&config, None);
+        // Too new: gone from the pick, and `latest` moved back to what is left.
+        assert_eq!(registry.pick(&parse_dep(name, "*").unwrap(), None, false).unwrap().version, "1.0.0");
+        let pinned = registry.pick(&parse_dep(name, "2.0.0").unwrap(), Some("2.0.0"), false);
+        assert_eq!(pinned.unwrap_err().code, "ETARGET");
+        // A version the lockfile names is past the cutoff, as before.
+        assert_eq!(registry.pick(&parse_dep(name, "2.0.0").unwrap(), Some("2.0.0"), true).unwrap().version, "2.0.0");
+        // Excluded, or with no cutoff, the newest is there.
+        let excluded = Config { release_age_exclude: vec!["@s/*".into()], ..config.clone() };
+        let pick = |c: &Config| Registry::new(c, None).pick(&parse_dep(name, "*").unwrap(), None, false).unwrap();
+        assert_eq!(pick(&excluded).version, "2.0.0");
+        assert_eq!(pick(&Config { before: None, ..config }).version, "2.0.0");
+    }
+
+    #[test]
+    fn falls_back_to_the_abbreviated_document_without_a_full_one() {
+        let name = "@s/binding-linux-arm64-musl";
+        let (corgi, _) = platform_docs(name, "linux", &[("1.0.0", "2000-01-01T00:00:00.000Z")]);
+        let docs = [("/@s%2fbinding-linux-arm64-musl".to_string(), (corgi, None))];
+        let (base, asked) = registry_of(docs.into_iter().collect());
+        let registry = Registry::new(&Config { registry: base, ..Config::default() }, None);
+        let m = registry.pick(&parse_dep(name, "1.0.0").unwrap(), Some("1.0.0"), false).unwrap();
+        assert_eq!((m.version.as_str(), m.libc.as_ref()), ("1.0.0", None));
+        let kinds: Vec<String> = asked.lock().unwrap().iter().map(|(k, _)| k.clone()).collect();
+        assert_eq!(kinds, ["full", "corgi"]);
     }
 }
