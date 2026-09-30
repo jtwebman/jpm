@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 pub struct Queue<T> {
@@ -141,7 +142,73 @@ pub fn map<T: Send, R: Send>(threads: usize, items: Vec<T>, f: impl Fn(T) -> R +
 
 /// Threads for network-bound work: `JPM_CONCURRENCY`, else 32.
 pub fn network_threads() -> usize {
-    std::env::var("JPM_CONCURRENCY").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(32)
+    concurrency().unwrap_or(32)
+}
+
+fn concurrency() -> Option<usize> {
+    std::env::var("JPM_CONCURRENCY").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0)
+}
+
+/// Tarball downloads in flight at once, at first: a download mostly waits on the registry, and
+/// is only read off the network where it runs (see `Downloads`).
+const DOWNLOADS: usize = 64;
+/// As few as the halving goes.
+const DOWNLOADS_MIN: usize = 4;
+
+/// How many tarballs download at once: `JPM_CONCURRENCY`, fixed, else `DOWNLOADS`, halved (down
+/// to `DOWNLOADS_MIN`) whenever the network fails a download, as bun does: a registry answering
+/// 429 or 503, or connections dropping, is asked less at a time. A failure counts once for all
+/// the downloads started before the last halving.
+pub struct Downloads {
+    limit: AtomicUsize,
+    halvings: AtomicUsize,
+    fixed: bool,
+}
+
+impl Default for Downloads {
+    fn default() -> Self {
+        let fixed = concurrency();
+        Self {
+            limit: AtomicUsize::new(fixed.unwrap_or(DOWNLOADS)),
+            halvings: AtomicUsize::new(0),
+            fixed: fixed.is_some(),
+        }
+    }
+}
+
+impl Downloads {
+    pub fn limit(&self) -> usize {
+        self.limit.load(Ordering::Relaxed)
+    }
+
+    /// `f`, one download: when the network failed it, retries included, the limit halves.
+    pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        let (halvings, before) = (self.halvings.load(Ordering::Relaxed), troubles());
+        let r = f();
+        if troubles() > before
+            && !self.fixed
+            && self.halvings.compare_exchange(halvings, halvings + 1, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+        {
+            let half = |n: usize| Some((n / 2).max(DOWNLOADS_MIN));
+            let _ = self.limit.fetch_update(Ordering::Relaxed, Ordering::Relaxed, half);
+        }
+        r
+    }
+}
+
+thread_local! {
+    /// Requests this thread saw the network fail, each try counted.
+    static TROUBLE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The network failed a request on this thread: a 429 or 5xx, or a connection that failed or
+/// dropped.
+pub fn trouble() {
+    TROUBLE.with(|t| t.set(t.get() + 1));
+}
+
+fn troubles() -> usize {
+    TROUBLE.with(std::cell::Cell::get)
 }
 
 /// Threads for the resolver's walk: twice `network_threads`. Its requests are small documents,
@@ -159,7 +226,6 @@ pub fn disk_threads() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn runs_jobs_that_add_jobs() {
@@ -212,6 +278,30 @@ mod tests {
         });
         let used = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("every worker waits forever");
         assert_eq!(used, disk_threads() + 2);
+    }
+
+    #[test]
+    fn downloads_halve_once_for_each_failure_seen_down_to_the_least() {
+        let d = Downloads { limit: AtomicUsize::new(64), halvings: AtomicUsize::new(0), fixed: false };
+        d.run(|| ());
+        assert_eq!(d.limit(), 64);
+        d.run(trouble);
+        assert_eq!(d.limit(), 32);
+        // A download that started before another's failure halved the limit fails too: that
+        // halving was for both.
+        d.run(|| {
+            d.run(trouble);
+            trouble();
+        });
+        assert_eq!(d.limit(), 16);
+        for _ in 0..5 {
+            d.run(trouble);
+        }
+        assert_eq!(d.limit(), DOWNLOADS_MIN);
+        // A count set in the environment stays as set.
+        let fixed = Downloads { limit: AtomicUsize::new(8), halvings: AtomicUsize::new(0), fixed: true };
+        fixed.run(trouble);
+        assert_eq!(fixed.limit(), 8);
     }
 
     #[test]

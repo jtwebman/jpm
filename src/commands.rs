@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::json::{self, Object, Value};
@@ -446,7 +446,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let prefetching = !ctx.opts.production && !ctx.dedupe;
     // Downloads start as the walk picks each package and go on past the plan: linking starts
     // once the plan is made, each entry waiting only for the packages it reads.
-    let fetcher = Fetcher::start(&store, if prefetching { pool::network_threads() } else { 0 });
+    let fetcher = Fetcher::start(&store, prefetching);
     let skipped: Mutex<BTreeMap<String, bool>> = Mutex::default();
     let on_pick = |pkg: &Package, from: &str| {
         let mut skipped = skipped.lock().unwrap_or_else(PoisonError::into_inner);
@@ -754,14 +754,34 @@ fn global_store(ctx: &Ctx, store: &Store) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// The downloads an install starts while it plans: worker threads fed by `queue`, each package
-/// marked in `arrivals` once it is stored or has failed (a failure is asked again, and reported,
-/// by whoever needs the package). Dropped before the store's lock, it stops the queue and waits
-/// for the workers, so no download writes to the store after the install lets go of it.
+/// The downloads an install starts while it plans, split as bun splits them: threads fed by
+/// `queue`, as many as `pool::Downloads` allows, read tarballs off the network, and hand each
+/// small one, read whole and checked, to one thread per core that unpacks it. The downloads wait
+/// on the registry and the unpacking on the cores, and neither holds up the other; a tarball too
+/// big to hold unpacks as it downloads, on its download's thread. Each package is marked in
+/// `arrivals` once it is stored or has failed (a failure is asked again, and reported, by
+/// whoever needs the package). Dropped before the store's lock, it stops the queue and waits for
+/// the workers, so no download writes to the store after the install lets go of it. The
+/// threads start with the first download queued: a warm install starts none.
 struct Fetcher {
-    jobs: Arc<(Mutex<Jobs>, std::sync::Condvar)>,
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
     arrivals: Arc<link::Arrivals>,
+    started: std::sync::Once,
+    /// Joined when it is dropped: then no thread holds the store, whose last holder publishes
+    /// what is still staged, and it is this one.
+    threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
+}
+
+struct Shared {
+    jobs: Mutex<Jobs>,
+    ready: std::sync::Condvar,
+    stop: AtomicBool,
+    store: Arc<Store>,
+    downloads: pool::Downloads,
+    /// Download threads running: one past the limit ends before its next job.
+    downloading: AtomicUsize,
+    unpacks: Mutex<Unpacks>,
+    unpack_ready: std::sync::Condvar,
 }
 
 /// Two lanes: a package built for a platform (`os`, `cpu` or `libc`) is almost always an
@@ -774,46 +794,73 @@ struct Jobs {
     closed: bool,
 }
 
+/// Downloads waiting to unpack; closed once the last download thread is done.
+#[derive(Default)]
+struct Unpacks {
+    queue: std::collections::VecDeque<crate::store::Download>,
+    bytes: usize,
+    closed: bool,
+}
+
+/// Downloaded bytes waiting to unpack, at most: past it, a download's own thread unpacks it. 8 MB
+/// kept up with 64 MB on nuxt, and holds less on a slow disk.
+const UNPACK_QUEUE: usize = 8 * 1024 * 1024;
+
 impl Fetcher {
-    fn start(store: &Arc<Store>, workers: usize) -> Self {
-        let jobs = Arc::new((Mutex::new(Jobs::default()), std::sync::Condvar::new()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let arrivals = Arc::new(link::Arrivals::default());
-        arrivals.start_workers(workers);
-        for _ in 0..workers {
-            let (jobs, store, stop, arrivals) = (jobs.clone(), store.clone(), stop.clone(), arrivals.clone());
-            std::thread::spawn(move || {
-                loop {
-                    let job = {
-                        let mut q = jobs.0.lock().unwrap_or_else(PoisonError::into_inner);
-                        loop {
-                            if let Some(job) = q.first.pop_front().or_else(|| q.rest.pop_front()) {
-                                break Some(job);
-                            }
-                            if q.closed {
-                                break None;
-                            }
-                            q = jobs.1.wait(q).unwrap_or_else(PoisonError::into_inner);
-                        }
+    fn start(store: &Arc<Store>, on: bool) -> Self {
+        let shared = Arc::new(Shared {
+            jobs: Mutex::new(Jobs { closed: !on, ..Jobs::default() }),
+            ready: std::sync::Condvar::new(),
+            stop: AtomicBool::new(false),
+            store: store.clone(),
+            downloads: pool::Downloads::default(),
+            downloading: AtomicUsize::new(0),
+            unpacks: Mutex::default(),
+            unpack_ready: std::sync::Condvar::new(),
+        });
+        Self { shared, arrivals: Arc::default(), started: std::sync::Once::new(), threads: Mutex::default() }
+    }
+
+    /// The download and unpacking threads, counted in `arrivals` before any job is queued.
+    fn spawn(&self) {
+        let (downloaders, unpackers) = (self.shared.downloads.limit(), pool::disk_threads());
+        self.shared.downloading.store(downloaders, Ordering::Relaxed);
+        self.arrivals.start_workers(downloaders + unpackers);
+        let mut threads = self.threads.lock().unwrap_or_else(PoisonError::into_inner);
+        for _ in 0..downloaders {
+            let (shared, arrivals) = (self.shared.clone(), self.arrivals.clone());
+            threads.push(std::thread::spawn(move || {
+                while let Some((tarball, integrity)) = shared.next() {
+                    let got = if shared.stop.load(Ordering::Relaxed) || shared.store.has(&integrity) {
+                        None
+                    } else {
+                        shared.downloads.run(|| shared.store.download(&tarball, &integrity))
                     };
-                    let Some((tarball, integrity)) = job else { break };
-                    if !stop.load(Ordering::Relaxed) && !store.has(&integrity) {
-                        let _ = store.ensure(&tarball, &integrity);
+                    match got {
+                        Some(d) => shared.hand(d, &arrivals),
+                        None => arrived(&arrivals, &integrity),
                     }
-                    arrivals.arrive(&integrity);
-                    ui::count(&ui::FETCHED, 1);
                 }
                 arrivals.worker_done();
-            });
+            }));
         }
-        if workers == 0 {
-            jobs.0.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+        for _ in 0..unpackers {
+            let (shared, arrivals) = (self.shared.clone(), self.arrivals.clone());
+            threads.push(std::thread::spawn(move || {
+                while let Some(d) = shared.next_unpack() {
+                    shared.unpack(d, &arrivals);
+                }
+                arrivals.worker_done();
+            }));
         }
-        Self { jobs, stop, arrivals }
     }
 
     fn queue(&self, tarball: Tarball, integrity: String, first: bool) {
-        let mut q = self.jobs.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).closed {
+            return;
+        }
+        self.started.call_once(|| self.spawn());
+        let mut q = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner);
         if q.closed {
             return;
         }
@@ -823,23 +870,90 @@ impl Fetcher {
             q.rest.push_back((tarball, integrity))
         }
         ui::count(&ui::TO_FETCH, 1);
-        self.jobs.1.notify_one();
+        self.shared.ready.notify_one();
     }
 
     /// No more to queue: the workers finish what is queued, or skip it when `stop`.
     fn close(&self, stop: bool) {
         if stop {
-            self.stop.store(true, Ordering::Relaxed);
+            self.shared.stop.store(true, Ordering::Relaxed);
         }
-        self.jobs.0.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
-        self.jobs.1.notify_all();
+        self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+        self.shared.ready.notify_all();
     }
+}
+
+impl Shared {
+    /// The next download; `None` once the queue is closed and empty, or this thread is one past
+    /// the limit. The last download thread to end closes the unpacking's queue.
+    fn next(&self) -> Option<(Tarball, String)> {
+        let mut q = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            let limit = self.downloads.limit();
+            let over = |n: usize| (n > limit).then(|| n - 1);
+            if self.downloading.fetch_update(Ordering::Relaxed, Ordering::Relaxed, over).is_ok() {
+                return None;
+            }
+            if let Some(job) = q.first.pop_front().or_else(|| q.rest.pop_front()) {
+                return Some(job);
+            }
+            if q.closed {
+                if self.downloading.fetch_sub(1, Ordering::Relaxed) == 1 {
+                    self.unpacks.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+                    self.unpack_ready.notify_all();
+                }
+                return None;
+            }
+            q = self.ready.wait(q).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// A download to the unpacking threads, or unpacked here while they have too much waiting.
+    fn hand(&self, d: crate::store::Download, arrivals: &link::Arrivals) {
+        let mut u = self.unpacks.lock().unwrap_or_else(PoisonError::into_inner);
+        if !u.queue.is_empty() && u.bytes + d.size() > UNPACK_QUEUE {
+            drop(u);
+            return self.unpack(d, arrivals);
+        }
+        u.bytes += d.size();
+        u.queue.push_back(d);
+        self.unpack_ready.notify_one();
+    }
+
+    fn next_unpack(&self) -> Option<crate::store::Download> {
+        let mut u = self.unpacks.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(d) = u.queue.pop_front() {
+                u.bytes -= d.size();
+                return Some(d);
+            }
+            if u.closed {
+                return None;
+            }
+            u = self.unpack_ready.wait(u).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Unpacked and kept, even under `stop`: it is downloaded, as one in flight when the queue
+    /// stops is.
+    fn unpack(&self, d: crate::store::Download, arrivals: &link::Arrivals) {
+        let integrity = d.integrity().to_string();
+        let _ = self.store.unpack(d);
+        arrived(arrivals, &integrity);
+    }
+}
+
+fn arrived(arrivals: &link::Arrivals, integrity: &str) {
+    arrivals.arrive(integrity);
+    ui::count(&ui::FETCHED, 1);
 }
 
 impl Drop for Fetcher {
     fn drop(&mut self) {
         self.close(true);
-        self.arrivals.wait_all();
+        for thread in std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner)) {
+            let _ = thread.join();
+        }
     }
 }
 

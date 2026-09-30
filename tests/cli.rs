@@ -2353,6 +2353,43 @@ fn fetches_a_locked_tree_into_a_cold_store_once() {
 }
 
 #[test]
+fn downloads_many_tarballs_at_once_and_fewer_for_a_busy_registry() {
+    let names: Vec<String> = (0..200).map(|i| format!("q{i:03}")).collect();
+    let r = Registry::start(names.iter().map(|n| pkg(n, "1.0.0", json!({}))).collect());
+    let env = Env::new(&r);
+    let deps: serde_json::Map<String, serde_json::Value> = names.iter().map(|n| (n.clone(), json!("1.0.0"))).collect();
+    env.manifest(json!({ "dependencies": deps }));
+    env.ok(&["lock"]);
+    r.slow_tarballs(150);
+    // The most tarballs an install from jpm.lock into an empty store downloads at once, from the
+    // `from`th request on.
+    let most = |busy: usize, from: usize, store: &str, fixed: Option<&str>| {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        r.busy_tarballs(busy);
+        r.count_flight(from);
+        let store = env.root.join(store);
+        let mut command = env.command(&["install", "--store", store.to_str().unwrap()]);
+        if let Some(n) = fixed {
+            command.env("JPM_CONCURRENCY", n);
+        }
+        let out = command.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(env.read("node_modules/q199/index.js").contains("q199@1.0.0"));
+        r.most_in_flight()
+    };
+    // Every download waits on the registry: more at once than the 32 other requests get.
+    let all = most(0, 0, "s1", None);
+    assert!(all > 32 && all <= 64, "{all} at once");
+    // The first 64 answered 503: each tried again, and past those 128 requests half as many
+    // download at once.
+    let busy = most(64, 128, "s2", None);
+    assert!(busy <= 32, "{busy} at once");
+    // A count the environment sets stays as set.
+    let fixed = most(0, 0, "s3", Some("8"));
+    assert!(fixed <= 8, "{fixed} at once");
+}
+
+#[test]
 fn drops_an_optional_package_that_fails_while_linking() {
     let r = registry();
     // native-any's tarball is not what the registry's integrity says: its download fails.

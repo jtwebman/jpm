@@ -23,7 +23,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 
 use flate2::read::GzDecoder;
 
@@ -134,7 +134,109 @@ impl std::fmt::Display for Tarball {
     }
 }
 
-type Pending = Arc<OnceLock<Result<Arc<Index>>>>;
+/// One entry's fetch, shared by every caller that asks for it at once: the first one takes it,
+/// the others wait for its result.
+#[derive(Default)]
+struct Slot {
+    state: Mutex<Fill>,
+    filled: Condvar,
+}
+
+#[derive(Default)]
+enum Fill {
+    #[default]
+    Free,
+    Taken,
+    Done(Result<Arc<Index>>),
+}
+
+type Pending = Arc<Slot>;
+
+impl Slot {
+    /// This caller's to fill, unless another caller has taken it or it is done.
+    fn take(&self) -> bool {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let free = matches!(*s, Fill::Free);
+        if free {
+            *s = Fill::Taken;
+        }
+        free
+    }
+
+    /// The result, once another caller's fill is done; `None` when this caller is to fill it.
+    fn wait_or_take(&self) -> Option<Result<Arc<Index>>> {
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            match &*s {
+                Fill::Done(r) => return Some(r.clone()),
+                Fill::Taken => s = self.filled.wait(s).unwrap_or_else(PoisonError::into_inner),
+                Fill::Free => {
+                    *s = Fill::Taken;
+                    return None;
+                }
+            }
+        }
+    }
+
+    fn set(&self, fill: Fill) {
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = fill;
+        self.filled.notify_all();
+    }
+}
+
+/// A slot this caller took: filled with its result, or given back unfilled when the filling
+/// ends early (a panic, or a download dropped unpacked), so no caller waits on it forever.
+struct Taken(Option<Pending>);
+
+impl Taken {
+    fn fill(mut self, r: &Result<Arc<Index>>) {
+        if let Some(slot) = self.0.take() {
+            slot.set(Fill::Done(r.clone()));
+        }
+    }
+}
+
+impl Drop for Taken {
+    fn drop(&mut self) {
+        if let Some(slot) = self.0.take() {
+            slot.set(Fill::Free);
+        }
+    }
+}
+
+/// A small tarball read whole and checked against its integrity, not yet unpacked: see
+/// `Store::download`. Dropped unpacked, its entry is left for the next caller to fetch.
+pub struct Download {
+    integrity: String,
+    bytes: Vec<u8>,
+    /// An entry there before, broken: replaced.
+    repair: bool,
+    slot: Taken,
+}
+
+impl Download {
+    pub fn integrity(&self) -> &str {
+        &self.integrity
+    }
+
+    /// The compressed bytes held.
+    pub fn size(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+/// What `fetch` read: a small body whole and its digest, when the caller unpacks it elsewhere,
+/// else the files already unpacked into a temp directory, and the digest.
+enum Fetched {
+    Whole(Vec<u8>, Vec<u8>),
+    Unpacked(Result<Index>, PathBuf, Vec<u8>),
+}
+
+/// What `build` leaves to do.
+enum Built {
+    Done(Arc<Index>),
+    Whole(Download),
+}
 
 /// From this size a tarball unpacks while it downloads.
 const STREAM_MIN: u64 = 1024 * 1024;
@@ -322,33 +424,100 @@ impl Store {
         {
             return Ok(index);
         }
-        let cell = self
-            .pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(integrity.to_string())
-            .or_default()
-            .clone();
-        cell.get_or_init(|| self.build(tarball, integrity)).clone()
+        let slot = self.slot(integrity);
+        if let Some(done) = slot.wait_or_take() {
+            return done;
+        }
+        let taken = Taken(Some(slot));
+        let got = self.build(tarball, integrity, false).and_then(|built| match built {
+            Built::Done(index) => Ok(index),
+            Built::Whole(d) => self.unpack(d),
+        });
+        taken.fill(&got);
+        got
     }
 
-    fn build(&self, tarball: &Tarball, integrity: &str) -> Result<Arc<Index>> {
+    /// `ensure` in two halves, for a caller that downloads on some threads and unpacks on others:
+    /// `Some` is a small tarball from a url, read whole and its integrity checked, for `unpack`
+    /// on any thread. `None` once there is nothing more to do: the entry is here, another caller
+    /// is fetching it, or it was done here (a tarball too big to hold whole, a git commit or a
+    /// file, or a failure, which `ensure` gives whoever asks next).
+    pub fn download(&self, tarball: &Tarball, integrity: &str) -> Option<Download> {
+        if !self.verify && self.index(integrity).is_some() {
+            return None;
+        }
+        let slot = self.slot(integrity);
+        if !slot.take() {
+            return None;
+        }
+        let taken = Taken(Some(slot));
+        match self.build(tarball, integrity, true) {
+            Ok(Built::Whole(mut d)) => {
+                d.slot = taken;
+                Some(d)
+            }
+            Ok(Built::Done(index)) => {
+                taken.fill(&Ok(index));
+                None
+            }
+            Err(e) => {
+                taken.fill(&Err(e));
+                None
+            }
+        }
+    }
+
+    /// A download's files unpacked and kept, as `ensure` keeps them.
+    pub fn unpack(&self, mut d: Download) -> Result<Arc<Index>> {
+        let tmp_root = self.root.join("tmp");
+        let got = fs::create_dir_all(&tmp_root)
+            .map_err(|e| Error::io(&e, format!("cannot create {}", tmp_root.display())))
+            .and_then(|()| {
+                let temp = tmp_root.join(temp_suffix());
+                let unpacked = extract(&mut d.bytes.as_slice(), &temp, SUFFIX_FILES);
+                self.keep(&d.integrity, unpacked, &temp, d.repair)
+            });
+        std::mem::replace(&mut d.slot, Taken(None)).fill(&got);
+        got
+    }
+
+    fn slot(&self, integrity: &str) -> Pending {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner).entry(integrity.to_string()).or_default().clone()
+    }
+
+    /// The entry fetched, its bytes checked against `integrity` before anything they said is
+    /// trusted or kept, and unpacked; under `split`, a small one read whole is left to unpack.
+    fn build(&self, tarball: &Tarball, integrity: &str, split: bool) -> Result<Built> {
         let hit = self.index(integrity);
         if let Some(index) = &hit
             && (!self.verify || self.intact(integrity, index))
         {
-            return Ok(index.clone());
+            return Ok(Built::Done(index.clone()));
         }
         let expected = Integrity::parse(integrity)?;
-        let (unpacked, temp, digest) = match tarball {
+        let fetched = match tarball {
             Tarball::Git(source) => self.fetch_git(source)?,
-            _ => self.fetch(tarball, expected.hasher())?,
+            _ => self.fetch(tarball, expected.hasher(), split)?,
         };
-        // The bytes are checked before anything they said is trusted, or kept.
+        let (unpacked, temp, digest) = match fetched {
+            Fetched::Whole(bytes, digest) => {
+                expected.check(&digest).map_err(|e| e.context(tarball))?;
+                let (integrity, repair) = (integrity.to_string(), hit.is_some());
+                return Ok(Built::Whole(Download { integrity, bytes, repair, slot: Taken(None) }));
+            }
+            Fetched::Unpacked(unpacked, temp, digest) => (unpacked, temp, digest),
+        };
         let checked = expected.check(&digest).map_err(|e| e.context(tarball)).and(unpacked);
+        self.keep(integrity, checked, &temp, hit.is_some()).map(Built::Done)
+    }
+
+    /// Checked files in `temp`, staged for the linker or published (replacing a broken entry
+    /// under `repair`); `temp` is gone or staged either way.
+    fn keep(&self, integrity: &str, checked: Result<Index>, temp: &Path, repair: bool) -> Result<Arc<Index>> {
+        let temp = temp.to_path_buf();
         let index = match checked {
             // Verified, and nowhere another process could read it yet: the linker's to move.
-            Ok(index) if hit.is_none() && self.staging.load(Ordering::Relaxed) => {
+            Ok(index) if !repair && self.staging.load(Ordering::Relaxed) => {
                 let index = Arc::new(index);
                 self.staged
                     .lock()
@@ -358,7 +527,7 @@ impl Store {
                 self.fetched.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string());
                 return Ok(index);
             }
-            Ok(index) => self.publish(integrity, index, &temp, hit.is_some()),
+            Ok(index) => self.publish(integrity, index, &temp, repair),
             Err(e) => Err(e),
         };
         remove_tree(&temp);
@@ -370,9 +539,12 @@ impl Store {
     /// A tarball whose integrity is not known yet (a tarball dependency's first read): stored
     /// under the sha512 of its bytes, which is its integrity from then on.
     pub fn adopt(&self, tarball: &Tarball) -> Result<(Arc<Index>, String)> {
-        let (unpacked, temp, digest) = match tarball {
+        let fetched = match tarball {
             Tarball::Git(source) => self.fetch_git(source)?,
-            _ => self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512))?,
+            _ => self.fetch(tarball, jpm_crypto::hash::Hasher::new(jpm_crypto::hash::Alg::Sha512), false)?,
+        };
+        let Fetched::Unpacked(unpacked, temp, digest) = fetched else {
+            return Err(Error::new("EINTERNAL", format!("{tarball} was not unpacked")));
         };
         let integrity = format!("sha512-{}", to_base64(&digest));
         // Only a broken entry is replaced: one with no index yet may be another adopt's, mid-publish.
@@ -387,8 +559,9 @@ impl Store {
     /// Stream a tarball into a temp directory, hashing its bytes as they pass: the download,
     /// the inflate and the writes overlap. What was unpacked comes back with the digest of every
     /// byte, read to the end even when unpacking failed, so a corrupt download is reported as
-    /// one. A connection that drops mid-body is tried again.
-    fn fetch(&self, tarball: &Tarball, hasher: jpm_crypto::hash::Hasher) -> Result<(Result<Index>, PathBuf, Vec<u8>)> {
+    /// one. A connection that drops mid-body is tried again. Under `split`, a small tarball read
+    /// whole comes back as its bytes and their digest instead, for another thread to unpack.
+    fn fetch(&self, tarball: &Tarball, hasher: jpm_crypto::hash::Hasher, split: bool) -> Result<Fetched> {
         let tmp_root = self.root.join("tmp");
         fs::create_dir_all(&tmp_root).map_err(|e| Error::io(&e, format!("cannot create {}", tmp_root.display())))?;
         let mut last = None;
@@ -397,10 +570,14 @@ impl Store {
             let (source, length) = self.open(tarball)?;
             // One budget for every byte read, unpacked or drained.
             let mut input = Hashing { inner: source.take(tar::MAX_ARCHIVE + 1), hash: hasher.clone(), failed: None };
-            let unpacked = match small_head(&mut input, length) {
-                Ok(head) if tarball.to_string().ends_with(".exe") => {
-                    store_exe(&mut head.as_slice().chain(&mut input), &temp, &tarball.to_string())
-                }
+            let head = small_head(&mut input, length);
+            let exe = tarball.to_string().ends_with(".exe");
+            // Read to its end within `small_head`'s budget: the whole body.
+            if split && !exe && input.failed.is_none() && head.as_ref().is_ok_and(|h| whole(h, length)) {
+                return Ok(Fetched::Whole(head.unwrap_or_default(), input.hash.finish().to_vec()));
+            }
+            let unpacked = match head {
+                Ok(head) if exe => store_exe(&mut head.as_slice().chain(&mut input), &temp, &tarball.to_string()),
                 Ok(head) => extract(&mut head.as_slice().chain(&mut input), &temp, SUFFIX_FILES),
                 Err(e) => Err(Error::io(&e, format!("cannot read {tarball}"))),
             };
@@ -410,6 +587,7 @@ impl Store {
                 _ => Ok(()),
             });
             if let Some(dropped) = input.failed.take() {
+                crate::pool::trouble();
                 remove_tree(&temp);
                 last = Some(dropped);
                 continue;
@@ -418,14 +596,14 @@ impl Store {
                 remove_tree(&temp);
                 return Err(Error::io(&e, format!("cannot read {tarball}")));
             }
-            return Ok((unpacked, temp, input.hash.finish().to_vec()));
+            return Ok(Fetched::Unpacked(unpacked, temp, input.hash.finish().to_vec()));
         }
         Err(last.unwrap_or_else(|| Error::new("ENETWORK", format!("{tarball} failed"))))
     }
 
     /// A git commit's files in a temp directory, only those `npm pack` would keep (see `pack`),
     /// with the digest of that tree: what its integrity is, however the files came.
-    fn fetch_git(&self, source: &str) -> Result<(Result<Index>, PathBuf, Vec<u8>)> {
+    fn fetch_git(&self, source: &str) -> Result<Fetched> {
         if self.offline {
             return Err(Error::new("EOFFLINE", format!("offline: {source} is not in the store")));
         }
@@ -434,7 +612,7 @@ impl Store {
         let (temp, work) = (tmp_root.join(temp_suffix()), tmp_root.join(temp_suffix()));
         let packed = crate::git::fetch(source, &work, &temp).and_then(|index| pack(&temp, index));
         match packed.and_then(|index| Ok((tree_digest(&temp, &index)?, index))) {
-            Ok((digest, index)) => Ok((Ok(index), temp, digest)),
+            Ok((digest, index)) => Ok(Fetched::Unpacked(Ok(index), temp, digest)),
             Err(e) => {
                 remove_tree(&temp);
                 Err(e)
@@ -995,6 +1173,12 @@ fn small_head(input: &mut impl Read, length: Option<u64>) -> io::Result<Vec<u8>>
         input.take(STREAM_MIN + 1).read_to_end(&mut head)?;
     }
     Ok(head)
+}
+
+/// Whether `small_head` read the body to its end: it reads only a body that says it is small,
+/// and stops one byte past the budget.
+fn whole(head: &[u8], length: Option<u64>) -> bool {
+    length.is_some_and(|n| n < STREAM_MIN) && head.len() as u64 <= STREAM_MIN
 }
 
 /// Passes bytes through while hashing them, and remembers a read error: the connection

@@ -113,14 +113,6 @@ impl Arrivals {
             s = self.changed.wait(s).unwrap_or_else(PoisonError::into_inner);
         }
     }
-
-    /// Until every worker has stopped.
-    pub fn wait_all(&self) {
-        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        while s.1 > 0 {
-            s = self.changed.wait(s).unwrap_or_else(PoisonError::into_inner);
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone)]
