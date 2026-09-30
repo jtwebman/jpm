@@ -271,6 +271,22 @@ fn a_dependency_that_is_a_peer_too_settles_as_a_peer() {
 }
 
 #[test]
+fn a_peer_with_no_parent_copy_takes_the_roots() {
+    // opencode's zod 4.1.8, not the 4.4.3 a package below pins: npm and bun hoist the root's.
+    let r = Registry::start(vec![
+        pkg("provider", "1.0.0", json!({ "peerDependencies": { "zod": "^4" } })),
+        pkg("gateway", "1.0.0", json!({ "dependencies": { "provider": "1.0.0" } })),
+        pkg("pins", "1.0.0", json!({ "dependencies": { "zod": "4.4.3" } })),
+        pkg("zod", "4.1.8", json!({})),
+        pkg("zod", "4.4.3", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "gateway": "1.0.0", "pins": "1.0.0", "zod": "4.1.8" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["packages"]["provider@1.0.0"]["dependencies"]["zod"], "4.1.8");
+}
+
+#[test]
 fn settles_peers_against_the_tree() {
     let r = registry();
     let env = Env::new(&r);

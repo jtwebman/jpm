@@ -855,6 +855,14 @@ impl Walk<'_> {
             return Some(ws.edge_version());
         }
         let packages: Vec<&Package> = found.into_iter().filter(|p| p.local.is_none()).collect();
+        // Then the root's own copy that fits, as npm's and bun's hoisted copy is: opencode's zod
+        // 4.1.8, not the 4.4.3 that astro pins somewhere below.
+        let root = s.edges.get(ROOT).and_then(|l| l.iter().find(|e| e.name == name));
+        if let Some(p) = root.and_then(|e| packages.iter().find(|p| p.edge_version() == e.version))
+            && semver::satisfies(&p.version, range)
+        {
+            return Some(p.edge_version());
+        }
         let best = semver::max_satisfying(packages.iter().map(|p| p.version.as_str()), range)?;
         let mut same: Vec<&&Package> = packages.iter().filter(|p| p.version == best).collect();
         same.sort_by_key(|p| p.key());
