@@ -50,6 +50,6 @@ jobs:
           path: dist
           merge-multiple: true
       - run: cd dist && sha256sum jpm-* > SHA256SUMS
-      - run: gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

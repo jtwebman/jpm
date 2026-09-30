@@ -1,6 +1,8 @@
 //! A bin on Windows, as `cmd-shim` writes one for npm and pnpm: `<name>.cmd` for cmd,
 //! `<name>.ps1` for PowerShell and `<name>` for Git Bash, each running the program the target's
 //! `#!` line names. Compiled everywhere so it is tested everywhere; only Windows links with it.
+//! The shims' form is cmd-shim's, Copyright (c) npm, Inc. and Contributors, ISC licensed; see
+//! THIRD_PARTY_NOTICES.md.
 
 use std::io::Read;
 use std::path::Path;

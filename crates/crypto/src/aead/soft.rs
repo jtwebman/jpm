@@ -2,6 +2,9 @@
 //! aes_ct64, GHASH on integer multiplies after BearSSL's ghash_ctmul64. Also the AES key
 //! schedule, which the hardware code shares.
 //!
+//! BearSSL is Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>, MIT licensed; see
+//! THIRD_PARTY_NOTICES.md at the repository root.
+//!
 //! Bitsliced layout. Four blocks sit in eight u64 words `q`. Word `q[i]` holds bit `i` of every
 //! byte of the four blocks, so one S-box circuit over the eight words substitutes all 64 bytes at
 //! once, with no table and no branch. Within a word, bits `8 * b .. 8 * b + 8` come from byte
