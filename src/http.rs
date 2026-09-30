@@ -26,6 +26,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a connection may go without a byte before it is abandoned: silence, not slowness.
 const STALL: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 5;
+/// A connection's read buffer. Two TLS records: a bigger read is made straight into the caller's
+/// buffer, and each of an install's 64 downloads holds one, so 128 KB each was 6 MB of nuxt's
+/// peak from a lockfile, for no speed.
+const CONN_BUF: usize = 32 * 1024;
 const USER_AGENT: &str = concat!("jpm/", env!("CARGO_PKG_VERSION"));
 const MAX_HEAD: usize = 64 * 1024;
 /// A registry document read whole into memory, after gunzip. Far above the largest packument.
@@ -578,7 +582,7 @@ impl Client {
                 Ok(Some(Streaming { status: r.status, headers: r.headers, body: Box::new(r.body), gzip }))
             }
             jpm_http::Got::H1(Some(tls)) => {
-                let mut conn = BufReader::with_capacity(128 * 1024, Stream::Tls(Box::new(tls)));
+                let mut conn = BufReader::with_capacity(CONN_BUF, Stream::Tls(Box::new(tls)));
                 let (status, headers) = exchange(&mut conn, &request_head(url, &url.target, headers, authorization)?)?;
                 Ok(Some(self.body(conn, (true, url.host.clone(), url.port), status, headers)))
             }
@@ -629,7 +633,7 @@ impl Client {
         } else {
             Stream::Plain(tcp)
         };
-        Ok(BufReader::with_capacity(128 * 1024, stream))
+        Ok(BufReader::with_capacity(CONN_BUF, stream))
     }
 
     /// A TCP connection to the url's host, through the proxy's tunnel when https has a proxy.
