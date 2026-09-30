@@ -108,12 +108,20 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     check_name(name, raw)?;
     let mut fetch_name = name.to_string();
     let mut s = spec.trim().to_string();
-    // The root's `patch:` ranges are read before this (`rules`); a builtin one is only its range.
+    // The root's and workspaces' `patch:` ranges are read before this (`rules`); a builtin one
+    // is only its range. A published package's names a file in its own repository, which its
+    // tarball does not carry (@yarnpkg/core's got): nothing can apply it, so the version it
+    // patches is installed as it is.
     if let Some((range, patch)) = crate::patch::yarn(name, &s) {
         if patch.is_some() {
-            return Err(invalid(format!(
-                "\"patch:\" dependencies are read from the root package.json only (in package \"{raw}\")"
-            )));
+            static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+            let mut told = TOLD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !told.contains(&s) {
+                told.push(s.clone());
+                crate::ui::warn(&format!(
+                    "a dependency on {raw} names a yarn patch only its own repository has; {name} is installed without it"
+                ));
+            }
         }
         return build(name, &range, raw);
     }
@@ -642,7 +650,8 @@ mod tests {
             let prefix = &spec[..=spec.find(':').unwrap()];
             assert!(msg(spec).starts_with(&format!("\"{prefix}\" dependencies are not supported yet")), "{spec}");
         }
-        assert!(msg("patch:x@1#p.patch").contains("read from the root package.json only"));
+        // A published package's patch lives in its own repository: the version, unpatched.
+        assert_eq!(parse_dep("x", "patch:x@npm%3A1.2.3#~/.yarn/patches/x.patch").unwrap().fetch_spec, "1.2.3");
         assert_eq!(parse_dep("x", "patch:x@npm%3A^1#optional!builtin<compat/x>").unwrap().fetch_spec, "^1");
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {

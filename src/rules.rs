@@ -219,6 +219,22 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     Ok(rules)
 }
 
+/// `rel` from the directory `dir`, both relative to the root, its `.` and `..` taken out; one
+/// that climbs past the root keeps its `..`, for the patch reader to refuse.
+fn under(dir: &str, rel: &str) -> String {
+    let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    for part in rel.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
 /// `name` or `name@range`.
 fn name_range(s: &str) -> (String, Option<String>) {
     match s.get(1..).and_then(|t| t.find('@')) {
@@ -254,6 +270,24 @@ impl Rules {
             match path.as_str() {
                 Some(path) if spec::check_name(&name, key).is_ok() => self.add_patch(key.clone(), path.to_string()),
                 _ => ui::warn(&format!("{file}: patch {key} is not one jpm reads; it is ignored")),
+            }
+        }
+    }
+
+    /// yarn's `patch:` ranges in the package.json of the workspace at `dir` (relative to the
+    /// root), read as the root's are: each patch taken, each range made the one it stands for
+    /// (backstage's yarn plugin workspace has one). A patch's path is the workspace's own
+    /// (twenty's `../../.yarn/patches/…`), or the root's under `~/`.
+    pub fn workspace_patches(&mut self, dir: &str, m: &mut RootManifest) {
+        for group in [&mut m.dependencies, &mut m.dev_dependencies, &mut m.optional_dependencies] {
+            for (name, range) in group.iter_mut() {
+                if let Some((source, patch)) = crate::patch::yarn(name, range) {
+                    if let Some((key, path)) = patch {
+                        let rooted = range.split_once('#').is_some_and(|(_, p)| p.starts_with("~/"));
+                        self.add_patch(key, if rooted { path } else { under(dir, &path) });
+                    }
+                    *range = source;
+                }
             }
         }
     }

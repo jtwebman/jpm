@@ -196,11 +196,14 @@ impl Ctx {
             Some(m) => m,
             None => project::read_manifest(&dir.join("package.json"))?,
         };
-        let workspaces = match self.found.as_ref().and_then(|f| f.workspaces.clone()) {
+        let mut workspaces = match self.found.as_ref().and_then(|f| f.workspaces.clone()) {
             Some(w) => w,
             None => project::find_workspaces(&dir, &manifest)?,
         };
-        let rules = rules::read(&dir, &manifest)?;
+        let mut rules = rules::read(&dir, &manifest)?;
+        for w in &mut workspaces {
+            rules.workspace_patches(&w.path, &mut w.manifest);
+        }
         rules.apply(&mut manifest)?;
         self.patched = manifest.patches.iter().map(|p| p.hash.as_str()).collect::<Vec<_>>().join(",");
         // Only for a repository the project names itself may git ask for credentials.
