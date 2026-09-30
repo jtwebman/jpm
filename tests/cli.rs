@@ -379,7 +379,8 @@ fn consumers_missing_one_peer_share_a_version_that_fits_them_all() {
 #[test]
 fn a_peer_no_version_satisfies_takes_what_its_scope_has() {
     // pnpm's registry-mock deadlock.b wants deadlock.c 2.0.0, which was never published, and its
-    // parent has 1.0.0: pnpm links that, with a warning, where jpm failed the install.
+    // parent has 1.0.0: pnpm links that, with a warning, where jpm failed the install. A peer out
+    // of its range takes its scope's copy before any fetch now, so the warning is that one's.
     let r = Registry::start(vec![
         pkg("host", "1.0.0", json!({})),
         pkg("wants3", "1.0.0", json!({ "peerDependencies": { "host": "^3" } })),
@@ -389,7 +390,7 @@ fn a_peer_no_version_satisfies_takes_what_its_scope_has() {
     env.manifest(json!({ "dependencies": { "mid": "1.0.0" } }));
     let out = env.ok(&["install"]);
     assert_eq!(env.lock()["packages"]["wants3@1.0.0"]["dependencies"]["host"], "1.0.0");
-    assert!(out.contains("wants3@1.0.0 needs peer host@^3, which no version satisfies"), "{out}");
+    assert!(out.contains("unmet peer host@^3 of wants3@1.0.0: linked to the host@1.0.0 above it"), "{out}");
     assert!(env.ok(&["install"]).contains("up to date"));
     // With nothing to take, it fails, as in pnpm.
     let env = Env::new(&r);

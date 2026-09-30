@@ -420,9 +420,7 @@ fn an_optional_dependency_that_cannot_be_fetched_is_left_out() {
 fn peers_settle_on_what_the_tree_has() {
     // bun-install-registry.test.ts "peerDependency in child npm dependency should not maintain
     // old version when package is upgraded", "update › duplicate peer dependency", and yarn's
-    // dragon test 3 (a package and its dependency peer on each other). Not ported: "hoisting/
-    // using incorrect peer dep", where bun (and pnpm) give the peer the root's version outside its
-    // range; jpm installs one inside it (settle_peers in src/resolve.rs).
+    // dragon test 3 (a package and its dependency peer on each other).
     let r = registry();
     r.publish(pkg("peer-deps-fixed", "1.0.0", json!({ "peerDependencies": { "no-deps": "^1.0.0" } })));
     let (env, _) = install(&r, json!({ "dependencies": { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } }));
@@ -443,6 +441,31 @@ fn peers_settle_on_what_the_tree_has() {
     assert_eq!(sees(&env, "dragon-test-3-a", "dragon-test-3-b"), "dragon-test-3-b@1.0.0");
     assert_eq!(sees(&env, "dragon-test-3-a", "no-deps"), "no-deps@2.0.0");
     assert_eq!(sees(&env, "dragon-test-3-a/../dragon-test-3-b", "dragon-test-3-a"), "dragon-test-3-a@1.0.0");
+}
+
+#[test]
+fn a_peer_out_of_its_range_takes_the_roots_copy() {
+    // bun-install-registry.test.ts "hoisting/using incorrect peer dep on initial install" and
+    // "after install", and "it should warn when the peer dependency resolution is incompatible":
+    // peer-deps-fixed (^1.0.0) under a root with no-deps 2.0.0 gets that copy, with a warning,
+    // and none of its own; either way round, the next install follows the root.
+    let r = registry();
+    r.publish(pkg("peer-deps-fixed", "1.0.0", json!({ "peerDependencies": { "no-deps": "^1.0.0" } })));
+    let manifest = |no_deps: &str| json!({ "dependencies": { "peer-deps-fixed": "1.0.0", "no-deps": no_deps } });
+    for (first, then) in [("1.0.0", "2.0.0"), ("2.0.0", "1.0.0")] {
+        let (env, mut out) = install(&r, manifest(first));
+        for version in [first, then] {
+            if version == then {
+                env.manifest(manifest(then));
+                out = env.ok(&["install"]);
+            }
+            assert_eq!(sees(&env, "peer-deps-fixed", "no-deps"), format!("no-deps@{version}"));
+            assert_eq!(out.contains("unmet peer no-deps@^1.0.0 of peer-deps-fixed@1.0.0"), version == "2.0.0", "{out}");
+            let lock = env.lock();
+            let copies = lock["packages"].as_object().unwrap().keys().filter(|k| k.starts_with("no-deps@")).count();
+            assert_eq!(copies, 1, "{lock}");
+        }
+    }
 }
 
 #[test]
