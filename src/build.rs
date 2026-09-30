@@ -93,7 +93,7 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
             events.insert(0, ("prepare", line.clone()));
         }
         for (event, line) in &events {
-            let mut command = run::shell(line, &pkg_dir, &run::bin_dirs(&pkg_dir));
+            let mut command = run::shell(line, &pkg_dir, &run::bin_dirs(&pkg_dir), dir);
             run::script_env(&mut command, &file, event, line, &p.name, &p.version);
             without_credentials(&mut command);
             // Output goes to a log beside the package: shown only when the script fails.
@@ -126,13 +126,14 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
 /// The project's lifecycle scripts (`preinstall` to `postprepare`), the root first, then each
 /// workspace, each in its own directory. Their output is shown: it is the project's own code.
 pub fn run_lifecycle(tops: &[(&Path, &RootManifest)]) -> Result<()> {
+    let Some(&(root, _)) = tops.first() else { return Ok(()) };
     for (dir, m) in tops {
         let scripts = m.doc.get("scripts").and_then(Value::as_object);
         for event in LIFECYCLE {
             let Some(line) = scripts.and_then(|s| s.get(event)).and_then(Value::as_str) else { continue };
             let (name, version) = (m.name.as_deref().unwrap_or(""), m.version.as_deref().unwrap_or(""));
             ui::info(&format!("> {event}: {line}"));
-            let mut command = run::shell(line, dir, &run::bin_dirs(dir));
+            let mut command = run::shell(line, dir, &run::bin_dirs(dir), root);
             run::script_env(&mut command, &dir.join("package.json"), event, line, name, version);
             let code = run::wait(&mut command)?;
             if code != 0 {
@@ -183,19 +184,52 @@ fn read_scripts(file: &Path) -> HashMap<String, String> {
     scripts.into_iter().flatten().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()
 }
 
-/// A dependency's scripts are someone else's code: no npm, yarn or bun token or password
-/// reaches them through the environment. Hygiene, not a sandbox: a script can still read the
+/// A dependency's scripts are someone else's code: no npm, yarn or bun token or password, npm
+/// proxy setting or client key reaches them through the environment, and a proxy variable's
+/// user and password are taken out of it. Hygiene, not a sandbox: a script can still read the
 /// user's files, .npmrc among them.
 fn without_credentials(command: &mut Command) {
-    for (key, _) in std::env::vars_os() {
+    for (key, value) in std::env::vars_os() {
         let k = key.as_encoded_bytes();
         let has = |word: &[u8]| k.windows(word.len()).any(|w| w.eq_ignore_ascii_case(word));
         let npm = k.len() > 11 && k[..11].eq_ignore_ascii_case(b"npm_config_");
+        let setting = |names: &[&str]| {
+            let rest = String::from_utf8_lossy(&k[11.min(k.len())..]).replace('-', "_");
+            names.iter().any(|n| rest.eq_ignore_ascii_case(n))
+        };
         let named = [&b"NPM_TOKEN"[..], b"NODE_AUTH_TOKEN", b"YARN_NPM_AUTH_TOKEN", b"BUN_AUTH_TOKEN"];
         if named.iter().any(|n| k.eq_ignore_ascii_case(n))
             || (npm && (has(b"auth") || has(b"token") || has(b"password")))
+            || (npm && setting(&["proxy", "https_proxy", "http_proxy", "key", "cert", "certfile", "keyfile"]))
         {
             command.env_remove(&key);
+        } else if [&b"HTTPS_PROXY"[..], b"HTTP_PROXY", b"ALL_PROXY"].iter().any(|n| k.eq_ignore_ascii_case(n)) {
+            match value.to_str().map(without_userinfo) {
+                Some(Some(bare)) => command.env(&key, bare),
+                Some(None) => command,
+                None => command.env_remove(&key),
+            };
         }
+    }
+}
+
+/// A proxy url without its `user:password@`; `None` when it has none.
+fn without_userinfo(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://").map_or(("", url), |(s, r)| (s, r));
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let at = authority.rfind('@')?;
+    let host = &rest[at + 1..];
+    Some(if scheme.is_empty() { host.to_string() } else { format!("{scheme}://{host}") })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn takes_the_user_out_of_a_proxy_url() {
+        let bare = |u: &str| super::without_userinfo(u);
+        assert_eq!(bare("http://u:p%40ss@proxy:8080/x").as_deref(), Some("http://proxy:8080/x"));
+        assert_eq!(bare("u@corp:p@proxy:3128").as_deref(), Some("proxy:3128"));
+        assert_eq!(bare("http://proxy:8080/a@b"), None, "an @ past the host is the path's");
+        assert_eq!(bare("proxy:8080"), None);
     }
 }

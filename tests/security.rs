@@ -10,6 +10,24 @@ fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+#[cfg(unix)]
+fn have_node() -> bool {
+    std::process::Command::new("node").arg("--version").output().is_ok()
+}
+
+/// b comes in through a, so a global-store install writes the hook.
+fn hoisting_registry() -> Registry {
+    Registry::start(vec![pkg("a", "1.1.0", json!({ "dependencies": { "b": "^1.1.0" } })), pkg("b", "1.1.0", json!({}))])
+}
+
+/// A package.json in `dir` depending on a, with one script `t`.
+#[cfg(unix)]
+fn project_at(dir: &std::path::Path, script: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    let manifest = json!({ "dependencies": { "a": "1.1.0" }, "scripts": { "t": script } });
+    std::fs::write(dir.join("package.json"), manifest.to_string()).unwrap();
+}
+
 #[test]
 fn registry_text_reaches_the_terminal_escaped() {
     // OSC 52 sets the clipboard, OSC 0 the title: in a dependency's name and range.
@@ -48,4 +66,126 @@ fn registry_text_reaches_the_terminal_escaped() {
         "{text:?} {}",
         stderr(&out)
     );
+}
+
+/// A project path with `"`, `\`, spaces, `--require` or a line break: Node still loads only the
+/// hook, and starts.
+#[cfg(unix)]
+#[test]
+fn node_options_hold_any_project_path() {
+    if !have_node() {
+        return;
+    }
+    let r = hoisting_registry();
+    let env = Env::new(&r);
+    let evil = env.root.join("evil.js");
+    let pwned = env.root.join("PWNED");
+    std::fs::write(&evil, format!("require('fs').writeFileSync({:?}, 'x')", pwned.display())).unwrap();
+    for name in [
+        format!("q\" --require {} \"x", evil.display()),
+        format!("b\\\" --require {} x\\", evil.display()),
+        "nl\n--require=/x a".to_string(),
+    ] {
+        let dir = env.project().join(&name);
+        project_at(&dir, "node -e \"console.log('ran')\"");
+        let out = env.command_in(&dir, &["run", "-s", "t"]).output().unwrap();
+        assert!(dir.join("node_modules/.jpm/hoist.cjs").is_file(), "{name:?}: no hook written");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && text.contains("ran"), "{name:?}: {text} {}", stderr(&out));
+        assert!(!pwned.exists(), "{name:?}: evil.js ran");
+    }
+}
+
+/// NODE_OPTIONS cannot spell a path that is not Unicode; a lossy spelling names no file and
+/// stops every node.
+#[cfg(unix)]
+#[test]
+fn node_starts_under_a_project_path_that_is_not_unicode() {
+    use std::os::unix::ffi::OsStrExt;
+    if !have_node() {
+        return;
+    }
+    let r = hoisting_registry();
+    let env = Env::new(&r);
+    let dir = env.project().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    project_at(&dir, "node -e \"console.log('ran')\"");
+    let out = env.command_in(&dir, &["run", "-s", "t"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && text.contains("ran"), "node did not start: {}", stderr(&out));
+}
+
+/// The hook runs in every node a script starts: only the project's own counts, never one in a
+/// directory above it (anyone's, in /tmp). A workspace still gets its root's.
+#[cfg(unix)]
+#[test]
+fn scripts_load_only_the_projects_own_hook() {
+    if !have_node() {
+        return;
+    }
+    let r = hoisting_registry();
+    let env = Env::new(&r);
+    let planted = env.root.join("node_modules/.jpm");
+    std::fs::create_dir_all(&planted).unwrap();
+    let marker = env.root.join("PLANTED");
+    std::fs::write(planted.join("hoist.cjs"), format!("require('fs').writeFileSync({:?}, 'x')", marker.display()))
+        .unwrap();
+    std::fs::create_dir_all(env.root.join("node_modules/.bin")).unwrap();
+    // No hook of its own: the project's entries are not in the global store.
+    env.write(".npmrc", "global-store=false\n");
+    env.manifest(json!({
+        "dependencies": { "a": "1.1.0" },
+        "scripts": { "t": "node -e \"console.log(process.env.NODE_OPTIONS + '|' + process.env.NODE_PATH)\"" }
+    }));
+    let out = env.ok(&["run", "-s", "t"]);
+    assert!(!env.exists("node_modules/.jpm/hoist.cjs"));
+    assert!(!marker.exists(), "a parent directory's hoist.cjs ran: {out}");
+    assert!(!out.contains(&env.root.join("node_modules").display().to_string()), "{out}");
+    // With the global store, a workspace's script gets the root's hook.
+    env.write(".npmrc", "");
+    env.manifest(json!({ "workspaces": ["w"], "dependencies": { "a": "1.1.0" } }));
+    env.write("w/package.json", r#"{ "name": "w", "scripts": { "t": "node -p process.env.NODE_OPTIONS" } }"#);
+    env.ok(&["install"]);
+    let out = env.command_in(&env.project().join("w"), &["run", "-s", "t"]).output().unwrap();
+    let hook = env.project().join("node_modules/.jpm/hoist.cjs");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(&hook.display().to_string()), "{text} {}", stderr(&out));
+    assert!(!marker.exists());
+}
+
+/// `jpm` alone is install: where there is no package.json it fails and writes nothing.
+#[test]
+fn bare_jpm_writes_nothing_where_there_is_no_package_json() {
+    let r = hoisting_registry();
+    let env = Env::new(&r);
+    let dir = env.root.join("empty");
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = env.command_in(&dir, &[]).output().unwrap();
+    assert!(!out.status.success() && stderr(&out).contains("ENOENT"), "{}", stderr(&out));
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+}
+
+/// npm's proxy settings and client key stay out of a dependency's scripts, and a proxy
+/// variable reaches them without its user and password.
+#[cfg(unix)]
+#[test]
+fn install_scripts_see_no_proxy_credentials_or_client_keys() {
+    let script = "echo \"$npm_config_https_proxy|$npm_config_proxy|$npm_config_KEY|$HTTPS_PROXY|$https_proxy|$npm_config_noproxy\" > seen.txt";
+    let r = Registry::start(vec![pkg("bld", "1.0.0", json!({ "scripts": { "postinstall": script } }))]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" }, "trustedDependencies": ["bld"] }));
+    env.ok(&["install"]);
+    // Nothing listens on port 9; noproxy keeps jpm itself off it.
+    let out = env
+        .command(&["approve", "bld"])
+        .env("npm_config_proxy", "http://user:SECRET@127.0.0.1:9")
+        .env("npm_config_https_proxy", "http://user:SECRET@127.0.0.1:9")
+        .env("npm_config_KEY", "-----BEGIN PRIVATE KEY-----SECRET")
+        .env("HTTPS_PROXY", "http://user:SECRET@127.0.0.1:9")
+        .env("https_proxy", "user:SECRET@127.0.0.1:9")
+        .env("npm_config_noproxy", "127.0.0.1")
+        .env("NO_PROXY", "127.0.0.1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(env.read("node_modules/bld/seen.txt"), "|||http://127.0.0.1:9|127.0.0.1:9|127.0.0.1\n");
 }

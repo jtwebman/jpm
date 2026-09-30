@@ -2048,7 +2048,7 @@ pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> 
             let at = if logged { format!("{}: ", top.name) } else { String::new() };
             eprintln!("{}", ui::paint(ui::GRAY, &format!("> {at}{script}\n> {line}"), false));
         }
-        let mut cmd = run::shell(&line, &top.dir, &bins);
+        let mut cmd = run::shell(&line, &top.dir, &bins, &project::find_root(&top.dir).dir);
         let version = top.manifest.version.clone().unwrap_or_default();
         run::script_env(&mut cmd, &top.file, script, command, top.manifest.name.as_deref().unwrap_or(""), &version);
         let code = if replace && single && !logged {
@@ -2136,25 +2136,27 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     }
     let cwd = std::path::absolute(e.opts.dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()))
         .unwrap_or_default();
-    let run_line = |line: &str, dirs: Vec<PathBuf>| -> Result<i32> {
-        let mut all = dirs;
-        all.extend(run::bin_dirs(&cwd));
-        let mut cmd = run::shell(line, &cwd, &all);
+    // The `.bin` of the directory exec installed in (`installed`), if it did, then those above cwd.
+    let bins = |installed: Option<&Path>| -> Vec<PathBuf> {
+        installed.map(|d| d.join("node_modules").join(".bin")).into_iter().chain(run::bin_dirs(&cwd)).collect()
+    };
+    let run_line = |line: &str, installed: Option<&Path>| -> Result<i32> {
+        let project = installed.map_or_else(|| project::find_root(&cwd).dir, Path::to_path_buf);
+        let mut cmd = run::shell(line, &cwd, &bins(installed), &project);
         crate::sys::exec(&mut cmd).map_err(|err| run::start_error(&err, &cmd))
     };
-    let spawn = |words: &[String], dirs: Vec<PathBuf>| -> Result<i32> {
+    let spawn = |words: &[String], installed: Option<&Path>| -> Result<i32> {
         let head: Vec<String> = words.iter().map(|w| run::quote(w, cfg!(windows), false)).collect();
-        let first: Vec<PathBuf> = dirs.iter().cloned().chain(run::bin_dirs(&cwd)).collect();
-        let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd, &first);
-        run_line(&run::shell_line(&head.join(" "), &e.args, batch), dirs)
+        let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd, &bins(installed));
+        run_line(&run::shell_line(&head.join(" "), &e.args, batch), installed)
     };
     if e.call && e.packages.is_none() {
-        return run_line(command, Vec::new());
+        return run_line(command, None);
     }
     if e.packages.is_none()
         && let Some(local) = self_bin(&cwd, command).or_else(|| local_bin(&cwd, command))
     {
-        return spawn(&local, Vec::new());
+        return spawn(&local, None);
     }
     let own = if e.packages.is_none() { Some(spec::parse_spec(command)?) } else { None };
     if e.packages.as_ref().is_some_and(Vec::is_empty) {
@@ -2174,9 +2176,8 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     if !result.up_to_date {
         info(&format!("installed {}", names.join(", ")));
     }
-    let bins = vec![dir.join("node_modules").join(".bin")];
     if e.call {
-        return run_line(command, bins);
+        return run_line(command, Some(&dir));
     }
     let bin = match &own {
         Some(s) => {
@@ -2186,7 +2187,7 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
         }
         None => command.to_string(),
     };
-    spawn(&[bin], bins)
+    spawn(&[bin], Some(&dir))
 }
 
 /// Where the specs install, made the context's root; the config stays the one already read.

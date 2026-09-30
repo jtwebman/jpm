@@ -111,8 +111,8 @@ fn quote_cmd(arg: &str, batch: bool) -> String {
     twice.replace('%', "%%cd:~,%")
 }
 
-/// A shell running `line` in `cwd` with `dirs` first on PATH.
-pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf]) -> Command {
+/// A shell running `line` in `cwd` with `dirs` first on PATH, for the project at `project`.
+pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Command {
     let (key, path) = with_path(dirs);
     #[cfg(windows)]
     let mut command = {
@@ -129,21 +129,23 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf]) -> Command {
         c
     };
     command.current_dir(cwd).env(key, path);
-    hoist_env(&mut command, dirs);
+    hoist_env(&mut command, project);
     command
 }
 
 /// Packages in the global store resolve from the store, never reaching the project's hidden
-/// hoist or its `node_modules`. Where the nearest `node_modules` has the hook jpm writes for them,
-/// Node looks there last: through NODE_PATH for `require`, and the hook for `import`.
-fn hoist_env(command: &mut Command, dirs: &[PathBuf]) {
-    let Some(nm) = dirs.iter().filter_map(|d| d.parent()).find(|nm| nm.join(".jpm").join(link::HOOK).is_file()) else {
-        return;
-    };
+/// hoist or its `node_modules`. Where the project's own `node_modules` has the hook jpm writes
+/// for them, Node looks there last: through NODE_PATH for `require`, and the hook for `import`.
+/// Only the project's: a directory above it may be anyone's, and the hook runs in every node.
+fn hoist_env(command: &mut Command, project: &Path) {
+    let nm = project.join("node_modules");
     let jpm = nm.join(".jpm");
+    if !jpm.join(link::HOOK).is_file() {
+        return;
+    }
     let old = std::env::var_os("NODE_PATH").unwrap_or_default();
     let mut paths: Vec<PathBuf> = std::env::split_paths(&old).filter(|p| !p.as_os_str().is_empty()).collect();
-    for dir in [jpm.join(link::HOIST), nm.to_path_buf()] {
+    for dir in [jpm.join(link::HOIST), nm.clone()] {
         if !paths.contains(&dir) {
             paths.push(dir);
         }
@@ -151,8 +153,11 @@ fn hoist_env(command: &mut Command, dirs: &[PathBuf]) {
     if let Ok(joined) = std::env::join_paths(paths) {
         command.env("NODE_PATH", joined);
     }
-    // Node reads NODE_OPTIONS as words, a quoted one taking `\` as an escape.
-    let file = jpm.join(link::HOOK).to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    // Node reads NODE_OPTIONS as words, a quoted one taking `\` as an escape. A path that is not
+    // Unicode cannot be spelled there, and a lossy spelling would stop every node from starting.
+    let Some(file) = jpm.join(link::HOOK).to_str().map(|f| f.replace('\\', "\\\\").replace('"', "\\\"")) else {
+        return;
+    };
     let require = format!("--require \"{file}\"");
     let old = match std::env::var("NODE_OPTIONS") {
         Ok(old) => old,
