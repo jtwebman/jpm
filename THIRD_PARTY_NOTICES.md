@@ -44,6 +44,7 @@ These are in the source repository only, never in jpm's binaries.
 | [hosted-git-info](https://github.com/npm/hosted-git-info) test cases | ISC | Copyright (c) 2015, Rebecca Turner | `tests/conformance/hosted-git-info` (generated from them; the license is beside them) |
 | [@npmcli/arborist](https://github.com/npm/cli/tree/latest/workspaces/arborist) fixture lockfiles | ISC | Copyright npm, Inc. | `tests/conformance/arborist` (the license is beside them) |
 | [Bun](https://github.com/oven-sh/bun) install tests and lockfiles | MIT | Copyright (c) Oven and Bun contributors | `tests/conformance/bun` (the license is beside them) and `tests/bun.rs` (scenarios re-created from bun's tests) |
+| [pnpm registry-mock](https://github.com/pnpm/registry-mock) packages and pnpm's install outcomes | MIT | Copyright (c) 2017-2026 pnpm | `tests/conformance/pnpm-registry-mock` (the license is beside them) |
 | [Yarn berry](https://github.com/yarnpkg/berry) acceptance scenarios | BSD-2-Clause | Copyright (c) 2016-present, Yarn Contributors | `tests/berry.rs` (scenarios and fixture manifests re-created from `packages/acceptance-tests`; the license is below) |
 
 ---
@@ -53,7 +54,7 @@ These are in the source repository only, never in jpm's binaries.
 ### MIT License
 
 Applies to upm, BearSSL, flate2, rustls-pki-types, junction, scopeguard, windows-sys,
-windows-link, the Node.js release keys and Bun's tests, each with its copyright line above.
+windows-link, the Node.js release keys, Bun's tests and pnpm's registry-mock, each with its copyright line above.
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy
