@@ -14,7 +14,9 @@ use std::fmt;
 use std::io;
 use std::sync::Arc;
 
-pub use h2::{Body, Conn, Got, Link, Pool, Request, Response, tls_link};
+pub use h2::{
+    Body, CONN_WINDOW, Conn, Got, Link, MAX_HEADER_LIST, MAX_STREAMS, Pool, Request, Response, STREAM_WINDOW, tls_link,
+};
 
 /// Why a request failed.
 #[derive(Debug, Clone)]

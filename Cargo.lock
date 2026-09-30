@@ -219,6 +219,7 @@ dependencies = [
  "jpm-tls",
  "rcgen",
  "rustls",
+ "webpki-roots",
 ]
 
 [[package]]

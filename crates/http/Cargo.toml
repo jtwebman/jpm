@@ -14,3 +14,5 @@ jpm-tls = { path = "../tls" }
 # The TLS server, and a certificate for it, in the end-to-end tests; neither ships in jpm.
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+# Mozilla's roots, for the live test against the npm registry.
+webpki-roots = "1"
