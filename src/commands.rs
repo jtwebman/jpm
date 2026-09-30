@@ -1198,7 +1198,7 @@ fn resolve_lock(
         prefer,
         legacy_peers: ctx.config().legacy_peer_deps || prefer.is_some_and(|p| p.legacy_peers),
         block_exotic: ctx.config().block_exotic_subdeps,
-        threads: pool::network_threads(),
+        threads: pool::resolve_threads(),
     };
     let mut resolution = resolve::resolve(&project.manifest, &options(locked.as_ref()))?;
     // Another pass lets kept ranges move onto versions a new range brought in.
