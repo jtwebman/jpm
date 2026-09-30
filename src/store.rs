@@ -128,6 +128,34 @@ const QUEUED_MAX: u64 = 8 * 1024 * 1024;
 /// big or repetitive its files. The reader waits for the writers past it.
 const QUEUED_BYTES: u64 = 32 * 1024 * 1024;
 
+/// Tarballs being unpacked in this process, for `idle_cores`.
+static UNPACKING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Whether a tarball past its first files may hand the rest to writer threads. On Windows,
+/// always: they overlap Defender's scan of each file as it is closed. On Linux, only while fewer
+/// tarballs unpack than there are cores: when every core is unpacking a tarball of its own, the
+/// hand-off only adds a copy of each file and the threads' wakeups (next from a lockfile: 17%
+/// of the CPU and half the peak memory), and a lone big tarball still gets them.
+fn idle_cores() -> bool {
+    !cfg!(target_os = "linux") || UNPACKING.load(std::sync::atomic::Ordering::Relaxed) < crate::pool::disk_threads()
+}
+
+/// A tarball counted in `UNPACKING` while it lives.
+struct Unpacking;
+
+impl Unpacking {
+    fn start() -> Self {
+        UNPACKING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for Unpacking {
+    fn drop(&mut self) {
+        UNPACKING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// A file body for a writer thread: where, whether it runs, the bytes, and what they took of the
 /// budget.
 type Queued = (PathBuf, bool, Vec<u8>, u64);
@@ -544,10 +572,12 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     // one per file was 65 MB allocated and zeroed on nuxt.
     let mut copy: Vec<u8> = Vec::new();
     let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
-    // Past the first files, small bodies go to writer threads: one tarball of thousands of files
-    // (next has 8,000) would otherwise be written, and on Windows scanned, one file at a time.
+    // Past the first files, small bodies go to writer threads (see `idle_cores`): one tarball of
+    // thousands of files (next has 8,000) would otherwise be written, and on Windows scanned, one
+    // file at a time.
     let failed = &Mutex::new(None::<Error>);
     let budget = &Budget::default();
+    let _unpacking = Unpacking::start();
     std::thread::scope(|scope| {
         let mut writers: Option<Writers<'_>> = None;
         let read = tar::read_entries(&mut input, |path, mode, size, body| {
@@ -576,7 +606,11 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 finish(&mut writers);
                 let _ = make_writable(&file);
                 let _ = fs::remove_file(&file);
-            } else if path != "package.json" && size <= QUEUED_MAX && files.len() > INLINE_FILES {
+            } else if path != "package.json"
+                && size <= QUEUED_MAX
+                && files.len() > INLINE_FILES
+                && (writers.is_some() || idle_cores())
+            {
                 budget.take(size);
                 let mut data = Vec::with_capacity(size as usize);
                 if let Err(e) = body.read_to_end(&mut data) {
