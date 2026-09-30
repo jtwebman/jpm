@@ -527,6 +527,7 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     let mut input = input.take(tar::MAX_ARCHIVE + 1);
     let mut files: BTreeMap<String, FileEntry> = BTreeMap::new();
     let mut made: HashSet<PathBuf> = HashSet::new();
+    let mut folded: HashMap<String, String> = HashMap::new();
     let mut manifest: Option<Vec<u8>> = None;
     let name = |path: &str| if suffix { format!("{path}{STORED_SUFFIX}") } else { path.to_string() };
     // Past the first files, small bodies go to writer threads: one tarball of thousands of files
@@ -546,7 +547,15 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
             }
             let exec = mode & 0o111 != 0;
-            let seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
+            let mut seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
+            // Foo.js then foo.js: one file where the disk folds case, and the later one wins.
+            if crate::sys::FOLDS_CASE
+                && let Some(old) = folded.insert(path.to_lowercase(), path.to_string())
+                && old != path
+            {
+                files.remove(&old);
+                seen = true;
+            }
             let corrupt = |e: io::Error| Error::new("EBADTAR", format!("Corrupt tarball: {e}"));
             if seen {
                 // A later entry for the path wins, as tar has it: any queued write of it first.
@@ -972,6 +981,19 @@ pub mod tests {
             assert_eq!(f.size, want.len() as u64);
         }
         assert!(index.files.iter().find(|f| f.path == "d0/f0.js").unwrap().exec);
+        remove_tree(&dir);
+    }
+
+    #[test]
+    fn unpacks_case_twins_as_the_disk_holds_them() {
+        // Where the disk folds case they are one file, the later one; elsewhere two.
+        let entries: Vec<(&str, u32, &[u8])> =
+            vec![("package/Foo.js", 0o644, b"upper"), ("package/foo.js", 0o644, b"lower")];
+        let dir = scratch("twins");
+        let index = extract(&mut build(&entries).as_slice(), &dir.join("x"), false).unwrap();
+        let paths: Vec<&str> = index.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, if crate::sys::FOLDS_CASE { vec!["foo.js"] } else { vec!["Foo.js", "foo.js"] });
+        assert_eq!(fs::read(dir.join("x/foo.js")).unwrap(), b"lower");
         remove_tree(&dir);
     }
 
