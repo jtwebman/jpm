@@ -1653,23 +1653,25 @@ pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf>
     let dir = project.dir.clone();
     let p = locked_package(&ctx, &dir, spec)?;
     let at = match edit_dir {
-        Some(d) => std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()),
-        None => dir.join("node_modules").join(PATCHES).join(format!("{}@{}", p.name, p.version)),
+        Some(d) => {
+            let at = std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf());
+            stays_in(&dir, &at)?;
+            at
+        }
+        None => patches_dir(&dir, &format!("{}@{}", p.name, p.version))?,
     };
-    stays_in(&dir, &at)?;
     if at.exists() {
         let why = "commit it with jpm patch-commit, or remove it";
         return Err(fail("EEXIST", format!("{} is already there: {why}", at.display())));
     }
     let store = ctx.store(false);
     pristine(&store, &dir, &p, &at)?;
-    if let Some(patch) = patch_of(&project, &p) {
-        let text = std::fs::read(dir.join(&patch.path)).unwrap_or_default();
-        if let Err(why) = crate::patch::apply(&at, &text, false) {
-            warn(&format!("{} does not apply ({why}): this is {}@{} as published", patch.path, p.name, p.version));
-            crate::store::remove_tree(&at);
-            pristine(&store, &dir, &p, &at)?;
-        }
+    if let Some(patch) = patch_of(&project, &p)
+        && let Err(why) = crate::patch::apply(&at, &patch.text, false)
+    {
+        warn(&format!("{} does not apply ({why}): this is {}@{} as published", patch.path, p.name, p.version));
+        crate::store::remove_tree(&at);
+        pristine(&store, &dir, &p, &at)?;
     }
     Ok(at)
 }
@@ -1692,9 +1694,15 @@ pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
     let (Some(name), Some(version)) = (m.name, m.version) else {
         return Err(fail("EMANIFEST", format!("{}/package.json has no name and version", edited.display())));
     };
+    // The lock's name and version from here on: the copy's package.json is the package's to say.
     let p = locked_package(&ctx, &dir, &format!("{name}@{version}"))?;
-    let work = dir.join("node_modules").join(PATCHES).join(format!(".tmp-{}", crate::util::temp_suffix()));
-    stays_in(&dir, &work)?;
+    if p.name != name || p.version != version {
+        let (at, has) = (edited.display(), format!("{}@{}", p.name, p.version));
+        return Err(fail("EPATCH", format!("{at}/package.json says {name}@{version}, where {LOCKFILE} has {has}")));
+    }
+    let (name, version) = (&p.name, &p.version);
+    let own = patches_dir(&dir, &format!("{name}@{version}"))?;
+    let work = patches_dir(&dir, &format!(".tmp-{}", crate::util::temp_suffix()))?;
     let made = pristine(&ctx.store(false), &dir, &p, &work.join("a"))
         .and_then(|()| copy_tree(&edited, &work.join("b")))
         .and_then(|()| crate::git::diff(&work));
@@ -1712,7 +1720,13 @@ pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
     let existing = patch_of(&project, &p);
     let file =
         existing.map_or_else(|| format!("patches/{}@{version}.patch", name.replace('/', "__")), |x| x.path.clone());
-    let at = dir.join(&file);
+    let at =
+        crate::patch::project_path(&dir, &file).map_err(|why| fail("EPATCH", format!("cannot write {file}: {why}")))?;
+    // A new one is named in pnpm-workspace.yaml as written: nothing YAML could read as more.
+    let safe = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b"@/._+~_-".contains(&b));
+    if existing.is_none() && !safe(name) {
+        return Err(fail("EPATCH", format!("{name} cannot be named in patchedDependencies: add its patch by hand")));
+    }
     if let Some(parent) = at.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
     }
@@ -1720,11 +1734,20 @@ pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
     if existing.is_none() {
         name_patch(&dir, &format!("{name}@{version}"), &file)?;
     }
-    if edited.starts_with(dir.join("node_modules").join(PATCHES)) {
-        crate::store::remove_tree(&edited);
+    // The copy `jpm patch` made goes; a directory of the user's own stays.
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(&edited), std::fs::canonicalize(&own))
+        && a == b
+    {
+        crate::store::remove_tree(&own);
     }
     let install = install_tree(&mut Ctx::open(opts, false)?, None, None)?;
     Ok(Committed { file, install })
+}
+
+/// `rel` under the project's `node_modules/.jpm_patches`, through no link.
+fn patches_dir(dir: &Path, rel: &str) -> Result<PathBuf> {
+    let rel = format!("node_modules/{PATCHES}/{rel}");
+    crate::patch::project_path(dir, &rel).map_err(|why| fail("EPATCH", format!("refusing to write {rel}: {why}")))
 }
 
 /// Add a patch where the project names its patches: pnpm-workspace.yaml when it has a

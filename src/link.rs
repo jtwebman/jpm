@@ -662,9 +662,7 @@ impl Linker<'_> {
                     format!("{}@{} is patched, and no patch of the project has its hash", pkg.name, pkg.version),
                 )
             })?;
-            let file = self.opts.dir.join(&patch.path);
-            let text = fs::read(&file).map_err(|e| Error::io(&e, format!("cannot read {}", file.display())))?;
-            crate::patch::apply(&pkg_dir, &text, entry.shared && !entry.build).map_err(|why| {
+            crate::patch::apply(&pkg_dir, &patch.text, entry.shared && !entry.build).map_err(|why| {
                 Error::new("EPATCH", format!("{} does not apply to {}@{}: {why}", patch.path, pkg.name, pkg.version))
             })?;
         }
