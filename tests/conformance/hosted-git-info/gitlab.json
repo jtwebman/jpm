@@ -1,0 +1,2832 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/gitlab.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "gitlab:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user@foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab:user:password@foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "gitlab::password@foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "user:password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": ":password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gitlab.com:foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar/baz",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar/baz#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar/baz.git",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gitlab.com/foo/bar/baz.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@gitlab.com/foo/bar/baz.git#branch",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git#branch",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=branch"
+      }
+    },
+    {
+      "input": "https://gitlab.com/foo/-/something",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://gitlab.com/foo",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=49b393e2ded775f2df36ef2ffcb61b0359c194c9",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://gitlab.com/foo/bar",
+      "from": "call",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=HEAD"
+      }
+    },
+    {
+      "input": "https://user@gitlab.com/foo/bar#fix/bug",
+      "from": "call",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo",
+        "project": "bar",
+        "committish": "fix/bug",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@gitlab.com/foo/bar.git#fix/bug",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar.git#fix/bug",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar/repository/archive.tar.gz?sha=fix%2Fbug"
+      }
+    },
+    {
+      "input": "git+ssh://gitlab.com/foo/bar/baz",
+      "from": "call",
+      "expect": {
+        "type": "gitlab",
+        "user": "foo/bar",
+        "project": "baz",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gitlab.com/foo/bar/baz.git",
+        "sshurl": "git+ssh://git@gitlab.com/foo/bar/baz.git",
+        "tarball": "https://gitlab.com/api/v4/projects/foo%2Fbar%2Fbaz/repository/archive.tar.gz?sha=HEAD"
+      }
+    }
+  ]
+}

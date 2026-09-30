@@ -1,0 +1,1887 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/github.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:user@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:user@foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:user:password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:user:password@foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github::password@foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github::password@foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:user@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:user@foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github:user:password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github:user:password@foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "github::password@foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "github::password@foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://user@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://user@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://user:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://git@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "git",
+        "default": "git",
+        "https": "git+https://git@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "git",
+        "default": "git",
+        "https": "git+https://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://user:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git://:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "user@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "user:password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": ":password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "user@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "user:password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": ":password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://user@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://:password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://user@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+ssh://:password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://user@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://user:password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://:password@github.com:foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@github.com:foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://user@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://user:password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "ssh://:password@github.com:foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@github.com:foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://user@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://user:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://user@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://user:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "git+https://:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://user@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://user:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://:password@github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@github.com/foo/bar#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://user@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://user:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://user:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://:password@github.com/foo/bar.git",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "lk/br@nch.t#st:^1.0.0-pre.4",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://:password@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#lk/br@nch.t#st:^1.0.0-pre.4",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/lk%2Fbr%40nch.t%23st%3A%5E1.0.0-pre.4"
+      }
+    },
+    {
+      "input": "https://www.github.com/foo/bar",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "foo/bar#branch with space",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch with space",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#branch with space",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#branch with space",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/branch%20with%20space"
+      }
+    },
+    {
+      "input": "foo/bar#branch:with:colons",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch:with:colons",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/foo/bar.git#branch:with:colons",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#branch:with:colons",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/branch%3Awith%3Acolons"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar/tree/branch",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#branch",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#branch",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user..blerg--/..foo-js# . . . . . some . tags / / /",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "user..blerg--",
+        "project": "..foo-js",
+        "committish": " . . . . . some . tags / / /",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://github.com/user..blerg--/..foo-js.git# . . . . . some . tags / / /",
+        "sshurl": "git+ssh://git@github.com/user..blerg--/..foo-js.git# . . . . . some . tags / / /",
+        "tarball": "https://codeload.github.com/user..blerg--/..foo-js/tar.gz/%20.%20.%20.%20.%20.%20some%20.%20tags%20%2F%20%2F%20%2F"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#0d7bd85a85fa2571fa532d2fc842ed099b236ad2",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/0d7bd85a85fa2571fa532d2fc842ed099b236ad2"
+      }
+    },
+    {
+      "input": "https://github.com/foo/bar#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+      "from": "valid",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://github.com/foo/bar.git#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/8e3a9b3579ab330238c06b761e7f1b5dc5b4ac6e5a96da4dd2fb3b7411009df8"
+      }
+    },
+    {
+      "input": "user@foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "user:password@foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": ":password@foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "foo/ bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "foo/bar/",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "github.com:foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "github.com/foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "github:foo%0N/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://git@github.com:",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://github.com/foo/bar/issues",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://github.com/foo/bar",
+      "from": "call",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "http://github.com/foo/bar",
+      "from": "call",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "",
+        "auth": null,
+        "default": "http",
+        "https": "git+https://github.com/foo/bar.git",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@github.com/foo/bar#fix/bug",
+      "from": "call",
+      "expect": {
+        "type": "github",
+        "user": "foo",
+        "project": "bar",
+        "committish": "fix/bug",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://user@github.com/foo/bar.git#fix/bug",
+        "sshurl": "git+ssh://git@github.com/foo/bar.git#fix/bug",
+        "tarball": "https://codeload.github.com/foo/bar/tar.gz/fix%2Fbug"
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/invalid.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "https://google.com",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://git@nothosted.com/abc/def",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git://nothosted.com",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+file:///foo/bar",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://git@git.unlucky.com:RND/electron-tools/some-tool#2.0.1",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "::",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "",
+      "from": "invalid",
+      "expect": null
+    }
+  ]
+}

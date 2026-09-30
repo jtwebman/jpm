@@ -1,0 +1,3647 @@
+{
+  "source": "https://github.com/npm/hosted-git-info/blob/8c3bebb5e42142b7bce06b085b4c1bd1adba7371/test/gist.js",
+  "commit": "8c3bebb5e42142b7bce06b085b4c1bd1adba7371",
+  "license": "ISC",
+  "cases": [
+    {
+      "input": "gist:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user@foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user@foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist:user:password@foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist:user:password@foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "gist::password@foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": null,
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "gist::password@foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "shortcut",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://user:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git://:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "git",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "user:password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": ":password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://user:password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+ssh://:password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://user:password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "ssh://:password@gist.github.com:foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://user:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "git+https://:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": null,
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/foo/feedbeef",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/foo/feedbeef#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": null,
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": "user:password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/foo/feedbeef.git",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://:password@gist.github.com/foo/feedbeef.git#branch",
+      "from": "valid",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "branch",
+        "auth": ":password",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#branch",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#branch",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/branch"
+      }
+    },
+    {
+      "input": "https://gist.github.com/foo/feedbeef/raw/fix%2Fbug/",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "https://gist.github.com/",
+      "from": "invalid",
+      "expect": null
+    },
+    {
+      "input": "git+ssh://gist.github.com/foo/feedbeef",
+      "from": "call",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "",
+        "auth": null,
+        "default": "sshurl",
+        "https": "git+https://gist.github.com/feedbeef.git",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/HEAD"
+      }
+    },
+    {
+      "input": "https://user@gist.github.com/foo/feedbeef#fix/bug",
+      "from": "call",
+      "expect": {
+        "type": "gist",
+        "user": "foo",
+        "project": "feedbeef",
+        "committish": "fix/bug",
+        "auth": "user",
+        "default": "https",
+        "https": "git+https://gist.github.com/feedbeef.git#fix/bug",
+        "sshurl": "git+ssh://git@gist.github.com/feedbeef.git#fix/bug",
+        "tarball": "https://codeload.github.com/gist/feedbeef/tar.gz/fix%2Fbug"
+      }
+    }
+  ]
+}
