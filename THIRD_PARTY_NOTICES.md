@@ -30,6 +30,7 @@ Where a crate offers MIT or Apache-2.0, jpm takes it under MIT.
 | Data | License | Copyright | Where |
 | --- | --- | --- | --- |
 | [Node.js release keys](https://github.com/nodejs/release-keys) | MIT | Copyright 2019 Devin Canterberry | `src/pgp.rs` keeps the keys' fingerprints; the keys are fetched from that repository |
+| HPACK's static table and Huffman code ([RFC 7541](https://www.rfc-editor.org/rfc/rfc7541) appendices A and B) | IETF Trust | Copyright (c) 2015 IETF Trust and the persons identified as the document authors | `crates/http/src/hpack.rs` (the Huffman code kept as its symbols in canonical order and a count per code length) |
 
 ## Test data in this repository
 
@@ -38,7 +39,7 @@ These are in the source repository only, never in jpm's binaries.
 | Data | License | Copyright | Where |
 | --- | --- | --- | --- |
 | [Project Wycheproof](https://github.com/C2SP/wycheproof) test vectors | Apache-2.0 | Copyright 2016 Google Inc. | `crates/crypto/tests/data`, `crates/pk/tests/data` (stored gzipped; the license is beside them as `WYCHEPROOF-LICENSE`) |
-| RFC test vectors (RFC 7748, 8032, 8439 and others) | IETF Trust | Copyright (c) the IETF Trust and the persons identified as the documents' authors | the crypto crates' tests, where each names its RFC |
+| RFC test vectors (RFC 7748, 8032, 8439, 7541 and others) | IETF Trust | Copyright (c) the IETF Trust and the persons identified as the documents' authors | the crypto and HTTP crates' tests, where each names its RFC |
 | [node-semver](https://github.com/npm/node-semver) test tables | ISC | Copyright (c) Isaac Z. Schlueter and Contributors | `tests/conformance/semver` (generated from them; the license is beside them) |
 | [npm-package-arg](https://github.com/npm/npm-package-arg) test cases | ISC | Copyright (c) npm, Inc. | `tests/conformance/npm-package-arg` (generated from them; the license is beside them) |
 | [hosted-git-info](https://github.com/npm/hosted-git-info) test cases | ISC | Copyright (c) 2015, Rebecca Turner | `tests/conformance/hosted-git-info` (generated from them; the license is beside them) |
