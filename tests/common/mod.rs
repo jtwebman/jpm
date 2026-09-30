@@ -122,6 +122,20 @@ pub struct Registry {
     delay: Arc<AtomicUsize>,
     /// Milliseconds a package's documents take to start, by name.
     slow: Arc<Mutex<BTreeMap<String, u64>>>,
+    /// Tarball requests: how many to answer 503 still, as a registry asking for fewer at a time
+    /// does, and how many are answered at once (see `Flight`).
+    busy: Arc<AtomicUsize>,
+    flight: Arc<Flight>,
+}
+
+/// Tarball requests in flight at once, counting only those from the `from`th on (0 is the first):
+/// how many there are now, and the most there were.
+#[derive(Default)]
+pub struct Flight {
+    seen: AtomicUsize,
+    from: AtomicUsize,
+    now: AtomicUsize,
+    most: AtomicUsize,
 }
 
 impl Registry {
@@ -134,16 +148,38 @@ impl Registry {
         let requests = Arc::new(AtomicUsize::new(0));
         let delay = Arc::new(AtomicUsize::new(0));
         let slow = Arc::new(Mutex::new(BTreeMap::new()));
+        let (busy, flight) = (Arc::new(AtomicUsize::new(0)), Arc::new(Flight::default()));
         let (p, f, h, r, u, d, w) =
             (pkgs.clone(), files.clone(), hits.clone(), requests.clone(), url.clone(), delay.clone(), slow.clone());
+        let (b, l) = (busy.clone(), flight.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let (p, f, h, r, u, d, w) =
                     (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone());
-                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d, &w));
+                let (b, l) = (b.clone(), l.clone());
+                std::thread::spawn(move || serve(stream, &p, &f, &h, &r, &u, &d, &w, &b, &l));
             }
         });
-        Self { url, pkgs, files, hits, requests, delay, slow }
+        Self { url, pkgs, files, hits, requests, delay, slow, busy, flight }
+    }
+
+    /// The next `n` tarball requests are answered 503 at once.
+    pub fn busy_tarballs(&self, n: usize) {
+        self.busy.store(n, Ordering::Relaxed);
+    }
+
+    /// From now on, counts the tarball requests in flight at once from the `from`th on.
+    pub fn count_flight(&self, from: usize) {
+        let f = &self.flight;
+        for n in [&f.seen, &f.now, &f.most] {
+            n.store(0, Ordering::Relaxed);
+        }
+        f.from.store(from, Ordering::Relaxed);
+    }
+
+    /// The most tarball requests counted that were in flight at once.
+    pub fn most_in_flight(&self) -> usize {
+        self.flight.most.load(Ordering::Relaxed)
     }
 
     /// Every tarball from now on starts `ms` late: downloads outlast the plan.
@@ -202,11 +238,11 @@ pub fn start_tls(pkgs: Vec<Pkg>, chain: Vec<Vec<u8>>, key: Vec<u8>) -> Registry 
                 (p.clone(), f.clone(), h.clone(), r.clone(), u.clone(), d.clone(), w.clone(), config.clone());
             std::thread::spawn(move || {
                 let tls = rustls::StreamOwned::new(rustls::ServerConnection::new(c).unwrap(), stream);
-                serve(tls, &p, &f, &h, &r, &u, &d, &w)
+                serve(tls, &p, &f, &h, &r, &u, &d, &w, &AtomicUsize::new(0), &Flight::default())
             });
         }
     });
-    Registry { url, pkgs, files, hits, requests, delay, slow }
+    Registry { url, pkgs, files, hits, requests, delay, slow, busy: Arc::default(), flight: Arc::default() }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -219,6 +255,8 @@ fn serve(
     base: &str,
     delay: &AtomicUsize,
     slow: &Mutex<BTreeMap<String, u64>>,
+    busy: &AtomicUsize,
+    flight: &Flight,
 ) {
     let mut reader = BufReader::new(stream);
     loop {
@@ -246,8 +284,16 @@ fn serve(
         requests.fetch_add(1, Ordering::Relaxed);
         // The path, then any credential it came with, for tests that check where tokens go.
         hits.lock().unwrap().push(format!("{path}{auth}"));
+        let tarball = path.contains("/-/");
+        // A busy registry says so at once.
+        let busy = tarball && busy.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_ok();
+        let counted = tarball && flight.seen.fetch_add(1, Ordering::Relaxed) >= flight.from.load(Ordering::Relaxed);
+        if counted {
+            let now = flight.now.fetch_add(1, Ordering::Relaxed) + 1;
+            flight.most.fetch_max(now, Ordering::Relaxed);
+        }
         let ms = delay.load(Ordering::Relaxed);
-        if ms > 0 && path.contains("/-/") {
+        if ms > 0 && tarball && !busy {
             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
         }
         let late = slow.lock().unwrap().get(path.split('?').next().unwrap_or(&path)).copied();
@@ -256,6 +302,7 @@ fn serve(
         }
         let file = files.lock().unwrap().get(&path).cloned();
         let (status, bytes) = match file {
+            _ if busy => ("503 Service Unavailable", b"{}".to_vec()),
             Some(body) => ("200 OK", body),
             None => answer(&path.replace("%2f", "/").replace("%2F", "/"), &pkgs.lock().unwrap(), base),
         };
@@ -264,12 +311,12 @@ fn serve(
             bytes.len()
         );
         let writer = reader.get_mut();
-        if writer
-            .write_all(head.as_bytes())
-            .and_then(|()| writer.write_all(&bytes))
-            .and_then(|()| writer.flush())
-            .is_err()
-        {
+        let sent =
+            writer.write_all(head.as_bytes()).and_then(|()| writer.write_all(&bytes)).and_then(|()| writer.flush());
+        if counted {
+            flight.now.fetch_sub(1, Ordering::Relaxed);
+        }
+        if sent.is_err() {
             return;
         }
     }

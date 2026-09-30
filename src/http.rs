@@ -114,10 +114,14 @@ fn retry<T: Status>(url: &str, mut once: impl FnMut(&str) -> Result<T>) -> Resul
         }
         match got {
             Ok(r) if r.status() == 429 || r.status() >= 500 => {
+                crate::pool::trouble();
                 last = Some(Error::new("EREGISTRY", format!("{url} returned {}", r.status())));
             }
             Ok(r) => return Ok(r),
-            Err(e) if matches!(e.code, "ENETWORK" | "ETIMEDOUT") => last = Some(e),
+            Err(e) if matches!(e.code, "ENETWORK" | "ETIMEDOUT") => {
+                crate::pool::trouble();
+                last = Some(e);
+            }
             Err(e) => return Err(e),
         }
     }
