@@ -554,7 +554,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     }
     ui::phase("filled");
     let fetch = |p: &Package| -> Result<()> {
-        pool::blocking(|| fetcher.arrivals.wait(&p.integrity));
+        // Only a real wait lets the linker's pool start another thread: a package already here
+        // (every one, on a warm install) is linked by the threads there are.
+        if fetcher.arrivals.pending(&p.integrity) {
+            pool::blocking(|| fetcher.arrivals.wait(&p.integrity));
+        }
         match store.ensure(&tarball_of(&dir, &p.resolved, p.source.as_deref()), &p.integrity) {
             Err(e) if p.source.is_some() => Err(stale(e, p.source.as_deref().unwrap_or(""))),
             other => other.map(|_| ()),
