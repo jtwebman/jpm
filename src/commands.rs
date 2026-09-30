@@ -1630,6 +1630,13 @@ fn patch_of<'a>(project: &'a Project, p: &Package) -> Option<&'a crate::patch::P
     patches.iter().find(|x| p.patch.as_ref() == Some(&x.hash)).or_else(|| patches.iter().find(own))
 }
 
+/// `path`, somewhere under the project `dir`, is reached without leaving it: a checkout can
+/// ship `node_modules`, or a directory in it, as a symlink to anywhere.
+fn stays_in(dir: &Path, path: &Path) -> Result<()> {
+    let root = std::fs::canonicalize(dir).map_err(|e| Error::io(&e, format!("cannot read {}", dir.display())))?;
+    path.ancestors().take_while(|a| a.starts_with(dir) && *a != dir).try_for_each(|a| link::inside(a, &root))
+}
+
 /// `jpm patch <name>[@version]`: the locked version's files, with the project's patch for it
 /// applied when it applies, copied into a directory to edit. Where that is.
 pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf> {
@@ -1641,6 +1648,7 @@ pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf>
         Some(d) => std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()),
         None => dir.join("node_modules").join(PATCHES).join(format!("{}@{}", p.name, p.version)),
     };
+    stays_in(&dir, &at)?;
     if at.exists() {
         let why = "commit it with jpm patch-commit, or remove it";
         return Err(fail("EEXIST", format!("{} is already there: {why}", at.display())));
@@ -1678,6 +1686,7 @@ pub fn patch_commit(edited: &Path, opts: Opts) -> Result<Committed> {
     };
     let p = locked_package(&ctx, &dir, &format!("{name}@{version}"))?;
     let work = dir.join("node_modules").join(PATCHES).join(format!(".tmp-{}", crate::util::temp_suffix()));
+    stays_in(&dir, &work)?;
     let made = pristine(&ctx.store(false), &dir, &p, &work.join("a"))
         .and_then(|()| copy_tree(&edited, &work.join("b")))
         .and_then(|()| crate::git::diff(&work));
@@ -2312,8 +2321,9 @@ fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>
 
 /// The project's `node_modules/.jpm/.exec` when it has a tree, else `~/.jpm/exec`.
 fn exec_home(root: &Path) -> PathBuf {
-    if root.join("node_modules").is_dir() && root.join("package.json").is_file() {
-        return root.join("node_modules").join(".jpm").join(".exec");
+    let here = root.join("node_modules").join(".jpm").join(".exec");
+    if root.join("node_modules").is_dir() && root.join("package.json").is_file() && stays_in(root, &here).is_ok() {
+        return here;
     }
     crate::config::home().join(".jpm").join("exec")
 }

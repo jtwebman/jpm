@@ -98,7 +98,7 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
             without_credentials(&mut command);
             // Output goes to a log beside the package: shown only when the script fails.
             let log = root.join(".build.log");
-            let file = fs::File::create(&log).map_err(|e| Error::io(&e, format!("cannot write {}", log.display())))?;
+            let file = fresh(&log).map_err(|e| Error::io(&e, format!("cannot write {}", log.display())))?;
             let err = file.try_clone().map_err(|e| Error::io(&e, "cannot share the build log"))?;
             command.stdin(std::process::Stdio::null()).stdout(file).stderr(err);
             let status = command.status().map_err(|e| Error::io(&e, "cannot start the shell"))?;
@@ -116,11 +116,17 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
             }
             return Err(Error::new("EBUILD", why));
         }
-        fs::write(&marker, "").map_err(|e| Error::io(&e, format!("cannot write {}", marker.display())))?;
+        fresh(&marker).map_err(|e| Error::io(&e, format!("cannot write {}", marker.display())))?;
         ui::info(&format!("built {}@{}", p.name, p.version));
         ran += 1;
     }
     Ok(ran)
+}
+
+/// A new empty file at `path`, never written through a link a checkout left there.
+fn fresh(path: &Path) -> std::io::Result<fs::File> {
+    let _ = fs::remove_file(path);
+    fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 /// The project's lifecycle scripts (`preinstall` to `postprepare`), the root first, then each
