@@ -72,14 +72,24 @@ enum Event {
 /// The events for one stream, from the reader to the stream's body.
 #[derive(Default)]
 struct Chan {
-    events: Mutex<VecDeque<Event>>,
+    events: Mutex<Events>,
     ready: Condvar,
+}
+
+#[derive(Default)]
+struct Events {
+    queue: VecDeque<Event>,
+    /// The body waits for the next: only then is it woken, not for every frame.
+    waiting: bool,
 }
 
 impl Chan {
     fn send(&self, e: Event) {
-        lock(&self.events).push_back(e);
-        self.ready.notify_one();
+        let mut events = lock(&self.events);
+        events.queue.push_back(e);
+        if events.waiting {
+            self.ready.notify_one();
+        }
     }
 
     /// The next event, or `None` after `stall` without one.
@@ -87,11 +97,13 @@ impl Chan {
         let until = Instant::now() + stall;
         let mut events = lock(&self.events);
         loop {
-            if let Some(e) = events.pop_front() {
+            if let Some(e) = events.queue.pop_front() {
                 return Some(e);
             }
             let left = until.checked_duration_since(Instant::now()).filter(|d| !d.is_zero())?;
+            events.waiting = true;
             events = self.ready.wait_timeout(events, left).unwrap_or_else(PoisonError::into_inner).0;
+            events.waiting = false;
         }
     }
 }
@@ -122,8 +134,9 @@ pub struct Conn(Arc<Shared>);
 struct Shared {
     state: Mutex<State>,
     out: Mutex<Out>,
-    /// The pool this connection is in, told when a stream ends or the connection closes.
-    hub: OnceLock<Arc<Hub>>,
+    /// The pool this connection is in, and what its host's requests wait on there: told when
+    /// a stream ends or the connection changes.
+    hub: OnceLock<(Arc<Hub>, Arc<Condvar>)>,
     /// How long a stream may wait for a frame.
     stall: Duration,
 }
@@ -395,11 +408,16 @@ impl Shared {
         }
     }
 
-    /// Tell the pool something changed: a stream ended, or the connection closed.
-    fn changed(&self) {
-        if let Some(hub) = self.hub.get() {
+    /// Tell the pool a stream ended, which one waiting request can take: `all` when the
+    /// connection itself changed (SETTINGS, GOAWAY, its end), which every one must see.
+    fn changed(&self, all: bool) {
+        if let Some((hub, ready)) = self.hub.get() {
             let _hosts = lock(&hub.hosts);
-            hub.changed.notify_all();
+            if all {
+                ready.notify_all();
+            } else {
+                ready.notify_one();
+            }
         }
     }
 
@@ -428,7 +446,7 @@ impl Shared {
         // Closes this handle to the socket; the reader's closes when it returns.
         out.w = Box::new(io::sink());
         drop(out);
-        self.changed();
+        self.changed(true);
     }
 
     /// The reader thread: every frame until the connection ends.
@@ -495,7 +513,7 @@ impl Shared {
                         Error::new(io::ErrorKind::ConnectionReset, why)
                     };
                     slot.chan.send(Event::Fail(e));
-                    self.changed();
+                    self.changed(false);
                 }
                 Ok(())
             }
@@ -508,7 +526,7 @@ impl Shared {
                     }
                 }
                 self.send(|b| frame::put(b, frame::SETTINGS, frame::ACK, 0, &[]));
-                self.changed();
+                self.changed(true);
                 Ok(())
             }
             Frame::Ping { ack: false, data } => {
@@ -531,7 +549,7 @@ impl Shared {
                         "http2: the server closed the connection before this request (GOAWAY)",
                     )));
                 }
-                self.changed();
+                self.changed(true);
                 Ok(())
             }
             Frame::WindowUpdate { stream, increment } => {
@@ -578,7 +596,7 @@ impl Shared {
         if end {
             st.finish(id);
             drop(st);
-            self.changed();
+            self.changed(false);
         }
         Ok(())
     }
@@ -618,7 +636,7 @@ impl Shared {
         };
         self.give_back(updates);
         if end {
-            self.changed();
+            self.changed(false);
         }
         Ok(())
     }
@@ -797,13 +815,13 @@ impl Drop for Body {
             self.shared.send(|b| frame::put(b, frame::RST_STREAM, 0, id, &frame::CANCEL.to_be_bytes()));
         }
         let left: usize =
-            lock(&self.chan.events).drain(..).map(|e| if let Event::Data(d) = e { d.len() } else { 0 }).sum();
+            lock(&self.chan.events).queue.drain(..).map(|e| if let Event::Data(d) = e { d.len() } else { 0 }).sum();
         if left > 0 {
             let updates = lock(&self.shared.state).taken(self.id, left);
             self.shared.give_back(updates);
         }
         if open {
-            self.shared.changed();
+            self.shared.changed(false);
         }
     }
 }
@@ -823,7 +841,6 @@ pub struct Pool {
 struct Hub {
     /// Each host's connections, by the key the caller gave.
     hosts: Mutex<Vec<(String, Host)>>,
-    changed: Condvar,
 }
 
 #[derive(Default)]
@@ -833,6 +850,9 @@ struct Host {
     connecting: usize,
     /// The server picked HTTP/1.1.
     h1: bool,
+    /// What requests wait on for a stream: one is woken when a stream ends, all when a
+    /// connection is made or changes.
+    ready: Arc<Condvar>,
 }
 
 /// What a request got: an HTTP/2 response, or HTTP/1.1 to use, with the connection just made
@@ -851,7 +871,7 @@ impl Pool {
     /// (and no more than the server allows, nor `MAX_STREAMS`). A stream that hears nothing for
     /// `stall` fails.
     pub fn new(per_host: usize, streams: usize, stall: Duration) -> Self {
-        let hub = Arc::new(Hub { hosts: Mutex::default(), changed: Condvar::new() });
+        let hub = Arc::new(Hub { hosts: Mutex::default() });
         Self { hub, per_host: per_host.max(1), streams: streams.clamp(1, MAX_STREAMS), stall }
     }
 
@@ -891,6 +911,8 @@ impl Pool {
     ) -> Result<Result<Conn, Option<T>>, Error> {
         let mut hosts = lock(&self.hub.hosts);
         let until = Instant::now() + self.stall;
+        // Woken for a stream that ended: a request that then takes none passes the wake on.
+        let mut woken = false;
         loop {
             let i = match hosts.iter().position(|h| h.0 == key) {
                 Some(i) => i,
@@ -915,11 +937,14 @@ impl Pool {
             }
             if may_open {
                 host.connecting += 1;
+                if woken {
+                    host.ready.notify_one();
+                }
                 drop(hosts);
                 let link = connect();
                 hosts = lock(&self.hub.hosts);
-                self.hub.changed.notify_all();
                 let host = &mut hosts[i].1;
+                host.ready.notify_all();
                 host.connecting -= 1;
                 return match link? {
                     Link::H1(t) => {
@@ -927,7 +952,7 @@ impl Pool {
                         Ok(Err(Some(t)))
                     }
                     Link::H2(c) => {
-                        let _ = c.0.hub.set(self.hub.clone());
+                        let _ = c.0.hub.set((self.hub.clone(), host.ready.clone()));
                         lock(&c.0.state).cap = self.streams;
                         let got = c.reserve();
                         host.conns.push(c.clone());
@@ -938,11 +963,16 @@ impl Pool {
                     }
                 };
             }
+            let ready = host.ready.clone();
             let now = Instant::now();
             if now >= until {
+                // A wake that came as the wait ran out goes to another request.
+                ready.notify_one();
                 return Err(Error::new(io::ErrorKind::TimedOut, "http2: no connection free"));
             }
-            hosts = self.hub.changed.wait_timeout(hosts, until - now).unwrap_or_else(PoisonError::into_inner).0;
+            let timeout;
+            (hosts, timeout) = ready.wait_timeout(hosts, until - now).unwrap_or_else(PoisonError::into_inner);
+            woken = !timeout.timed_out();
         }
     }
 }
