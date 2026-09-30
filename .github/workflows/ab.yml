@@ -1,0 +1,53 @@
+name: ab
+
+# Throwaway: A/B timing of two refs on one ubuntu-latest runner (bench/ab.env). Pushes to perf4-ab only.
+on:
+  push:
+    branches: [perf4-ab]
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: sudo apt-get install -y time
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: build
+        run: |
+          source bench/ab.env
+          for v in $REFS; do
+            ref=${v#*=}; ref=${ref%%,*}; dir=$(echo $ref | tr / _)
+            [ -d ../build-$dir ] && continue
+            # ref+musl: that ref built for musl, as the releases are.
+            git worktree add --detach ../build-$dir ${ref%+musl}
+            if [ "$ref" != "${ref%+musl}" ]; then
+              rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1; dpkg -s musl-tools >/dev/null 2>&1 || sudo apt-get install -y musl-tools >/dev/null 2>&1
+              (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tail -1)
+              mkdir -p ../target-$dir/release && cp ../target-$dir/x86_64-unknown-linux-musl/release/jpm ../target-$dir/release/jpm
+            else
+              (cd ../build-$dir && CARGO_TARGET_DIR=$PWD/../target-$dir cargo build --release 2>&1 | tail -1)
+            fi
+            echo "$ref $(git rev-parse --short ${ref%+musl}) $(stat -c %s ../target-$dir/release/jpm) bytes"
+          done | tee sizes.txt
+          grep -m1 'model name' /proc/cpuinfo | tee -a sizes.txt
+      - name: ab
+        run: |
+          source bench/ab.env
+          # tag=ref,VAR=value runs that ref's build with that environment, through a wrapper.
+          bins=(); for v in $REFS; do
+            tag=${v%%=*} rest=${v#*=}; ref=${rest%%,*}; bin=$PWD/../target-$(echo $ref | tr / _)/release/jpm
+            case $rest in *,*) w=$PWD/../wrap-$tag; { echo '#!/bin/sh'; echo "export $(echo ${rest#*,} | tr , ' ')"; echo "exec $bin \"\$@\""; } > $w; chmod +x $w; bin=$w ;; esac
+            bins+=("$tag=$bin")
+          done
+          bash bench/ab.sh $N $PHASES $FIXTURES "${bins[@]}" | tee ab.out
+          { echo "## A/B on ubuntu-latest ($(nproc) cores)"; echo; sed 's/$/  /' sizes.txt; echo; grep '^|' ab.out; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ab
+          path: |
+            ab.out
+            sizes.txt
