@@ -115,6 +115,9 @@ struct State {
     warnings: BTreeSet<String>,
     /// Ends the walk: yarn.lock lacks a range a frozen install needs.
     fatal: Option<Error>,
+    /// Peers no version satisfies, as (consumer, name, range, why): settled once a round's
+    /// fetches are all in, so what the scope has then does not hang on which thread came first.
+    unfetched: Vec<(String, String, String, Error)>,
 }
 
 struct Walk<'a> {
@@ -267,20 +270,8 @@ impl Walk<'_> {
         if let Err(error) = self.try_edge(&from, &name, &range, optional, fresh, queue) {
             // Offline, a skipped optional would be locked out for good, where online it is fetched.
             let mut s = lock(&self.state);
-            // A peer no version satisfies takes what its scope has, as pnpm links it, rather than
-            // fail: registry-mock's deadlock.b wants deadlock.c 2.0.0, and its parent has 1.0.0.
-            if peer
-                && matches!(error.code, "ETARGET" | "ENOVERSIONS")
-                && let Some(Scoped::Link(version)) = self.scope_peer(&s, &from, &name, &range, true)
-            {
-                let have = s.records.get(&format!("{name}@{version}")).map_or(version.clone(), |p| p.version.clone());
-                let who = if from.is_empty() { "root" } else { &from };
-                s.warnings.insert(format!(
-                    "{who} needs peer {name}@{range}, which no version satisfies; linked to {name}@{have}"
-                ));
-                if let Some(list) = s.edges.get_mut(&from) {
-                    list.push(Edge { name, version, optional: false });
-                }
+            if peer && matches!(error.code, "ETARGET" | "ENOVERSIONS") {
+                s.unfetched.push((from, name, range, error));
                 return;
             }
             if !optional || error.code == "EOFFLINE" {
@@ -903,7 +894,48 @@ impl Walk<'_> {
                 jobs.extend(group.into_iter().map(|(_, j)| j));
             }
             self.drain(jobs)?;
+            let again = self.settle_unfetched();
+            self.drain(again)?;
         }
+    }
+
+    /// A peer no version satisfies takes what its scope has, as pnpm links it, rather than fail:
+    /// registry-mock's deadlock.b wants deadlock.c 2.0.0, and its parent has 1.0.0. With nothing
+    /// there, its consumer fails as before. Returns the aliases' packages to fetch.
+    fn settle_unfetched(&self) -> Vec<Job> {
+        let mut s = lock(&self.state);
+        let mut todo = std::mem::take(&mut s.unfetched);
+        todo.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        let mut jobs = Vec::new();
+        for (from, name, range, error) in todo {
+            let who = if from.is_empty() { "root".to_string() } else { from.clone() };
+            match self.scope_peer(&s, &from, &name, &range, true) {
+                Some(Scoped::Link(version)) => {
+                    let have =
+                        s.records.get(&format!("{name}@{version}")).map_or(version.clone(), |p| p.version.clone());
+                    s.warnings.insert(format!(
+                        "{who} needs peer {name}@{range}, which no version satisfies; linked to {name}@{have}"
+                    ));
+                    if let Some(list) = s.edges.get_mut(&from) {
+                        list.push(Edge { name, version, optional: false });
+                    }
+                }
+                Some(Scoped::Fetch(version)) => {
+                    s.warnings.insert(format!(
+                        "{who} needs peer {name}@{range}, which no version satisfies; linked to {name}@{version}"
+                    ));
+                    jobs.push(Job { from, name, range: version, optional: false, fresh: false, peer: false });
+                }
+                None => {
+                    let error = Error::new(
+                        error.code,
+                        format!("{} — resolving {name}@{range} (required by {who})", error.message),
+                    );
+                    s.dead.entry(from).or_insert(error);
+                }
+            }
+        }
+        jobs
     }
 
     /// Consumers that miss the same peer share the newest of what each would get alone that

@@ -398,6 +398,32 @@ fn a_peer_no_version_satisfies_takes_what_its_scope_has() {
 }
 
 #[test]
+fn a_peer_no_version_satisfies_waits_for_the_rounds_fetches() {
+    // registry-mock's circular aliased peers: b's c 2.0.0 falls back on the c 1.0.0 that a's
+    // peer fetches in the same round. Settled as that fetch landed first or not, the install
+    // failed now and then.
+    let r = Registry::start(vec![
+        pkg(
+            "a",
+            "1.0.0",
+            json!({ "dependencies": { "b": "1.0.0", "c": "1.0.0" }, "peerDependencies": { "b": "1.0.0", "c": "1.0.0" } }),
+        ),
+        pkg("b", "1.0.0", json!({ "dependencies": { "c": "1.0.0" }, "peerDependencies": { "a": "*", "c": "2.0.0" } })),
+        pkg("b", "2.0.0", json!({})),
+        pkg("c", "1.0.0", json!({ "peerDependencies": { "a": "*" } })),
+    ]);
+    for _ in 0..5 {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": {
+            "a": "1.0.0", "b": "2.0.0", "alias-b": "npm:b@1.0.0", "alias-c": "npm:c@1.0.0"
+        } }));
+        env.ok(&["install"]);
+        let lock = env.lock();
+        assert_eq!(lock["packages"]["alias-b@npm:b@1.0.0"]["dependencies"]["c"], "1.0.0", "{lock}");
+    }
+}
+
+#[test]
 fn a_peer_resolves_through_an_alias_of_its_package() {
     // pnpm's registry-mock: abc's peer-a is the root's `peer-b: npm:@pnpm.e2e/peer-a@1.0.0`, and of
     // several aliases of peer-c the newest, linked as the package itself.
