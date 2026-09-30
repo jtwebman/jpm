@@ -555,10 +555,9 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
                 return Err(e);
             }
             let file = dest.join(name(path));
-            if let Some(parent) = file.parent()
-                && made.insert(parent.to_path_buf())
-            {
-                fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
+            if let Some(parent) = file.parent() {
+                make_dirs(dest, parent, &mut made)
+                    .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
             }
             let exec = mode & 0o111 != 0;
             let mut seen = files.insert(path.to_string(), FileEntry { path: path.to_string(), size, exec }).is_some();
@@ -642,6 +641,25 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     }
     let unpacked_size = files.values().map(|f| f.size).sum();
     Ok(Index { files: files.into_values().collect(), unpacked_size, suffixed: suffix })
+}
+
+/// `dir` and each directory between it and `root` (which is there), made top down, each once:
+/// `made` holds every one made, so a file beside another never asks for its directory again,
+/// and no mkdir fails because its parent was not made yet.
+fn make_dirs(root: &Path, dir: &Path, made: &mut HashSet<PathBuf>) -> io::Result<()> {
+    if dir == root || made.contains(dir) {
+        return Ok(());
+    }
+    if let Some(parent) = dir.parent().filter(|p| p.starts_with(root)) {
+        make_dirs(root, parent, made)?;
+    }
+    match fs::create_dir(dir) {
+        // Where the disk folds case, `Lib/` and `lib/` are one directory.
+        Err(e) if !(e.kind() == io::ErrorKind::AlreadyExists && dir.is_dir()) => return Err(e),
+        _ => {}
+    }
+    made.insert(dir.to_path_buf());
+    Ok(())
 }
 
 /// A file's body into `out` in `buf`-sized writes: one write for most files, where `io::copy`
@@ -1090,5 +1108,28 @@ pub mod tests {
         assert!(Index::parse("jpm-index 1 1\n- 1 ../x\n").is_none());
         assert!(Index::parse("jpm-index 1 1\n- 1 a/b\n").is_some());
         assert!(Index::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn makes_each_directory_once_from_the_top() {
+        let root = scratch("dirs");
+        let mut made = HashSet::new();
+        make_dirs(&root, &root.join("a/b/c"), &mut made).unwrap();
+        assert!(root.join("a/b/c").is_dir());
+        assert_eq!(made.len(), 3, "a, a/b and a/b/c");
+        // Made once: asked again, nothing is asked of the disk (gone from it, it stays gone).
+        fs::remove_dir(root.join("a/b/c")).unwrap();
+        make_dirs(&root, &root.join("a/b/c"), &mut made).unwrap();
+        assert!(!root.join("a/b/c").exists());
+        // A sibling under a made parent, and one already on the disk.
+        make_dirs(&root, &root.join("a/b/d"), &mut made).unwrap();
+        fs::create_dir(root.join("e")).unwrap();
+        make_dirs(&root, &root.join("e/f"), &mut made).unwrap();
+        assert!(root.join("a/b/d").is_dir() && root.join("e/f").is_dir());
+        // The root itself is never made, and a file in the way fails.
+        make_dirs(&root, &root, &mut made).unwrap();
+        fs::write(root.join("g"), "x").unwrap();
+        assert!(make_dirs(&root, &root.join("g/h"), &mut made).is_err());
+        remove_tree(&root);
     }
 }
