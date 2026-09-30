@@ -1,0 +1,21 @@
+[
+  {
+    "test": "file spec",
+    "arg": "./local",
+    "where": null,
+    "platform": "posix",
+    "expect": {
+      "type": "directory",
+      "raw": "./local"
+    }
+  },
+  {
+    "test": "encoded path",
+    "arg": "./path\\backslash",
+    "where": null,
+    "platform": "posix",
+    "expect": {
+      "rawSpec": "./path\\backslash"
+    }
+  }
+]

@@ -1,0 +1,195 @@
+[
+  {
+    "test": "basic",
+    "arg": "user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "github:user/foo-js",
+      "raw": "user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "user/foo-js#bar/baz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "github:user/foo-js#bar/baz",
+      "raw": "user/foo-js#bar/baz"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "user..blerg--/..foo-js# . . . . . some . tags / / /",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "github:user..blerg--/..foo-js# . . . . . some . tags / / /",
+      "raw": "user..blerg--/..foo-js# . . . . . some . tags / / /"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "user/foo-js#bar/baz/bin",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "raw": "user/foo-js#bar/baz/bin"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "foo@user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "type": "git",
+      "saveSpec": "github:user/foo-js",
+      "raw": "foo@user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "github:user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "github:user/foo-js",
+      "raw": "github:user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git+ssh://git@github.com/user/foo#1.2.3",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git#1.2.3",
+      "raw": "git+ssh://git@github.com/user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git+ssh://git@github.com:user/foo#1.2.3",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git#1.2.3",
+      "raw": "git+ssh://git@github.com:user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git://github.com/user/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git://github.com/user/foo.git",
+      "raw": "git://github.com/user/foo"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "https://github.com/user/foo.git",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+https://github.com/user/foo.git",
+      "raw": "https://github.com/user/foo.git"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "@foo/bar@git+ssh://github.com/user/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "@foo/bar",
+      "scope": "@foo",
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com/user/foo.git",
+      "rawSpec": "git+ssh://github.com/user/foo",
+      "raw": "@foo/bar@git+ssh://github.com/user/foo"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "foo@bar/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "type": "git",
+      "saveSpec": "github:bar/foo",
+      "raw": "foo@bar/foo"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git@github.com:12345",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com:12345",
+      "fetchSpec": "ssh://git@github.com:12345",
+      "raw": "git@github.com:12345"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git@github.com:12345/",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com:12345/",
+      "fetchSpec": "ssh://git@github.com:12345/",
+      "raw": "git@github.com:12345/"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git@github.com:12345/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com:12345/foo",
+      "fetchSpec": "ssh://git@github.com:12345/foo",
+      "raw": "git@github.com:12345/foo"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git@github.com:12345foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "type": "git",
+      "saveSpec": "git+ssh://git@github.com:12345foo",
+      "fetchSpec": "git@github.com:12345foo",
+      "raw": "git@github.com:12345foo"
+    }
+  }
+]

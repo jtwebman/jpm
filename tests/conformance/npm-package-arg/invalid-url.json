@@ -1,0 +1,11 @@
+[
+  {
+    "test": "",
+    "arg": "foo@gopher://goodluckwiththat",
+    "where": null,
+    "platform": "any",
+    "throws": {
+      "code": "EUNSUPPORTEDPROTOCOL"
+    }
+  }
+]

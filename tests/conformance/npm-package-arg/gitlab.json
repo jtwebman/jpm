@@ -1,0 +1,98 @@
+[
+  {
+    "test": "basic",
+    "arg": "gitlab:user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "raw": "gitlab:user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "gitlab:user/foo-js#bar/baz",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "raw": "gitlab:user/foo-js#bar/baz"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "gitlab:user..blerg--/..foo-js# . . . . . some . tags / / /",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "gitlab:user..blerg--/..foo-js# . . . . . some . tags / / /",
+      "raw": "gitlab:user..blerg--/..foo-js# . . . . . some . tags / / /"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "gitlab:user/foo-js#bar/baz/bin",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "gitlab:user/foo-js#bar/baz/bin",
+      "raw": "gitlab:user/foo-js#bar/baz/bin"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "foo@gitlab:user/foo-js",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "foo",
+      "type": "git",
+      "saveSpec": "gitlab:user/foo-js",
+      "raw": "foo@gitlab:user/foo-js"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "git+ssh://git@gitlab.com/user/foo#1.2.3",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+ssh://git@gitlab.com/user/foo.git#1.2.3",
+      "raw": "git+ssh://git@gitlab.com/user/foo#1.2.3"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "https://gitlab.com/user/foo.git",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": null,
+      "type": "git",
+      "saveSpec": "git+https://gitlab.com/user/foo.git",
+      "raw": "https://gitlab.com/user/foo.git"
+    }
+  },
+  {
+    "test": "basic",
+    "arg": "@foo/bar@git+ssh://gitlab.com/user/foo",
+    "where": null,
+    "platform": "any",
+    "expect": {
+      "name": "@foo/bar",
+      "scope": "@foo",
+      "type": "git",
+      "saveSpec": "git+ssh://git@gitlab.com/user/foo.git",
+      "rawSpec": "git+ssh://gitlab.com/user/foo",
+      "raw": "@foo/bar@git+ssh://gitlab.com/user/foo"
+    }
+  }
+]

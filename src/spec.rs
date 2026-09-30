@@ -45,26 +45,74 @@ fn ends_as_tarball(s: &str) -> bool {
     TARBALL_EXT.iter().any(|ext| lower.ends_with(ext))
 }
 
-/// A CLI argument that names no package, only where one is (a git repository, a url, a `file:`,
-/// `link:`, `./` or `../` path, or a file name ending as a tarball does), as its spec's
-/// `fetch_spec`.
+/// A CLI argument that names no package, only where one is, as its spec's `fetch_spec`: a git
+/// repository, a url, a `file:` or `link:` path, or as npm reads an argument, a path (starting
+/// `.`, `/` or `~/`, or with a `/` in what would be its name) or a file name ending as a tarball
+/// does.
 pub fn bare_source(arg: &str) -> Result<Option<String>> {
-    if let Some(repo) = git(arg, arg)? {
-        return Ok(Some(repo));
+    let (name, spec) = split_at(arg);
+    // `git@npm:x` is x under the name git, as npm reads it, not ssh to a host called npm.
+    let lower = spec.to_ascii_lowercase();
+    let named = SPEC_PROTOCOLS.iter().any(|p| lower.starts_with(p));
+    if !named {
+        // ssh's scp-like `user@host.tld:path`, whoever the user, as npm reads an argument.
+        let scp = !arg.starts_with("git@") && dotted_scp(arg);
+        if let Some(repo) = git(&if scp { format!("git+ssh://{arg}") } else { arg.to_string() }, arg)? {
+            return Ok(Some(repo));
+        }
     }
-    let pathish = arg.starts_with("file:")
-        || arg.starts_with("link:")
-        || arg.starts_with("./")
-        || arg.starts_with("../")
-        || arg.starts_with(".\\")
-        || arg.starts_with("..\\");
+    let pathish = ["file:", "link:", ".", "/", "\\", "~/", "~\\"].iter().any(|p| arg.starts_with(p)) || drive(arg);
     if is_url(arg) || pathish {
         return path(arg, arg);
     }
-    if !arg.contains('@') && ends_as_tarball(arg) {
+    // `path/to/dir`, or a scope-like name that is none (`@a b/c`): npm reads it as a path.
+    let slashed = if name.starts_with('@') {
+        name == arg && arg.contains('/') && check_name(arg, arg).is_err()
+    } else {
+        name.contains(['/', '\\'])
+    };
+    if slashed || !arg.contains('@') && ends_as_tarball(arg) {
         return path(&format!("file:{arg}"), arg);
     }
     Ok(None)
+}
+
+/// The protocols a spec after `name@` starts with.
+const SPEC_PROTOCOLS: [&str; 18] = [
+    "npm:",
+    "jsr:",
+    "github:",
+    "gitlab:",
+    "bitbucket:",
+    "gist:",
+    "file:",
+    "link:",
+    "portal:",
+    "workspace:",
+    "catalog:",
+    "exec:",
+    "runtime:",
+    "patch:",
+    "http:",
+    "https:",
+    "git:",
+    "git+",
+];
+
+/// npm's test for ssh's scp-like form in an argument: `user@host:path`, the host with a dot.
+fn dotted_scp(arg: &str) -> bool {
+    let Some((user, rest)) = arg.split_once('@') else { return false };
+    let Some((host, path)) = rest.split_once(':') else { return false };
+    !user.is_empty()
+        && !user.contains([':', '/'])
+        && !path.is_empty()
+        && host.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty())
+}
+
+/// `C:`, a Windows drive, which npm reads as the start of a path.
+fn drive(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
 /// Where a tarball or directory spec points, as a lockfile spells it: a url as given, a path
@@ -117,14 +165,9 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     // patches is installed as it is.
     if let Some((range, patch)) = crate::patch::yarn(name, &s) {
         if patch.is_some() {
-            static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-            let mut told = TOLD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !told.contains(&s) {
-                told.push(s.clone());
-                crate::ui::warn(&format!(
-                    "a dependency on {raw} names a yarn patch only its own repository has; {name} is installed without it"
-                ));
-            }
+            warn_once(&format!(
+                "a dependency on {raw} names a yarn patch only its own repository has; {name} is installed without it"
+            ));
         }
         return build(name, &range, raw);
     }
@@ -370,14 +413,16 @@ fn git(s: &str, raw: &str) -> Result<Option<String>> {
         Some(h) if scheme == "git+https://" || scheme == "git://" => h.repo(path).map_or(url, |p| h.https(&p)),
         _ => url,
     };
-    let committish = match committish.strip_prefix("semver:") {
-        Some(range) if !semver::valid_range(range) => return bad("not a semver range"),
-        Some(_) => committish.to_string(),
-        None if committish.starts_with('-') || committish.bytes().any(|b| !b.is_ascii_graphic()) => {
-            return bad("not a ref");
-        }
-        None if is_commit(committish) => committish.to_ascii_lowercase(),
-        None => committish.to_string(),
+    let committish = match git_ref(committish, raw) {
+        Err(why) => return bad(why),
+        Ok(r) => r,
+    };
+    let committish = match committish {
+        GitRef::Range(range) if !semver::valid_range(range) => return bad("not a semver range"),
+        GitRef::Range(range) => format!("semver:{range}"),
+        GitRef::Named(r) if r.starts_with('-') || r.bytes().any(|b| !b.is_ascii_graphic()) => return bad("not a ref"),
+        GitRef::Named(r) if is_commit(r) => r.to_ascii_lowercase(),
+        GitRef::Named(r) => r.to_string(),
     };
     Ok(Some(format!("{url}#{committish}")))
 }
@@ -390,6 +435,45 @@ fn scp(repo: &str) -> Option<String> {
     let at = rest.split_once(':').and_then(|(host, path)| Host::named(host)?.repo(path));
     let hosted = !auth.contains('/') && at.is_some();
     (git || hosted).then(|| format!("git+ssh://{repo}"))
+}
+
+enum GitRef<'a> {
+    /// A commit, branch or tag; empty for the default branch.
+    Named(&'a str),
+    Range(&'a str),
+}
+
+/// What follows a repository's `#`, as npm reads it: `::`-separated parts, each a ref,
+/// `semver:<range>` or `path:<dir>`, at most one of the first two. npm skips another
+/// `key:value` with a warning: no git ref holds a `:`.
+fn git_ref<'a>(s: &'a str, raw: &str) -> std::result::Result<GitRef<'a>, &'static str> {
+    let mut found = None;
+    for part in s.split("::").filter(|p| !p.is_empty()) {
+        let this = match part.split_once(':') {
+            None => GitRef::Named(part),
+            Some(("semver", range)) => GitRef::Range(range),
+            Some(("path", _)) => return Err("a directory inside a repository (#path:) is not supported yet"),
+            Some((key, _)) => {
+                warn_once(&format!("ignoring unknown key \"{key}\" in the git spec of {raw}"));
+                continue;
+            }
+        };
+        if found.is_some() {
+            return Err("more than one ref or semver range");
+        }
+        found = Some(this);
+    }
+    Ok(found.unwrap_or(GitRef::Named("")))
+}
+
+/// A warning about a spec, said once however often the spec is read.
+fn warn_once(message: &str) {
+    static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut told = TOLD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !told.iter().any(|t| t == message) {
+        told.push(message.to_string());
+        crate::ui::warn(message);
+    }
 }
 
 /// `https://github.com/u/r`, a hosted repository's page, as a `git+https://` url, with the ref
@@ -435,8 +519,8 @@ pub fn is_git(source: &str) -> bool {
 }
 
 /// A tarball's or a directory's `fetch_spec`, or `None` when `s` is neither: a url, or a path
-/// relative to package.json. `file:` (or a bare `./` path) ending as a tarball does is a
-/// tarball; any other is a directory, as every `link:` is.
+/// relative to package.json. `file:` (or a bare `./` path, or a file name) ending as a tarball
+/// does is a tarball; any other is a directory, as every `link:` is.
 fn path(s: &str, raw: &str) -> Result<Option<String>> {
     if is_url(s) {
         if !valid_url(s) {
@@ -451,12 +535,23 @@ fn path(s: &str, raw: &str) -> Result<Option<String>> {
     } else if let Some(p) = s.strip_prefix("portal:") {
         // yarn's: the directory linked and its dependencies installed, as `file:` has it.
         ("file:", p)
-    } else if ["/", "\\", "./", ".\\", "../", "..\\", "~/", "~\\"].iter().any(|p| s.starts_with(p)) {
+    } else if [".", "/", "\\", "~/", "~\\"].iter().any(|p| s.starts_with(p)) || drive(s) {
+        ("file:", s)
+    } else if ends_as_tarball(s) && !s.contains([':', '/', '\\']) {
+        // `a.tgz`: a file beside package.json, as npm reads it.
         ("file:", s)
     } else {
         return Ok(None);
     };
-    let clean = path.replace('\\', "/");
+    let mut clean = path.replace('\\', "/");
+    // npm reads `file:/./x`, `file://../x` and `file:///.` as relative, up to three slashes.
+    let rel = clean.trim_start_matches('/');
+    if protocol == "file:"
+        && clean.len() - rel.len() <= 3
+        && rel.split('/').next().is_some_and(|p| p == "." || p == "..")
+    {
+        clean = rel.to_string();
+    }
     let joined = join_path("", &clean);
     // Checked once normalized: `./C:/x` joins to `C:/x`. A `:` is a drive or a stream on Windows.
     if clean.starts_with('/') || clean.starts_with('~') || joined.contains(':') {
@@ -641,6 +736,9 @@ mod tests {
             assert!(parse_dep("lib", drive).is_err(), "{drive}");
         }
         assert_eq!(bare_source("lib-1.0.0.tgz").unwrap().as_deref(), Some("file:lib-1.0.0.tgz"));
+        // A file name alone is a file beside package.json, as npm reads it; not a tag.
+        let s = parse_dep("lib", "lib-1.0.0.tgz").unwrap();
+        assert_eq!((s.kind, s.fetch_spec.as_str()), (Kind::Tarball, "file:lib-1.0.0.tgz"));
         assert_eq!(bare_source("vue@^3").unwrap(), None);
         assert_eq!(source_at("file:../x.tgz", "packages/a"), "file:packages/x.tgz");
     }
@@ -655,6 +753,17 @@ mod tests {
         is("file:.", "file:");
         is("link:../../x/", "link:../../x");
         is("link:x\\y", "link:x/y");
+        // npm's relative spellings with slashes before the dots, and a bare `.`.
+        is("file:/./x", "file:x");
+        is("file://../x", "file:../x");
+        is("file:///.", "file:");
+        is(".", "file:");
+        assert!(dir("file:////./x").is_err() && dir("file:/.x").is_err());
+        // An argument with a `/` in its name is a path, as npm reads one.
+        assert_eq!(bare_source("libs/a/b").unwrap().as_deref(), Some("file:libs/a/b"));
+        assert_eq!(bare_source("@a b/c").unwrap().as_deref(), Some("file:@a b/c"));
+        assert_eq!(bare_source("@s/p").unwrap(), None);
+        assert!(bare_source("/abs/x").unwrap_err().message.contains("relative to package.json"));
         // A tarball by its name, and a path that leaves package.json's side are not directories.
         assert_eq!(dir("./x.tgz").unwrap().0, Kind::Tarball);
         for bad in ["link:/abs", "link:~/x", "link:C:/x", "link:./c:x", "file:/abs/dir", "link:x.tgz", "link:a:b"] {
@@ -780,6 +889,17 @@ mod tests {
         }
         assert_eq!(git("u/r#v1.2.3"), format!("{hub}v1.2.3"));
         assert_eq!(git("u/r#feature/x"), format!("{hub}feature/x"));
+        // npm's `::` parts: a key it does not know is skipped, as no ref holds a `:`.
+        assert_eq!(git("u/r#v1::x:y"), format!("{hub}v1"));
+        assert_eq!(git("u/r#x:y::semver:^1"), format!("{hub}semver:^1"));
+        for two in ["u/r#v1::v2", "u/r#v1::semver:^1", "u/r#semver:^1::semver:^2", "u/r#path:a"] {
+            assert!(parse_dep("x", two).is_err(), "{two}");
+        }
+        // As an argument, `user@host.tld:path` is ssh whoever the user; `git@npm:x` an alias.
+        assert_eq!(bare_source("me@example.com:r").unwrap().as_deref(), Some("git+ssh://me@example.com:r#"));
+        assert_eq!(bare_source("git@npm:x").unwrap(), None);
+        assert_eq!(parse_spec("git@npm:x").unwrap().fetch_name, "x");
+        assert_eq!(bare_source("git@work:o/r").unwrap().as_deref(), Some("git+ssh://git@work:o/r#"));
         assert_eq!(git("github:u/r#semver:^1.2 || ^2"), format!("{hub}semver:^1.2 || ^2"));
         assert_eq!(git(&format!("u/r#{}", C.to_uppercase())), format!("{hub}{C}"), "a commit is lowercase");
         assert_eq!(git("gitlab:g/p#main"), "git+https://gitlab.com/g/p.git#main");
@@ -907,3 +1027,7 @@ mod tests {
 #[cfg(test)]
 #[path = "../tests/conformance/hosted_git_info.rs"]
 mod hosted_git_info;
+
+#[cfg(test)]
+#[path = "../tests/conformance/npm_package_arg.rs"]
+mod npm_package_arg;
