@@ -480,6 +480,22 @@ fn links_a_workspace_under_another_name() {
 }
 
 #[test]
+fn a_workspace_peer_takes_the_roots_alias() {
+    // hono's root has typescript as an alias of @typescript/typescript6; its eslint-config
+    // workspace's typescript peer settles on that copy.
+    let r = registry();
+    r.publish(pkg("ts6", "6.0.2", json!({})));
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["w"], "devDependencies": { "ts": "npm:ts6@^6" } }));
+    env.write("w/package.json", r#"{ "name": "w", "peerDependencies": { "ts": "^5 || ^6" } }"#);
+    env.ok(&["install"]);
+    assert_eq!(env.lock()["workspaces"]["w"]["dependencies"]["ts"], "npm:ts6@6.0.2");
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    env.ok(&["ci"]);
+}
+
+#[test]
 fn links_the_root_listed_as_a_workspace() {
     let r = registry();
     let env = Env::new(&r);
