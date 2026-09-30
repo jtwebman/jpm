@@ -320,6 +320,8 @@ struct Client {
     h2: Option<jpm_http::Pool>,
     /// `tls` offering h2 before http/1.1, for the connections `h2` makes.
     tls_h2: OnceLock<jpm_tls::Config>,
+    /// Bodies longer than this go over HTTP/1.1 (`JPM_HTTP2_BIG`).
+    h2_big: Option<u64>,
 }
 
 static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
@@ -362,8 +364,9 @@ impl Client {
             verified: Default::default(),
         }) as Box<dyn FnOnce() -> _ + Send>);
         let h2 = http2(env);
+        let h2_big = h2.as_ref().and(env("JPM_HTTP2_BIG")).and_then(|v| v.trim().parse().ok());
         let proxies = Proxies::new(config, env);
-        Self { tls, proxies, pool: Mutex::default(), dns: Mutex::default(), h2, tls_h2: OnceLock::new() }
+        Self { tls, proxies, pool: Mutex::default(), dns: Mutex::default(), h2, tls_h2: OnceLock::new(), h2_big }
     }
 
     fn tls_h2(&self) -> &jpm_tls::Config {
@@ -381,6 +384,11 @@ impl Client {
 /// than 32 to 64 HTTP/1.1 connections. `JPM_HTTP2_STREAMS` caps the streams in flight to a
 /// host, split evenly between its connections; unset, each carries as many as the server allows.
 /// How many requests are in flight is still up to the callers (`JPM_CONCURRENCY`).
+///
+/// Experimental, `JPM_HTTP2_BIG=<bytes>`: a response over HTTP/2 whose content-length is above
+/// it is cancelled (RST_STREAM CANCEL) as soon as its head arrives, and asked again over
+/// HTTP/1.1 on a connection of its own. Small bodies share one connection well; a big one on it
+/// shares one TCP window, and a loss stalls every stream behind it.
 fn http2(env: &dyn Fn(&str) -> Option<String>) -> Option<jpm_http::Pool> {
     let number = |name| env(name).and_then(|v| v.trim().parse::<usize>().ok());
     let n = number("JPM_HTTP2").filter(|n| *n > 0)?.min(8);
@@ -549,8 +557,9 @@ impl Client {
         Ok(self.body(conn, key, status, headers))
     }
 
-    /// A request over HTTP/2, or `None` when the host is known to speak only HTTP/1.1. A
-    /// connection just made on which ALPN picked HTTP/1.1 carries the request as HTTP/1.1.
+    /// A request over HTTP/2, or `None` when the host is known to speak only HTTP/1.1, or the
+    /// body is bigger than `h2_big` (its stream reset, for HTTP/1.1 to ask again). A connection
+    /// just made on which ALPN picked HTTP/1.1 carries the request as HTTP/1.1.
     fn over_h2(
         self: &Arc<Self>,
         h2: &jpm_http::Pool,
@@ -574,6 +583,17 @@ impl Client {
         };
         match h2.get(&format!("{}:{}", url.host, url.port), connect, &req)? {
             jpm_http::Got::H2(r) => {
+                let length = r.header("content-length").and_then(|v| v.trim().parse::<u64>().ok());
+                if let (Some(big), Some(n)) = (self.h2_big, length)
+                    && n > big
+                    && (200..300).contains(&r.status)
+                {
+                    if std::env::var_os("JPM_HTTP_LOG").is_some() {
+                        eprintln!("http2 {n} bytes, again over http/1.1 {}", crate::ui::clean(&url.target));
+                    }
+                    // Dropped, the body resets its stream.
+                    return Ok(None);
+                }
                 let gzip = r.header("content-encoding").is_some_and(|e| e.to_ascii_lowercase().contains("gzip"));
                 Ok(Some(Streaming { status: r.status, headers: r.headers, body: Box::new(r.body), gzip }))
             }

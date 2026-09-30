@@ -63,6 +63,7 @@ fn install(env: &Env, vars: &[(&str, &str)]) -> Output {
         "no_proxy",
         "JPM_HTTP2",
         "JPM_HTTP2_STREAMS",
+        "JPM_HTTP2_BIG",
     ] {
         c.env_remove(v);
     }
@@ -312,6 +313,41 @@ fn installs_over_http2_when_asked() {
     assert!(all >= 4 && h2 == all, "{h2} of {all} requests over HTTP/2");
     let tunnels = seen.lock().unwrap().clone();
     assert!(!tunnels.is_empty() && tunnels.len() <= 2 && tunnels.iter().all(|t| *t == host), "{tunnels:?}");
+}
+
+/// `JPM_HTTP2_BIG`: a body over the threshold is cancelled on HTTP/2 once its head arrives and
+/// asked again over HTTP/1.1, the token still sent to its own host; everything else, and the
+/// HTTP/2 connection the cancel left open, carries on over HTTP/2.
+#[test]
+fn sends_big_bodies_over_http1_when_asked() {
+    let (r, corp) = tls_registry();
+    let host = r.url.trim_start_matches("https://").to_string();
+    // About 270 KiB of hex noise: a tarball over 128 KiB, where the documents stay small.
+    let mut x = 0x9e37_79b9_7f4a_7c15_u64;
+    let noise: String = (0..16 * 1024)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            format!("{x:016x}\n")
+        })
+        .collect();
+    r.publish(pkg("b", "1.0.0", json!({})).file("noise.txt", 0o644, &noise));
+
+    let (env, pem) = project(&r, &corp);
+    env.user_npmrc(&format!("cafile={}\n//{host}/:_authToken=big-token\n", pem.display()));
+    r.hits.lock().unwrap().clear();
+    let (all, h2) = (r.requests.load(Relaxed), r.h2.load(Relaxed));
+    let out = install(&env, &[("JPM_HTTP2", "1"), ("JPM_HTTP2_BIG", "65536"), ("JPM_HTTP_LOG", "1")]);
+    let err = installed(&env, &out);
+    assert!(env.read("node_modules/a/../b/noise.txt") == noise);
+    let (all, h2) = (r.requests.load(Relaxed) - all, r.h2.load(Relaxed) - h2);
+    assert!(all >= 5 && h2 == all - 1, "{h2} of {all} requests over HTTP/2: {err}");
+    let hits = r.hits.lock().unwrap().clone();
+    assert!(hits.iter().all(|h| h.ends_with(" authorization: Bearer big-token")), "{hits:?}");
+    let big = hits.iter().filter(|h| h.starts_with("/b/-/b-1.0.0.tgz ")).count();
+    assert_eq!(big, 2, "{hits:?}");
+    assert!(err.contains("again over http/1.1 /b/-/b-1.0.0.tgz"), "{err}");
 }
 
 /// A proxy that terminates the TLS it is asked to tunnel, with a certificate `issuer` signed:
