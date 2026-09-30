@@ -22,7 +22,7 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
 pub fn name_version(key: &str) -> Option<(String, &str)> {
     // The hash is 22 characters of base64url, which may hold a `-`.
     let id = key.get(..key.len().checked_sub(23)?).filter(|_| key.as_bytes()[key.len() - 23] == b'-')?;
-    let at = id.get(1..)?.find('@')? + 1;
+    let at = crate::graph::name_end(id)?;
     Some((id[..at].replace('+', "/"), &id[at + 1..]))
 }
 

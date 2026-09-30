@@ -39,8 +39,12 @@ pub fn registry_base(registry: Option<&str>) -> String {
 
 /// Where a registry serves a package's tarball, by the convention every registry follows.
 pub fn tarball_url(base: &str, name: &str, version: &str) -> String {
-    let basename = if name.starts_with('@') { name.split_once('/').map_or(name, |(_, b)| b) } else { name };
-    format!("{base}/{name}/-/{basename}-{version}.tgz")
+    use crate::spec::encode_segment as enc;
+    let (path, basename) = match name.strip_prefix('@').and_then(|n| n.split_once('/')) {
+        Some((scope, pkg)) => (format!("@{}/{}", enc(scope), enc(pkg)), enc(pkg)),
+        None => (enc(name), enc(name)),
+    };
+    format!("{base}/{path}/-/{basename}-{version}.tgz")
 }
 
 /// The registry a name is read from: its scope's when `.npmrc` sends the scope elsewhere.

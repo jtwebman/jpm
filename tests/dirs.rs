@@ -130,6 +130,31 @@ fn links_a_workspace_protocol_path() {
 }
 
 #[test]
+fn takes_names_the_registry_would_not() {
+    // babel links its scripts' helpers as `$repo-utils`; an alias's own name is the project's
+    // to pick. Only what the directory, the lockfile or Windows cannot hold is refused.
+    let r = registry();
+    r.publish(pkg("b", "2.0.0-alpha1a", json!({})));
+    let env = Env::new(&r);
+    env.write("scripts/repo-utils/package.json", r#"{ "name": "$repo-utils", "private": true }"#);
+    env.manifest(
+        json!({ "name": "app", "dependencies": { "$repo-utils": "link:./scripts/repo-utils", "my$b": "npm:b@1.0.0", "💩": "npm:b@1.0.0", "💩pre": "npm:b@2.0.0-alpha1a" } }),
+    );
+    env.ok(&["install"]);
+    leads(&env.project(), "$repo-utils", &env.project().join("scripts/repo-utils"));
+    assert!(env.read("node_modules/my$b/index.js").contains("b@1.0.0"));
+    assert!(env.read("node_modules/💩/index.js").contains("b@1.0.0"));
+    assert!(env.read("node_modules/💩pre/index.js").contains("b@2.0.0-alpha1a"));
+    assert!(env.read("jpm.lock").contains("package 💩pre@npm:b@2.0.0-alpha1a\n"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert!(env.read("node_modules/my$b/index.js").contains("b@1.0.0"));
+    env.manifest(json!({ "dependencies": { "a:b": "npm:b@1.0.0" } }));
+    assert!(stderr(&env.jpm(&["install"])).contains("Invalid package name \"a:b\""));
+}
+
+#[test]
 fn links_a_directory_outside_the_project_without_writing_there() {
     let r = registry();
     let env = Env::new(&r);

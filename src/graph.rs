@@ -209,8 +209,20 @@ pub fn split_alias(edge: &str) -> Option<(&str, &str)> {
 }
 
 pub fn split_key(key: &str) -> Option<(&str, &str)> {
-    let at = key.get(1..)?.find('@')? + 1;
+    let at = name_end(key)?;
     Some((&key[..at], &key[at + 1..]))
+}
+
+/// Where the `@` that ends a package name is in `name@...`: past a scope's own leading `@`.
+pub fn name_end(s: &str) -> Option<usize> {
+    find_after_name(s, "@")
+}
+
+/// Where `pat` is in `s`, looked for past its first character: a scope's `@`, or a character
+/// of several bytes (a name may begin with an emoji; slicing at byte 1 would split it).
+pub fn find_after_name(s: &str, pat: &str) -> Option<usize> {
+    let skip = s.chars().next()?.len_utf8();
+    s[skip..].find(pat).map(|i| i + skip)
 }
 
 /// npm's rule: `!x` blocks, a plain list allows, `any` and an empty list match all.
