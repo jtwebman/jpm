@@ -119,12 +119,13 @@ impl Manifest {
             }
             Ok(())
         })?;
-        // `true` bundles every dependency; a list, those it names.
-        let bundled = |name: &String| match &bundle {
-            Value::Bool(all) => *all,
-            Value::Array(names) => names.iter().any(|n| n.as_str() == Some(name)),
-            _ => false,
+        // `true` bundles every dependency; a list, those it names (a set: a long list against
+        // many dependencies was quadratic).
+        let named: std::collections::HashSet<&str> = match &bundle {
+            Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
+            _ => Default::default(),
         };
+        let bundled = |name: &String| matches!(bundle, Value::Bool(true)) || named.contains(name.as_str());
         for group in [&mut m.dependencies, &mut m.optional_dependencies] {
             let (inside, rest) = std::mem::take(group).into_iter().partition(|(n, _)| bundled(n));
             *group = rest;
@@ -276,14 +277,12 @@ impl Packument {
             !held.contains_key(v)
         });
         self.held = held;
-        let kept: Vec<String> = self.spans.keys().cloned().collect();
+        // A search per tag, not a pass over every version: a document of many tags on versions
+        // it does not have took minutes.
+        let kept = crate::semver::AtMost::new(self.spans.keys().map(String::as_str));
         let mut tags = BTreeMap::new();
         for (tag, v) in &self.tags {
-            let found = if self.spans.contains_key(v) {
-                Some(v.clone())
-            } else {
-                crate::semver::max_satisfying(kept.iter().map(String::as_str), &format!("<={v}")).map(str::to_string)
-            };
+            let found = if self.spans.contains_key(v) { Some(v.clone()) } else { kept.find(v).map(str::to_string) };
             if let Some(found) = found {
                 tags.insert(tag.clone(), found);
             }
@@ -407,6 +406,29 @@ mod tests {
         let p = p.until(&times, parse_date("2022-01-01").unwrap());
         assert_eq!(p.tags["latest"], "1.0.0");
         assert_eq!(p.versions().count(), 1);
+    }
+
+    /// Found while fuzzing registry documents: each tag on a version the document lacks was a
+    /// pass over every version, and each dependency a pass over the bundled names. A document of
+    /// 100,000 such tags (4 MB) took minutes; so did a manifest's long bundle list.
+    #[test]
+    fn reads_many_tags_and_bundled_names_in_linear_time() {
+        let n = 10_000;
+        let versions: Vec<String> = (0..n).map(|i| format!("\"1.{i}.0\":{{}}")).collect();
+        let tags: Vec<String> = (0..n).map(|i| format!("\"t{i}\":\"1.{i}.5\"")).collect();
+        let doc = format!(r#"{{"dist-tags":{{{}}},"versions":{{{}}}}}"#, tags.join(","), versions.join(","));
+        let p = Packument::parse(doc.into_bytes()).unwrap().until(&Map::new(), 0);
+        assert_eq!((p.tags.len(), p.tags["t0"].as_str(), p.tags["t9999"].as_str()), (n, "1.0.0", "1.9999.0"));
+        let deps: Vec<String> = (0..n).map(|i| format!("\"d{i}\":\"1\"")).collect();
+        let names: Vec<String> = (0..n).filter(|i| i % 2 == 0).map(|i| format!("\"d{i}\"")).collect();
+        let m = Manifest::from_json(&format!(
+            r#"{{"dependencies":{{{}}},"bundleDependencies":[{}]}}"#,
+            deps.join(","),
+            names.join(",")
+        ))
+        .unwrap();
+        assert_eq!((m.dependencies.len(), m.bundled.len()), (n / 2, n / 2));
+        assert!(m.bundled.contains_key("d0") && m.dependencies.contains_key("d1"));
     }
 
     #[test]

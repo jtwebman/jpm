@@ -734,6 +734,40 @@ where
     best.map(|(_, raw)| raw)
 }
 
+/// `max_satisfying(versions, "<={v}")` for many `v` over one list: the list parsed and sorted
+/// once, each `v` two binary searches rather than a pass over every version.
+pub struct AtMost<'a> {
+    /// Each sorted, equal versions in the list's order: the first of them is the one kept.
+    releases: Vec<(Version, &'a str)>,
+    pre: Vec<(Version, &'a str)>,
+}
+
+impl<'a> AtMost<'a> {
+    pub fn new(versions: impl IntoIterator<Item = &'a str>) -> Self {
+        let parsed = versions.into_iter().filter_map(|raw| Some((parse(raw)?, raw)));
+        let (mut pre, mut releases): (Vec<_>, Vec<_>) = parsed.partition(|(v, _)| !v.pre.is_empty());
+        releases.sort_by(|a, b| a.0.cmp(&b.0));
+        pre.sort_by(|a, b| a.0.cmp(&b.0));
+        Self { releases, pre }
+    }
+
+    /// The highest version at or below `v`, as written in the list; `None` for a `v` that is not
+    /// a version. A prerelease counts only on `v`'s own `major.minor.patch`, as a range has it.
+    pub fn find(&self, v: &str) -> Option<&'a str> {
+        fn top<'l, 'a>(list: &'l [(Version, &'a str)], v: &Version) -> Option<&'l (Version, &'a str)> {
+            let (max, _) = list.get(list.partition_point(|(x, _)| x <= v).checked_sub(1)?)?;
+            list.get(list.partition_point(|(x, _)| x < max))
+        }
+        let v = parse(v)?;
+        let release = top(&self.releases, &v);
+        let pre = if v.pre.is_empty() { None } else { top(&self.pre, &v).filter(|(x, _)| x.same_tuple(&v)) };
+        match (release, pre) {
+            (Some(r), Some(p)) => Some(if p.0 > r.0 { p.1 } else { r.1 }),
+            (r, p) => r.or(p).map(|(_, raw)| *raw),
+        }
+    }
+}
+
 #[cfg(test)]
 mod conformance;
 
@@ -879,6 +913,50 @@ mod tests {
         assert_eq!(max_satisfying(versions, "^1"), Some("1.5.0"));
         assert_eq!(max_satisfying(versions, "^3"), None);
         assert_eq!(max_satisfying_peer(versions, "^1"), Some("1.9.9-beta"));
+    }
+
+    #[test]
+    fn finds_the_max_at_most_as_a_range_does() {
+        let versions = [
+            "1.0.0",
+            "v1.0.0",
+            "1.0.0+b",
+            "1.5.0",
+            "2.0.0-rc.1",
+            "2.0.0-beta",
+            "2.0.0-rc.1+x",
+            "2.0.0",
+            "2.0.1-0",
+            "3.0.0",
+            "junk",
+            "0.0.1-a",
+        ];
+        let at_most = AtMost::new(versions);
+        let probes = [
+            "0.0.0",
+            "0.0.1",
+            "0.0.1-a",
+            "0.0.1-b",
+            "1.0.0",
+            "1.0.0+z",
+            "1.2.0",
+            "2.0.0-alpha",
+            "2.0.0-rc.0",
+            "2.0.0-rc.1",
+            "2.0.0-rc.2",
+            "2.0.0",
+            "2.0.1-0",
+            "2.0.1",
+            "9.9.9",
+            "v2.0.0",
+            "=1.5.0",
+        ];
+        for v in probes {
+            assert_eq!(at_most.find(v), max_satisfying(versions, &format!("<={v}")), "<={v}");
+        }
+        assert_eq!(at_most.find("1.0.0"), Some("1.0.0"), "the first of equal versions");
+        assert_eq!(at_most.find("latest"), None);
+        assert_eq!(AtMost::new([]).find("1.0.0"), None);
     }
 
     #[test]
