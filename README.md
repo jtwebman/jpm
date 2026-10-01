@@ -1,82 +1,87 @@
 # jpm
 
-A fast, small package manager for the npm registry, secure by default, written in Rust. It
-installs the same projects as npm, pnpm, yarn and bun, from their lockfiles, and saves CI time
-and money: less wall time, less CPU, less memory and less disk than the others in most of our
-benchmarks.
+A fast, small, secure-by-default package manager for JavaScript, written in Rust.
 
-jpm started as a Rust port of [upm](https://github.com/unjs/upm).
+**I didn't write a line of jpm.** Claude Code, running Claude Opus 5.5, wrote every one of
+them, including its own TLS and crypto: the two things every engineer knows you never write
+yourself.
 
-## How jpm is different
+I've been a professional software engineer for 27 years, mostly three-tier business software:
+C# until 2012, then Elixir and Node.js. The last time I wrote low-level code was in C, as a kid.
+I'm not the engineer you'd pick to write a package manager. That's the point.
 
-- **One small binary.** About 2 MB, with its own TLS and no Node.js needed to install
-  packages (Node is only needed to run them). bun is about 80 MB, pnpm 60 MB, aube 150 MB.
-- **Fast where CI spends its time.** On GitHub's runners jpm is the fastest of eight package
-  managers in 9 of 12 benchmark cells, and repeat installs take 1-2 ms
-  ([Benchmarks](#benchmarks)).
-- **Lean.** The least memory in 11 of 12 cells (34 MB to install nuxt from a lockfile, where
-  bun takes 89 MB, pnpm 184 MB and npm 387 MB) and the least disk for `node_modules` and its
-  store together.
-- **Secure by default.**
-  - A dependency's install scripts, the way most npm malware runs, don't run until you approve
-    that package and version ([Install scripts](docs/install-scripts.md)).
-  - New versions are held back for a day (`min-release-age`), exact pins deep in the tree
-    included, so a hijacked release has time to be caught.
-  - A published package can't pull in git or tarball dependencies, or paths outside itself.
-  - Every package is checked against its lockfile integrity before it is visible.
-  - Credentials never go into `jpm.lock`, and a cloned repository's `.npmrc` can't weaken
-    TLS, proxy or release-age settings.
-- **Drop-in.** It reads `package-lock.json`, `pnpm-lock.yaml`, `bun.lock` and `yarn.lock`,
-  workspaces, catalogs, overrides, patches and `pnpm-workspace.yaml` settings, and installs
-  pnpm's isolated `node_modules` layout, with packages shared across projects through a global
-  store.
-- **Checked against the others.** Its tests run npm's (node-semver, npm-package-arg,
-  hosted-git-info, arborist), pnpm's (registry-mock), yarn's (berry acceptance) and bun's own
-  test cases, and it installs 92 of 98 large real projects on Windows. The other six fail on
-  purpose (git and tarball dependencies of published packages) or would fail with any package
-  manager.
+## How it started
 
-## Install
+I was watching [an episode of the Syntax podcast](https://www.youtube.com/watch?v=Z412bnUNiDI&t=71s)
+when they held up
+[upm](https://github.com/unjs/upm) as a package manager that was faster and smaller than the
+rest. Fast, yes. But small? I called foul: it's small because it runs on Node.js. They were
+also asking the AI questions everyone is asking right now. Can it build real software, or just
+demos? Should engineers be worried, or excited? Most people believe AI can one-shot anything.
+It can. The result just usually isn't very good.
 
-```sh
-curl -fsSL https://getjpm.sh | sh                  # macOS and Linux
-```
+So I asked my own questions: what if we ported upm to Rust and made it faster and smaller for
+real? And what would it take to turn an AI's one-shot into something you'd trust in CI? On
+September 28, 2026, at 3:38 in the afternoon, the first commit landed: *Port upm to Rust as
+jpm.* By that evening it had its own HTTP client, JSON reader, crypto and TLS 1.3.
 
-```powershell
-irm https://getjpm.sh/install.ps1 | iex              # Windows
-```
+That was the easy part. The afternoon was the one-shot. The next days were the part nobody
+posts about:
 
-The script checks the binary's SHA-256 and puts `jpm` and `jpx` in `~/.jpm/bin`. Platforms,
-glibc and musl builds, and building from source: [docs/install.md](docs/install.md).
+- hundreds of bugs fixed;
+- a security review;
+- install scripts locked down;
+- reading upm's, pnpm's, bun's and aube's source to understand how they did things fast;
+- profiling until the numbers moved.
 
-## Use
+## What directing looked like
 
-```sh
-jpm install                          # install the project's dependencies
-jpm add vue@^3 nanoid                # save to package.json, then install
-jpm add --dev vitest                 # save as a dev dependency
-jpm remove nanoid                    # remove from package.json, then install
-jpm run build                        # run a package.json script
-jpm exec cowsay hello                # run a package's bin, installing it if needed
-jpm ci                               # fail if the lockfile is missing or stale
-jpm approve esbuild                  # let a package's install scripts run
-```
+I made maybe a hundred calls, asking things like:
 
-Commit `jpm.lock` with `package.json`. `jpm --help` lists every command and option; more in
-[docs/usage.md](docs/usage.md).
+- What should the security defaults be?
+- Should we follow npm here, or pnpm?
+- What if we tried this?
 
-**Coming from another package manager:** run `jpm install`. jpm reads the lockfile that is
-there and writes `jpm.lock` with the same versions, and leaves the old file alone. See
-[docs/migrating.md](docs/migrating.md).
+Sometimes the answer was "that doesn't feel right", and sometimes "don't do that".
 
-## Benchmarks
+Twice Claude pushed back: when I wanted our own TLS, and our own HTTP stack. I insisted, on one
+condition: test it like we didn't trust it. Writing it ourselves meant we could leave out
+everything a general-purpose library has to carry, like logging, options and special cases. We
+needed one thing: a fast, safe GET. So it came out smaller and faster.
 
-Medians of 5 runs on GitHub's `ubuntu-latest` (4 cores), 2026-09-30, against the live npm
-registry; 480 runs, all succeeded. **ci** installs from a lockfile with no cache (CI without a
-cache), **warm** with the cache restored, **cold** with neither. Wall time, `nuxt` (591
-packages):
+Once, I was wrong. I pushed for HTTP/2. We built our own HTTP/2 client and benchmarked it on
+GitHub's runners and my own machine. It used more CPU and was slower in some cases, so we
+deleted it. The numbers decided, not me.
 
-| manager | cold | warm | ci | repeat |
+## Why you can trust code nobody typed
+
+Because none of it is trusted on its word. Every "it works" in jpm is checked against someone
+else's tests:
+
+- **Crypto:** Google's Project Wycheproof crypto vectors and the RFCs' test vectors.
+- **npm:** node-semver's, npm-package-arg's and hosted-git-info's own test cases, and npm
+  arborist's lockfiles.
+- **pnpm:** its registry-mock scenarios, diffed against what pnpm itself installs.
+- **yarn:** berry's acceptance scenarios, the "dragon tests" included.
+- **bun:** its install tests and lockfiles.
+- **Real projects:** 98 large ones, installed on Windows from both cmd and PowerShell. 92
+  install, and the other six fail on purpose or would fail with any package manager.
+
+None of the speed is mine either. It came from reading the code that great engineers shared
+with the world (upm, pnpm, bun and aube) and asking how they did it.
+
+Is jpm perfect? No. Neither is anything I've written by hand in 27 years, or anything any human
+has written. Perfect doesn't exist. There's good enough, there's great, and there's tested
+enough to know which one you have.
+
+## Where it stands
+
+Wall time to install [`nuxt`](docs/benchmarks.md) (591 packages). The best in each column is
+bold.
+
+**GitHub Actions, Linux** (`ubuntu-latest`, 4 cores, median of 5):
+
+| manager | cold | warm (cache restored) | ci (no cache) | repeat |
 | --- | ---: | ---: | ---: | ---: |
 | **jpm** | **1.22 s** | 206 ms | 734 ms | **2 ms** |
 | bun 1.4 | 1.28 s | 234 ms | **676 ms** | 18 ms |
@@ -87,29 +92,77 @@ packages):
 | yarn 4.18 | 9.63 s | 3.13 s | 5.58 s | 1.02 s |
 | npm 12.1 | 18.5 s | 4.69 s | 6.62 s | 794 ms |
 
-Across `nitro`, `nuxt` and `next`, jpm is fastest in 9 of 12 cells. bun wins cold `nitro` and
-`nuxt` ci, and aube `nuxt` warm. On Windows, where Defender scans every file an install writes,
-jpm is fastest on `next`, and upm, aube and npm each beat it in one phase of `nuxt`. Every
-table, with CPU, memory, disk and cache, and how to run them:
-[docs/benchmarks.md](docs/benchmarks.md).
+**Windows 11**, Defender on (i9-12900K, median of 3):
 
-## Documentation
+| manager | cold | warm (cache restored) | ci (no cache) |
+| --- | ---: | ---: | ---: |
+| **jpm** | 8.53 s | 1.45 s | 8.01 s |
+| upm 1.3 | **7.40 s** | 4.41 s | 6.80 s |
+| npm 12.1 | 11.9 s | 4.84 s | **5.15 s** |
+| pnpm 12.8 | 9.14 s | 3.75 s | 8.81 s |
+| aube 2.6 | 17.4 s | **491 ms** | 16.0 s |
 
-- [Install](docs/install.md) and [usage](docs/usage.md)
-- [Coming from another package manager](docs/migrating.md)
-- [Configuration](docs/configuration.md): `.npmrc`, registries, credentials, TLS, proxies,
-  release age
-- [Install scripts](docs/install-scripts.md)
-- [The lockfile](docs/lockfile.md)
-- [Overrides](docs/overrides.md) and [patches](docs/patches.md)
-- [Directory dependencies](docs/directory-dependencies.md) and
-  [git dependencies](docs/git-dependencies.md)
-- [Runtimes](docs/runtimes.md): Node.js, Bun and Deno from `package.json`
-- [How it works](docs/how-it-works.md)
-- [Development](docs/development.md)
+**macOS:** coming.
+
+- **Linux:** across three projects, jpm is the fastest of eight managers in 9 of 12 cells,
+  uses the least memory in 11 of 12, and the least disk in all three.
+- **Windows:** jpm is the fastest on `next`, but not on `nuxt` yet. Defender scans every file an
+  install writes, and it scans files written by `node.exe` (npm, upm) far more cheaply than
+  files written by native tools like jpm, aube or pnpm.
+- **The binary:** about 2 MB. bun is about 80 MB, pnpm 60 MB and aube 150 MB.
+
+Every table, with CPU, memory, disk and cache: [docs/benchmarks.md](docs/benchmarks.md).
+
+## Try it
+
+```sh
+curl -fsSL https://getjpm.sh | sh                  # macOS and Linux
+```
+
+```powershell
+irm https://getjpm.sh/install.ps1 | iex              # Windows
+```
+
+Then, in a project that uses npm, pnpm, yarn or bun:
+
+```sh
+jpm install          # reads your lockfile, writes jpm.lock with the same versions
+jpm run build
+```
+
+jpm is secure by default:
+
+- A dependency's install scripts, the way most npm malware runs, don't run until you approve
+  that package and version (`jpm approve`).
+- New versions are held back for a day.
+- A published package can't pull in git or tarball dependencies.
+- Every package is checked against its lockfile integrity before it is visible.
+
+More: [install](docs/install.md), [usage](docs/usage.md),
+[migrating](docs/migrating.md), [configuration](docs/configuration.md),
+[install scripts](docs/install-scripts.md), [the lockfile](docs/lockfile.md),
+[overrides](docs/overrides.md), [patches](docs/patches.md),
+[directory](docs/directory-dependencies.md) and [git](docs/git-dependencies.md) dependencies,
+[runtimes](docs/runtimes.md), [how it works](docs/how-it-works.md),
+[development](docs/development.md).
+
+## Why "jpm"?
+
+I wondered why the JavaScript package manager wasn't called the JavaScript Package Manager.
+Then I remembered JavaScript is a trademark. So: jpm.
+
+## The end, and your turn
+
+I didn't write a line of jpm. I asked a lot of questions, said no a few times, was wrong at
+least once, and made it prove everything. Give the same idea to ten engineers and you'd get ten
+different package managers, some of them better than this one. What's changed is that the
+TLS stack you'd have talked yourself out of, because it was two weeks of work, is now an
+afternoon. And a few more days, once you've hardened it and chased out the bugs.
+
+So: try jpm in your CI. Then go build the thing you didn't think you had time for.
 
 ## License
 
-MIT, Copyright (c) 2026 JT Turner. jpm started as a port of upm, Copyright (c) Pooya Parsa,
-also MIT. See [LICENSE](LICENSE). [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) credits the
-code, crates and test data jpm builds on, and ships with every release.
+MIT, Copyright (c) 2026 JT Turner. jpm started as a port of upm, Copyright (c) Pooya Parsa, also
+MIT. See [LICENSE](LICENSE). [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) credits the code,
+crates and test data jpm builds on, and ships with every release.
