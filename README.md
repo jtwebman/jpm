@@ -102,10 +102,24 @@ bold.
 | pnpm 12.8 | 9.14 s | 3.75 s | 8.81 s |
 | aube 2.6 | 17.4 s | **491 ms** | 16.0 s |
 
-**macOS:** coming.
+**macOS** (M4 Max, median of 5):
+
+| manager | cold | warm (cache restored) | ci (no cache) | repeat |
+| --- | ---: | ---: | ---: | ---: |
+| **jpm** | **3.02 s** | 594 ms | **2.81 s** | **12 ms** |
+| bun 1.4 | **3.02 s** | 472 ms | 2.92 s | 117 ms |
+| aube 2.6 | 8.37 s | **335 ms** | 6.61 s | 186 ms |
+| pnpm 12.8 | 5.92 s | 900 ms | 6.22 s | 22 ms |
+| deno 2.9 | 8.88 s | 697 ms | 4.35 s | 26 ms |
+| upm 1.3 | 6.43 s | 3.04 s | 5.77 s | 60 ms |
+| yarn 4.18 | 6.18 s | 2.71 s | 4.18 s | 462 ms |
+| npm 12.1 | 9.23 s | 3.15 s | 3.65 s | 514 ms |
 
 - **Linux:** across three projects, jpm is the fastest of eight managers in 9 of 12 cells,
   uses the least memory in 11 of 12, and the least disk in all three.
+- **macOS:** across three projects, jpm is the fastest of eight managers in 9 of 12 cells and
+  uses the least memory in 11 of 12. A warm install is not the fastest yet: bun and aube
+  beat it on `nuxt`.
 - **Windows:** jpm is the fastest on `next`, but not on `nuxt` yet. Defender scans every file an
   install writes, and it scans files written by `node.exe` (npm, upm) far more cheaply than
   files written by native tools like jpm, aube or pnpm.

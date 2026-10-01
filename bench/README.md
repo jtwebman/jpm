@@ -40,6 +40,12 @@ Linux, a POSIX shell, coreutils, curl and tar (for aube), GNU time at `/usr/bin/
 (`apt install time` on Debian and Ubuntu), cargo, and Node.js on `PATH` for npm, yarn and
 upm.
 
+On macOS run `bench/bench-mac.sh`, which takes the same options. It needs nothing beyond the
+system's own tools: BSD `/usr/bin/time -l` for CPU time and peak RSS, and Perl's clock for wall
+time. `du` counts an APFS clone (jpm, pnpm and bun copy files that way on a Mac) at its full size,
+so the disk column there overstates what cloned files take. Spotlight and any antivirus scan the
+files an install writes; say whether real-time protection was on when quoting results.
+
 On Windows it runs under Git Bash, which brings the shell, coreutils, curl and unzip.
 GNU time has no Windows build, so the script compiles `measure.cs` with the C# compiler
 that ships with Windows (.NET Framework 4) and times with that. It runs each install in a
