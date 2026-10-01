@@ -43,6 +43,12 @@ fn segment(p: &[u8], s: &[u8]) -> bool {
     wild(p, s)
 }
 
+/// A package name against a pattern of pnpm's `public-hoist-pattern`: `*` takes any characters,
+/// a scope's `/` too (`*eslint*` matches `@typescript-eslint/parser`).
+pub fn name_matches(pattern: &str, name: &str) -> bool {
+    wild(pattern.as_bytes(), name.as_bytes())
+}
+
 /// Iterative, with one backtrack point per `*`: linear in practice, where recursion on every
 /// `*` would take exponential time on a pattern like `*a*a*a*a*b` from a package.json.
 fn wild(p: &[u8], s: &[u8]) -> bool {

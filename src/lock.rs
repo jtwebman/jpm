@@ -1996,6 +1996,7 @@ mod bench {
                 "salt",
                 true,
                 &platform,
+                &[],
             );
             let hash = t.elapsed();
             println!(

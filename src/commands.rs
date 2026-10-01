@@ -310,6 +310,8 @@ impl Ctx {
             crate::util::short_hash(&beside).into(),
             self.patched.as_str().into(),
             salt.into(),
+            // What the root links of the hidden hoist (`public-hoist-pattern`, `shamefully-hoist`).
+            c.public_hoist.as_ref().map_or(Value::Null, |l| l.join(",").into()),
         ]))
         .into()
     }
@@ -541,7 +543,24 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         resolution.packages.values().filter(|p| p.local.is_none() && !(ctx.opts.production && p.dev)).collect();
     // No salt (a store that cannot be written): a hash no state holds, so none vouches for the tree.
     let salt = crate::store::salt(&store.dir).unwrap_or_else(crate::util::temp_suffix);
-    let hash = state::state_hash(&lock_hash, ctx.opts.production, &store.dir, &salt, global.is_some(), &platform);
+    // Undeclared packages linked at the root too, as pnpm's public-hoist-pattern does: .npmrc's
+    // setting, else pnpm-workspace.yaml's, else types, eslint and prettier, which tools look for
+    // at the root (tsc's `types: ["node"]`, an editor's eslint).
+    let public_hoist = ctx
+        .config()
+        .public_hoist
+        .clone()
+        .or_else(|| project.rules.public_hoist.clone())
+        .unwrap_or_else(|| link::PUBLIC_HOIST.iter().map(|p| p.to_string()).collect());
+    let hash = state::state_hash(
+        &lock_hash,
+        ctx.opts.production,
+        &store.dir,
+        &salt,
+        global.is_some(),
+        &platform,
+        &public_hoist,
+    );
     let settled = previous.as_ref().is_some_and(|s| s.hash == hash);
     // With downloads under way, nothing is waited for here but, with the global store, the
     // optional packages: whether they arrived decides which entries may be shared. The rest,
@@ -636,6 +655,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         inputs,
         tarballs: Some(tarballs.clone()),
         patches: &project.manifest.patches,
+        public_hoist: &public_hoist,
         fetch: if overlap { Some(&fetch) } else { None },
         clean: ctx.opts.clean,
     };
