@@ -614,7 +614,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         patches: &project.manifest.patches,
         fetch: if overlap { Some(&fetch) } else { None },
     };
-    let outcome = match link::link(&resolution, &options) {
+    let mut outcome = match link::link(&resolution, &options) {
         Err(e) if e.code == "ELINK" && e.message.contains("is not in the store") => {
             // The store lost content between the fill and the link: fill again, checking every file.
             let again = ctx.store(true);
@@ -635,8 +635,13 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
         e
     };
+    // Still the project's turn: another install of it waits until the dependencies' scripts are
+    // done, rather than running them again in the same entries or changing the tree under them.
+    // Not through the project's own scripts, which may well install it again themselves.
+    let turn = outcome.turn.take();
     let built =
         if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys).map_err(again)? };
+    drop(turn);
     // The project's own scripts, on an install that changed the tree, as npm runs them.
     if scripts && edit.is_none() && !outcome.up_to_date {
         let mut tops = vec![(dir.as_path(), &project.manifest)];

@@ -1000,6 +1000,47 @@ fn an_install_waits_for_the_projects_turn() {
     assert!(again.contains("up to date"), "{again}");
 }
 
+/// Dependencies' install scripts run in the project's turn: a second install waits for them to
+/// finish, rather than running them again in the same entry or relinking the tree under them.
+#[cfg(unix)]
+#[test]
+fn an_install_waits_for_the_scripts_another_one_runs() {
+    let env_root = std::env::temp_dir().join(format!("jpm-turn-scripts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&env_root);
+    std::fs::create_dir_all(&env_root).unwrap();
+    let (started, done) = (env_root.join("started"), env_root.join("done"));
+    let script = format!(
+        "echo run >> {log}; touch {started}; sleep 2; touch {done}",
+        log = env_root.join("runs").display(),
+        started = started.display(),
+        done = done.display()
+    );
+    let r = Registry::start(vec![pkg("slow", "1.0.0", json!({ "scripts": { "postinstall": script } }))]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "slow": "1.0.0" }, "trustedDependencies": ["slow"] }));
+    env.ok(&["install", "--no-global-store"]);
+    let lock = env.read("jpm.lock").replace("  scripts\n", "  scripts\n  build\n");
+    env.write("jpm.lock", &lock);
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    // `--verify`: the second install links rather than reading the first's state as a no-op.
+    let spawn = |args: &[&str]| {
+        env.command(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap()
+    };
+    let first = spawn(&["install", "--no-global-store"]);
+    let waited = std::time::Instant::now();
+    while !started.exists() {
+        assert!(waited.elapsed().as_secs() < 30, "the script never started");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let second = spawn(&["install", "--no-global-store", "--verify"]).wait_with_output().unwrap();
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    assert!(done.exists(), "the second install finished while the first one's script still ran");
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    assert_eq!(std::fs::read_to_string(env_root.join("runs")).unwrap(), "run\n", "the script ran twice");
+    let _ = std::fs::remove_dir_all(&env_root);
+}
+
 /// An install killed while it built entries in place (Windows) leaves `node_modules/.jpm/.building`,
 /// and no state. The next install takes none of the entries there as built, not even one that
 /// looks whole, and builds each again.
