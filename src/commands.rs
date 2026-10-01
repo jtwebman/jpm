@@ -1429,6 +1429,8 @@ fn fill_bins(ctx: &Ctx, lock: &mut Lockfile, store: &Store, dir: &Path) -> Resul
         .iter()
         .filter_map(|key| {
             let (name, version) = crate::graph::split_key(crate::graph::split_peers(key).0)?;
+            // An alias (`typescript1@npm:typescript@1.8.10`) is the package it names.
+            let (name, version) = crate::graph::split_alias(version).unwrap_or((name, version));
             let e = lock.packages.get(key)?;
             let url = e.resolved.clone().unwrap_or_else(|| crate::registry::tarball_url(&base(name), name, version));
             Some((key.clone(), tarball_of(dir, &url, None), e.integrity.clone()))

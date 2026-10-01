@@ -1987,6 +1987,28 @@ fn finds_install_scripts_bun_lock_leaves_out() {
 }
 
 #[test]
+fn reads_the_bins_of_a_pnpm_alias() {
+    // pnpm-lock.yaml says only hasBin: the package is fetched to read them, the aliased one's
+    // url (moment's typescript1, npm:typescript@^1.8.10), not one made of the alias's name.
+    let r = registry();
+    let real = pkg("real", "1.0.0", json!({ "bin": { "real": "cli.js" } })).file("cli.js", 0o755, "#!/bin/sh\n");
+    let integrity = common::sha512(&real.tarball());
+    r.publish(real);
+    let env = Env::new(&r);
+    env.manifest(json!({ "devDependencies": { "one": "npm:real@^1.0.0" } }));
+    env.write(
+        "pnpm-lock.yaml",
+        &format!(
+            "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    devDependencies:\n      one:\n        specifier: npm:real@^1.0.0\n        version: real@1.0.0\n\npackages:\n\n  real@1.0.0:\n    resolution: {{integrity: {integrity}}}\n    hasBin: true\n\nsnapshots:\n\n  real@1.0.0: {{}}\n"
+        ),
+    );
+    env.write(".npmrc", &format!("registry={}\n", r.url));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("from pnpm-lock.yaml"), "{out}");
+    assert!(env.exists("node_modules/.bin/real"), "{out}");
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
