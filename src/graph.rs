@@ -525,6 +525,20 @@ pub fn filter_platform(mut res: Resolution, platform: &Platform) -> Result<Resol
     Ok(res)
 }
 
+/// The packages a top needs whose `os`, `cpu` or `libc` rule out `platform`: what
+/// `filter_platform` leaves out with a warning, by key.
+pub fn needed_elsewhere(res: &Resolution, platform: &Platform) -> Vec<(String, Package)> {
+    let mut out: Vec<(String, Package)> = needed(res)
+        .into_keys()
+        .filter_map(|key| {
+            let p = res.packages.get(&key)?;
+            (!runs_on(p.os.as_ref(), p.cpu.as_ref(), p.libc.as_ref(), platform)).then(|| (key, p.clone()))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 /// What installs whatever else goes: the root's and the workspaces' `dependencies` and what they
 /// reach through required edges, each with the root, workspace path or package that needs it.
 fn needed(res: &Resolution) -> HashMap<String, String> {

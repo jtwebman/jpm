@@ -467,6 +467,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     let walk_pick: Option<&resolve::OnPick> = if prefetching { Some(&on_pick) } else { None };
     let global = global_store(ctx, &store);
+    let frozen = ctx.opts.frozen;
     let planned =
         plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone())).and_then(|lock| {
             // What is needed of the lockfile itself, before it is taken apart into the graph.
@@ -478,14 +479,16 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
             let recorded = if global.is_some() { None } else { lock::recorded_keys(&lock) };
             let checked = lock::into_resolution(lock, &ctx.base_for());
             let keys = global.is_none().then(|| recorded.unwrap_or_else(|| crate::keys::store_keys(&checked.packages)));
-            // A required package that cannot run here fails now, not once the prefetch is done.
-            Ok((facts, keys, filter_platform(checked, &platform)?))
+            let elsewhere = if frozen { crate::graph::needed_elsewhere(&checked, &platform) } else { Vec::new() };
+            Ok((facts, keys, elsewhere, filter_platform(checked, &platform)?))
         });
     ui::phase("planned");
     // A failed plan drops the fetcher, and with it what is still waiting.
-    let ((workspaces, locked, lock_hash, tarballs), keys, mut resolution) = planned?;
+    let ((workspaces, locked, lock_hash, tarballs), keys, elsewhere, mut resolution) = planned?;
+    let registry = ctx.registry(&store);
+    check_elsewhere(&store, &registry, &dir, &elsewhere, &platform, &source)?;
     let block = ctx.config().block_exotic_subdeps;
-    check_sourced(&store, &ctx.registry(&store), &dir, &resolution, block)?;
+    check_sourced(&store, &registry, &dir, &resolution, block)?;
     // Only now: a package.json naming a tree the registry cannot resolve is never written.
     if let Some(edit) = &edit {
         save_manifest(edit)?;
@@ -1108,6 +1111,60 @@ fn stale(e: Error, source: &str) -> Error {
 /// Whether an edge's version is a git repository or a tarball rather than a registry version.
 fn is_sourced(version: &str) -> bool {
     spec::is_git(version) || version.contains("://") || version.starts_with("file:")
+}
+
+/// Under --frozen-lockfile (and `jpm ci`), a package a top needs that the lockfile says is
+/// another platform's build is left out, with the warning, only when its own word agrees: the
+/// registry's version document, or what a git or tarball package ships. An edit to its `os`,
+/// `cpu` or `libc` would otherwise drop a package the project needs without a word. A package
+/// that is another platform's build, as a team on several platforms locks one, is still left
+/// out. Rare (a platform's build is nearly always optional), so one request each.
+fn check_elsewhere(
+    store: &Store,
+    registry: &Registry,
+    dir: &Path,
+    elsewhere: &[(String, Package)],
+    platform: &Platform,
+    lockfile: &Path,
+) -> Result<()> {
+    let file = lockfile.file_name().map_or_else(|| LOCKFILE.into(), |f| f.to_string_lossy());
+    for (key, p) in elsewhere {
+        let (says, whose) = if p.source.is_some() {
+            store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
+            let at = p.within().map_or_else(|| "package.json".into(), |(_, at)| format!("{at}/package.json"));
+            let text = std::fs::read_to_string(store.file(&p.integrity, &at)?).unwrap_or_default();
+            let m = Manifest::from_json(&text).map_err(|e| e.context(format!("{key}'s package.json")))?;
+            (Arc::new(m), "its package.json")
+        } else {
+            let m = registry.manifest(&p.name, &p.version).map_err(|e| {
+                e.context(format!(
+                    "cannot ask the registry whether {key}, which {file} says is another platform's build, runs here"
+                ))
+            })?;
+            (m, "the registry")
+        };
+        if runs_on(says.os.as_ref(), says.cpu.as_ref(), says.libc.as_ref(), platform) {
+            return Err(fail(
+                "ELOCK",
+                format!(
+                    "{file} says {key} runs only on {}, {whose} says it runs on {}: the project needs it, and it runs here ({platform})",
+                    platforms(p.os.as_ref(), p.cpu.as_ref(), p.libc.as_ref()),
+                    platforms(says.os.as_ref(), says.cpu.as_ref(), says.libc.as_ref()),
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A package's `os`, `cpu` and `libc`, as an error says them: `os darwin, cpu arm64`.
+fn platforms(os: Option<&Vec<String>>, cpu: Option<&Vec<String>>, libc: Option<&Vec<String>>) -> String {
+    let fields = [("os", os), ("cpu", cpu), ("libc", libc)];
+    let said: Vec<String> = fields
+        .iter()
+        .filter_map(|(k, v)| v.filter(|v| !v.is_empty()).map(|v| format!("{k} {}", v.join(" "))))
+        .collect();
+    if said.is_empty() { "any platform".into() } else { said.join(", ") }
 }
 
 /// A package's own git or tarball dependencies, as the graph has them, checked against what the

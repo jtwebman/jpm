@@ -2435,6 +2435,52 @@ fn skips_a_dependency_for_another_platform() {
     assert!(env.exists("packages/core/node_modules/b") && !env.exists("packages/core/node_modules/native-mars"));
 }
 
+/// Under --frozen-lockfile and `jpm ci`, a package the project needs that the lockfile says is
+/// another platform's build is left out only when the registry says so too: an edit to its os,
+/// cpu or libc cannot drop it without a word.
+#[test]
+fn frozen_installs_check_a_skipped_package_against_the_registry() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "native-mars": "1.0.0", "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    // Another platform's build, as the registry says: skipped with the warning, as before.
+    for args in [&["install", "--frozen-lockfile"][..], &["ci"]] {
+        let out = env.ok(args);
+        assert!(out.contains("skipped native-mars@1.0.0") && out.contains("though root needs it"), "{out}");
+        assert!(env.exists("node_modules/b") && !env.exists("node_modules/native-mars"));
+    }
+    // b runs anywhere; an edit says it runs only on mars, and on another cpu.
+    let text = env.read("jpm.lock");
+    assert!(text.contains("package b@1.0.0\n"), "{text}");
+    env.write("jpm.lock", &text.replace("package b@1.0.0\n", "package b@1.0.0\n  os mars\n  cpu x99\n"));
+    for args in [&["install", "--frozen-lockfile"][..], &["ci"]] {
+        let out = env.jpm(args);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{args:?}: {err}");
+        let says = "jpm.lock says b@1.0.0 runs only on os mars, cpu x99, the registry says it runs on any platform";
+        assert!(err.contains(says) && err.contains("ELOCK"), "{args:?}: {err}");
+    }
+    env.write("jpm.lock", &text);
+    env.ok(&["ci"]);
+    assert!(env.exists("node_modules/b"));
+    // A tarball dependency has no registry document: what it ships decides.
+    let tgz = pkg("t", "1.0.0", json!({})).tarball();
+    std::fs::create_dir_all(env.project().join("vendor")).unwrap();
+    std::fs::write(env.project().join("vendor/t.tgz"), tgz).unwrap();
+    env.manifest(json!({ "dependencies": { "b": "1.0.0", "t": "file:vendor/t.tgz" } }));
+    env.ok(&["install"]);
+    let text = env.read("jpm.lock");
+    let line = text.lines().find(|l| l.starts_with("package t@")).unwrap_or_else(|| panic!("{text}")).to_string();
+    env.write("jpm.lock", &text.replace(&format!("{line}\n"), &format!("{line}\n  os mars\n")));
+    let out = env.jpm(&["ci"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("runs only on os mars, its package.json says it runs on any platform"),
+        "{err}"
+    );
+}
+
 #[test]
 fn installs_a_workspace_versioned_latest() {
     let r = registry();
