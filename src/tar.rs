@@ -69,8 +69,8 @@ fn read_limited(
             input.read_exact(&mut data).map_err(|_| bad("Unexpected end of tar archive"))?;
             skip(&mut input, padded(size) - size)?;
             match kind {
-                b'x' => next.extend(parse_pax(&data)),
-                b'g' => global.extend(parse_pax(&data)),
+                b'x' => next.extend(pax_fields(&data)),
+                b'g' => global.extend(pax_fields(&data)),
                 b'L' => long_name = String::from_utf8_lossy(&data).trim_end_matches('\0').to_string(),
                 _ => {} // `K` is a link target, and links are dropped anyway
             }
@@ -198,6 +198,13 @@ fn checksum_ok(header: &[u8; BLOCK]) -> bool {
         signed += i64::from(b as i8);
     }
     expected == unsigned || i64::try_from(expected).is_ok_and(|e| e == signed)
+}
+
+/// The records of a pax header the reader uses. The rest are dropped as they are read: kept, a
+/// run of headers, each with records of new keys, would hold gigabytes from a small gzipped
+/// tarball, since `global` lasts the whole archive and `next` until a file comes.
+fn pax_fields(data: &[u8]) -> impl Iterator<Item = (String, String)> {
+    parse_pax(data).into_iter().filter(|(k, _)| matches!(k.as_str(), "path" | "size"))
 }
 
 /// PAX records are `<byte length> <key>=<value>\n`, counted in bytes.
@@ -337,6 +344,32 @@ pub mod tests {
         h.truncate(h.len() - BLOCK * 2);
         h.extend(build(&[("package/short", 0o644, b"z")]));
         assert_eq!(list(&h)[0].0, "long/name.js");
+    }
+
+    #[test]
+    fn keeps_only_the_pax_records_it_reads() {
+        let records = b"10 path=a\n8 size=\n12 mtime=12\n16 SCHILY.dev=1\n";
+        assert_eq!(parse_pax(records).len(), 4);
+        assert_eq!(
+            pax_fields(records).collect::<Vec<_>>(),
+            [("path".into(), "a".into()), ("size".into(), String::new())]
+        );
+        // Found while fuzzing: global headers of new keys, one after another, each kept every key
+        // until the archive ended. Here 64 of them, then a file, which still reads.
+        let mut a = Vec::new();
+        for i in 0..64 {
+            let records: String = (0..100).map(|j| format!("15 k{i:04}x{j:04}=\n")).collect();
+            assert_eq!(parse_pax(records.as_bytes()).len(), 100);
+            let mut h = build(&[("pax", 0o644, records.as_bytes())]);
+            h[156] = b'g';
+            h[148..156].copy_from_slice(b"        ");
+            let sum: u32 = h[..BLOCK].iter().map(|b| u32::from(*b)).sum();
+            h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+            h.truncate(h.len() - BLOCK * 2);
+            a.extend(h);
+        }
+        a.extend(build(&[("package/x", 0o644, b"x")]));
+        assert_eq!(list(&a).into_iter().map(|e| e.0).collect::<Vec<_>>(), ["x"]);
     }
 
     #[test]
