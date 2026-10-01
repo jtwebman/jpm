@@ -38,20 +38,25 @@ pub fn name_version(key: &str) -> Option<(String, &str)> {
 /// Identity, content and what it resolves its deps to. Integrity, not the url: a republished
 /// tarball is new content, and a mirror serving the same bytes is not. An alias is its real
 /// package: two names for one package with the same deps are one entry, as under pnpm.
-fn line_of(p: &Package) -> String {
+///
+/// `full` (the global store's digest) also takes in the package's bins, which the lockfile says
+/// and the entries that depend on it link in their `.bin`: an edited lockfile's bins must not
+/// pass for the registry's in an entry other projects reuse.
+fn line_of(p: &Package, full: bool) -> String {
     match &p.local {
         Some(path) => format!("{}@link:{path}::local", p.name),
         // A built or patched package is its own entry: its files are not the store's. A directory
         // inside a package is the part of its tarball there.
         None => format!(
-            "{}@{}::{}::{}{}{}{}",
+            "{}@{}::{}::{}{}{}{}{}",
             p.dir_name(),
             p.version,
             p.integrity,
             edges(&p.all_deps()),
             if p.build { "::build" } else { "" },
             p.patch.as_ref().map_or(String::new(), |h| format!("::patch:{h}")),
-            p.within().map_or(String::new(), |(_, at)| format!("::in:{at}"))
+            p.within().map_or(String::new(), |(_, at)| format!("::in:{at}")),
+            if full && !p.bin.is_empty() { format!("::bin:{}", edges(&p.bin)) } else { String::new() }
         ),
     }
 }
@@ -82,7 +87,7 @@ fn digests(packages: &BTreeMap<String, Package>, full: bool) -> HashMap<String, 
             let p = &packages[*k];
             let real = format!("{}@{}", p.alias.as_deref()?, p.version);
             let &j = index.get(real.as_str())?;
-            (packages[ids[j]].local.is_none() && line_of(&packages[ids[j]]) == line_of(p)).then_some((i, j))
+            (packages[ids[j]].local.is_none() && line_of(&packages[ids[j]], full) == line_of(p, full)).then_some((i, j))
         })
         .collect();
     let graph: Vec<Vec<usize>> = ids
@@ -99,7 +104,7 @@ fn digests(packages: &BTreeMap<String, Package>, full: bool) -> HashMap<String, 
         .collect();
     let mut digest: Vec<Option<String>> = vec![None; ids.len()];
     for group in components(&graph) {
-        let mut lines: Vec<String> = group.iter().map(|&n| line_of(&packages[ids[n]])).collect();
+        let mut lines: Vec<String> = group.iter().map(|&n| line_of(&packages[ids[n]], full)).collect();
         for &n in &group {
             for &child in &graph[n] {
                 if let Some(d) = &digest[child] {
@@ -223,6 +228,16 @@ mod tests {
         let keys = store_keys(&g);
         assert_ne!(keys["a@npm:r@1.0.0"], keys["r@1.0.0"]);
         assert!(keys["a@npm:r@1.0.0"].starts_with("r@1.0.0-"));
+    }
+
+    #[test]
+    fn a_global_digest_takes_in_the_bins_below() {
+        let honest = graph(&[("a", &["b"]), ("b", &[])]);
+        let mut edited = honest.clone();
+        edited.get_mut("b@1.0.0").unwrap().bin.insert("evil".into(), "index.js".into());
+        assert_ne!(full_digests(&honest)["a@1.0.0"], full_digests(&edited)["a@1.0.0"]);
+        // The project's own names are as before: no project shares them.
+        assert_eq!(store_keys(&honest)["a@1.0.0"], store_keys(&edited)["a@1.0.0"]);
     }
 
     #[test]

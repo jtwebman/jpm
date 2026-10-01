@@ -1759,6 +1759,44 @@ fn approving_a_name_never_runs_a_directory_another_package_ships() {
     }
 }
 
+/// A global entry's `.bin` holds its dependencies' bins as the lockfile says them. An edited
+/// lockfile's bins make an entry of their own: never one another project then takes as the
+/// registry's.
+#[test]
+fn a_lockfiles_bins_never_reach_another_projects_shared_entry() {
+    let r = Registry::start(vec![
+        pkg("uses", "1.0.0", json!({ "dependencies": { "cli": "1.0.0" } })),
+        pkg("cli", "1.0.0", json!({ "bin": { "hello": "bin/hello.js" } })).file(
+            "bin/hello.js",
+            0o755,
+            "#!/bin/sh\necho hello\n",
+        ),
+    ]);
+    let env = Env::new(&r);
+    let planted = |dir: &str| {
+        let bin = std::fs::canonicalize(env.root.join(dir).join("node_modules/uses")).unwrap().join("../.bin");
+        bin.join("evil").exists() || bin.join("evil.cmd").exists()
+    };
+    // The attacker's checkout: its lockfile gives cli a bin of its choosing.
+    env.manifest(json!({ "dependencies": { "uses": "1.0.0" } }));
+    env.ok(&["lock"]);
+    let lock = env.read("jpm.lock");
+    let edited = lock.replace("  bin hello bin/hello.js\n", "  bin evil bin/hello.js\n  bin hello bin/hello.js\n");
+    assert_ne!(edited, lock);
+    env.write("jpm.lock", &edited);
+    env.ok(&["install", "--frozen-lockfile"]);
+    assert!(planted("project"), "the edited lockfile's own entry has its bins");
+    // Another project on the same store, resolving for itself.
+    let other = env.root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("package.json"), r#"{ "dependencies": { "uses": "1.0.0" } }"#).unwrap();
+    let out = env.command_in(&other, &["install"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let shared = std::fs::canonicalize(other.join("node_modules/uses")).unwrap();
+    assert!(shared.starts_with(std::fs::canonicalize(env.store()).unwrap()), "{shared:?}");
+    assert!(!planted("other"), "another project's lockfile planted a bin in a shared entry");
+}
+
 #[cfg(unix)]
 #[test]
 fn seals_shared_entries() {
