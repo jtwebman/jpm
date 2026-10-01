@@ -777,6 +777,21 @@ fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
 }
 
 #[test]
+fn links_a_workspace_out_of_the_range_asked_for() {
+    // prisma's `workspace:8.0.0-rc.13` once its workspace is at rc.14: pnpm links it anyway.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["a", "b"] }));
+    env.write("a/package.json", r#"{ "name": "a", "version": "2.0.0-rc.14" }"#);
+    env.write("b/package.json", r#"{ "name": "b", "dependencies": { "a": "workspace:2.0.0-rc.13" } }"#);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("workspace a is 2.0.0-rc.14, which 2.0.0-rc.13 does not satisfy"), "{out}");
+    let real = |p: &str| std::fs::canonicalize(env.path(p)).unwrap();
+    assert_eq!(real("b/node_modules/a"), real("a"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
+
+#[test]
 fn links_a_workspace_under_another_name() {
     // pnpm's `workspace:<name>@<range>`: prisma's examples take @internal/cli as `prisma`.
     let r = registry();
