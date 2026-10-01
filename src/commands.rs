@@ -564,7 +564,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
         match store.ensure(&tarball_of(&dir, &p.resolved, p.source.as_deref()), &p.integrity) {
             Err(e) if p.source.is_some() => Err(stale(e, p.source.as_deref().unwrap_or(""))),
-            other => other.map(|_| ()),
+            Err(e) => Err(bad_tarball(e, p)),
+            Ok(_) => Ok(()),
         }
     };
     let inputs = ctx.lock_text(&dir).and_then(|text| ctx.inputs_hash(&project, &text)).map(|hash| link::Inputs {
@@ -1066,11 +1067,16 @@ fn fill(store: &Store, wanted: &[&Package], dir: &Path) -> Result<()> {
         }
         // Offline, a missing optional fails too: skipped, it would not be fetched again.
         if !p.optional || e.code == "EOFFLINE" {
-            return Err(e);
+            return Err(bad_tarball(e, p));
         }
         warn(&format!("skipped optional {}@{}: {e}", p.name, p.version));
     }
     Ok(())
+}
+
+/// A tarball's own fault names the package: the reader knows only the entry.
+fn bad_tarball(e: Error, p: &Package) -> Error {
+    if e.code == "EBADTAR" { e.context(format_args!("{}@{}", p.name, p.version)) } else { e }
 }
 
 /// Where the store reads a package: a local tarball as a file, a git commit from its

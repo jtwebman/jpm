@@ -184,19 +184,14 @@ fn strip(raw: &[u8], prefixed: bool) -> std::result::Result<Option<String>, Stri
         return Ok(None);
     }
     let rest = if prefixed { path.split_once('/').map_or("", |(_, r)| r) } else { path.as_str() };
-    if path.starts_with('/') || path.contains(':') || !crate::tar::plain(rest) || rest.split('/').any(device) {
+    if path.starts_with('/')
+        || path.contains(':')
+        || !crate::tar::plain(rest)
+        || rest.split('/').any(crate::tar::device)
+    {
         return Err(format!("{path} is not a path inside the package"));
     }
     Ok(Some(rest.to_string()))
-}
-
-/// A name Windows reads as a device whatever its extension: `con`, `nul.js`, `COM1.txt`.
-fn device(part: &str) -> bool {
-    let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
-    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
-        || (stem.len() == 4
-            && (stem.starts_with("com") || stem.starts_with("lpt"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
 /// A path as git writes it: plain up to a tab, or quoted with C escapes.

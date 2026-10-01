@@ -189,3 +189,37 @@ fn install_scripts_see_no_proxy_credentials_or_client_keys() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(env.read("node_modules/bld/seen.txt"), "|||http://127.0.0.1:9|127.0.0.1:9|127.0.0.1\n");
 }
+
+/// A tarball entry Windows would write somewhere other than where it says is refused, the
+/// error naming the package and the entry: a device name on every OS, and a short (8.3) name
+/// beside the long name it may stand for where Windows makes short names. Short-shaped names
+/// alone (rspack ships `612~3.js`) install everywhere.
+#[test]
+fn tarball_entries_windows_reads_as_another_file_are_refused() {
+    let r = Registry::start(vec![
+        pkg("dev", "1.0.0", json!({})).file("lib/aux.js", 0o644, "x"),
+        pkg("alias", "1.0.0", json!({})).file("PACKAG~1.JSO", 0o644, "{}"),
+        pkg("chunks", "1.0.0", json!({})).file("dist/612~3.js", 0o644, "x").file("dist/612.js", 0o644, "y"),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "dev": "1.0.0" } }));
+    let out = env.jpm(&["install"]);
+    assert!(!out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("dev@1.0.0: Tarball entry lib/aux.js is a Windows device name"), "{}", stderr(&out));
+    assert!(!env.exists("node_modules/dev"));
+
+    env.manifest(json!({ "dependencies": { "alias": "1.0.0" } }));
+    let out = env.jpm(&["install"]);
+    if cfg!(windows) {
+        assert!(!out.status.success(), "{}", stderr(&out));
+        let says = "alias@1.0.0: Tarball entry PACKAG~1.JSO may be the short name Windows gives package.json";
+        assert!(stderr(&out).contains(says), "{}", stderr(&out));
+    } else {
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(env.read("node_modules/alias/PACKAG~1.JSO"), "{}");
+    }
+
+    env.manifest(json!({ "dependencies": { "chunks": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/chunks/dist/612~3.js"), "x");
+}
