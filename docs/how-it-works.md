@@ -13,7 +13,8 @@
   peer's range too with a warning: yarn 1 and npm link every workspace at the root, where any
   package finds it, as facebook/react's `react-dom@17` finds packages/react.
 - **Store.** Each tarball is checked against its integrity and unpacked once into a shared
-  store (`~/.jpm/store`, or `JPM_STORE`). Files there are read-only.
+  store (`~/.jpm/store`, or `JPM_STORE`). Its files are writable, as npm's, pnpm's and bun's
+  are: husky and prisma copy files out of their packages and write next to them.
 - **Link.** Each package gets an entry, `<name>@<version>-<hash>/`, named by a hash of the
   package and everything below it. The entry holds the package's files, hardlinked from the
   store (a single `clonefile` per package on macOS), and a symlink (a junction on Windows) to

@@ -480,9 +480,8 @@ fn patch_file(data: &[u8], hunks: &[Hunk], file: &str, crlf: bool) -> std::resul
 }
 
 /// Apply the diff `text` to the package in `dir`. No file is written in place: it may be a
-/// hardlink into the store, so it is removed and written anew. `sealed`: files it writes are
-/// read-only, as the store's are.
-pub fn apply(dir: &Path, text: &[u8], sealed: bool) -> std::result::Result<(), String> {
+/// hardlink into the store, so it is removed and written anew.
+pub fn apply(dir: &Path, text: &[u8]) -> std::result::Result<(), String> {
     let (diffs, converted) = parse(text)?;
     if diffs.is_empty() {
         return Err("it changes no file".into());
@@ -522,7 +521,7 @@ pub fn apply(dir: &Path, text: &[u8], sealed: bool) -> std::result::Result<(), S
                 fs::remove_file(dir.join(old)).map_err(io)?;
             }
         }
-        write(&at, &patched, d.mode.unwrap_or(mode), sealed).map_err(io)?;
+        write(&at, &patched, d.mode.unwrap_or(mode)).map_err(io)?;
     }
     Ok(())
 }
@@ -556,14 +555,14 @@ pub fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
         if kind.is_dir() && e.file_name() != "node_modules" {
             copy_tree(&e.path(), &at)?;
         } else if kind.is_file() {
-            write(&at, &fs::read(e.path())?, file_mode(&e.metadata()?), false)?;
+            write(&at, &fs::read(e.path())?, file_mode(&e.metadata()?))?;
         }
     }
     Ok(())
 }
 
 /// A new file where the old one was: removed first, never written through.
-fn write(at: &Path, data: &[u8], mode: u32, sealed: bool) -> std::io::Result<()> {
+fn write(at: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
     match fs::remove_file(at) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
         _ => {}
@@ -576,10 +575,10 @@ fn write(at: &Path, data: &[u8], mode: u32, sealed: bool) -> std::io::Result<()>
     {
         use std::os::unix::fs::PermissionsExt;
         let exec = if mode & 0o111 != 0 { 0o755 } else { 0o644 };
-        fs::set_permissions(at, fs::Permissions::from_mode(if sealed { exec & !0o222 } else { exec }))?;
+        fs::set_permissions(at, fs::Permissions::from_mode(exec))?;
     }
     #[cfg(not(unix))]
-    let _ = (mode, sealed);
+    let _ = mode;
     Ok(())
 }
 
@@ -612,7 +611,7 @@ mod tests {
              diff --git a/gone.js b/gone.js\ndeleted file mode 100644\n--- a/gone.js\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n\
              diff --git a/old.js b/moved/new.js\nsimilarity index 100%\nrename from old.js\nrename to moved/new.js\n"
         );
-        apply(&dir, text.as_bytes(), true).unwrap();
+        apply(&dir, text.as_bytes()).unwrap();
         assert_eq!(read(&dir, "lib/x.js"), "one\nTWO\nthree\n");
         assert_eq!(read(&dir, "new.js"), "#!/bin/sh\nx\n");
         assert!(!dir.join("gone.js").exists() && !dir.join("old.js").exists());
@@ -621,7 +620,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &str| fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o777;
-            assert_eq!((mode("new.js"), mode("lib/x.js")), (0o555, 0o444), "sealed: read-only");
+            assert_eq!((mode("new.js"), mode("lib/x.js")), (0o755, 0o644));
         }
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -631,7 +630,7 @@ mod tests {
         let dir = tree(&[("store.js", "one\ntwo\nthree\n")]);
         fs::create_dir_all(dir.join("lib")).unwrap();
         fs::hard_link(dir.join("store.js"), dir.join("lib/x.js")).unwrap();
-        apply(&dir, EDIT.as_bytes(), false).unwrap();
+        apply(&dir, EDIT.as_bytes()).unwrap();
         assert_eq!(read(&dir, "lib/x.js"), "one\nTWO\nthree\n");
         assert_eq!(read(&dir, "store.js"), "one\ntwo\nthree\n");
         fs::remove_dir_all(&dir).unwrap();
@@ -643,30 +642,30 @@ mod tests {
         let dir = tree(&[("a", "x\ny"), ("b", "p\nq\n")]);
         let text = "--- a/a\n+++ b/a\n@@ -1,2 +1,2 @@\n x\n-y\n\\ No newline at end of file\n+z\n\
                     --- a/b\n+++ b/b\n@@ -2 +2 @@\n-q\n+r\n\\ No newline at end of file\n";
-        apply(&dir, text.as_bytes(), false).unwrap();
+        apply(&dir, text.as_bytes()).unwrap();
         assert_eq!((read(&dir, "a"), read(&dir, "b")), ("x\nz\n".into(), "p\nr".into()));
         // A CRLF file, a patch converted to CRLF, and a hunk three lines from where it says.
         let dir2 = tree(&[("lib/x.js", "a\r\nb\r\nc\r\none\r\ntwo\r\nthree\r\n")]);
-        apply(&dir2, EDIT.replace('\n', "\r\n").as_bytes(), false).unwrap();
+        apply(&dir2, EDIT.replace('\n', "\r\n").as_bytes()).unwrap();
         assert_eq!(read(&dir2, "lib/x.js"), "a\r\nb\r\nc\r\none\r\nTWO\r\nthree\r\n");
         // The same, its last line with no end at all, as cal.com's patch is checked out.
         let dir5 = tree(&[("lib/x.js", "a\r\nb\r\nc\r\none\r\ntwo\r\nthree\r\n")]);
         let open = EDIT.replace('\n', "\r\n");
-        apply(&dir5, open.strip_suffix("\r\n").unwrap().as_bytes(), false).unwrap();
+        apply(&dir5, open.strip_suffix("\r\n").unwrap().as_bytes()).unwrap();
         assert_eq!(read(&dir5, "lib/x.js"), "a\r\nb\r\nc\r\none\r\nTWO\r\nthree\r\n");
         fs::remove_dir_all(dir5).unwrap();
         // A context line an editor trimmed to nothing.
         let dir3 = tree(&[("lib/x.js", "one\n\nthree\n")]);
-        apply(&dir3, b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,3 +1,3 @@\n one\n\n-three\n+3\n", false).unwrap();
+        apply(&dir3, b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,3 +1,3 @@\n one\n\n-three\n+3\n").unwrap();
         assert_eq!(read(&dir3, "lib/x.js"), "one\n\n3\n");
         // Context lines indented one space too far, as opencode's photon-node patch has them:
         // the file keeps its own. A removed line must still match as it is.
         let dir4 = tree(&[("lib/x.js", "    ;\n};\n\nconst p = 1;\nnext\n")]);
         let loose = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -1,5 +1,5 @@\n      ;\n  };\n  \n-const p = 1;\n+const p = 2;\n next\n";
-        apply(&dir4, loose, false).unwrap();
+        apply(&dir4, loose).unwrap();
         assert_eq!(read(&dir4, "lib/x.js"), "    ;\n};\n\nconst p = 2;\nnext\n");
         let removed = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -4 +4 @@\n- const p = 2;\n+const p = 3;\n";
-        assert!(apply(&dir4, removed, false).unwrap_err().contains("does not apply"));
+        assert!(apply(&dir4, removed).unwrap_err().contains("does not apply"));
         for d in [dir, dir2, dir3, dir4] {
             fs::remove_dir_all(d).unwrap();
         }
@@ -679,9 +678,9 @@ mod tests {
         let delete = |file: &str, id: &str| {
             format!("diff --git a/{file} b/{file}\ndeleted file mode 100644\nindex {id}..0000000\n")
         };
-        apply(&dir, delete("gone.txt", "ce01362").as_bytes(), false).unwrap();
+        apply(&dir, delete("gone.txt", "ce01362").as_bytes()).unwrap();
         assert!(!dir.join("gone.txt").exists());
-        let err = apply(&dir, delete("kept.txt", "e69de29").as_bytes(), false).unwrap_err();
+        let err = apply(&dir, delete("kept.txt", "e69de29").as_bytes()).unwrap_err();
         assert!(err.contains("holds more than the patch removes"), "{err}");
         assert!(dir.join("kept.txt").exists());
         assert_eq!(git_blob(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
@@ -691,7 +690,7 @@ mod tests {
     #[test]
     fn refuses_what_does_not_apply() {
         let dir = tree(&[("lib/x.js", "one\n2\nthree\n"), ("y", "y\n")]);
-        let err = |text: &str| apply(&dir, text.as_bytes(), false).unwrap_err();
+        let err = |text: &str| apply(&dir, text.as_bytes()).unwrap_err();
         assert_eq!(err(EDIT), "lib/x.js: hunk #1 (@@ -1,3 +1,3 @@) does not apply");
         assert!(err(&EDIT.replace("lib/x.js", "nope.js")).contains("no such file"));
         assert!(err(&EDIT.replace("@@ -1,3 +1,3 @@", "@@ -1,9 +1,3 @@")).contains("ends early"));
@@ -811,7 +810,7 @@ mod tests {
             if text.is_empty() {
                 continue;
             }
-            apply(&a, text.as_bytes(), false).unwrap_or_else(|e| panic!("case {case}: {e}\n{text}"));
+            apply(&a, text.as_bytes()).unwrap_or_else(|e| panic!("case {case}: {e}\n{text}"));
             assert_eq!(fs::read_to_string(a.join("f")).unwrap(), after, "case {case}:\n{text}");
         }
         fs::remove_dir_all(&dir).unwrap();
@@ -822,7 +821,7 @@ mod tests {
         let dir = tree(&[("f", "a\nb\n")]);
         for start in ["18446744073709551615", "4611686018427387904", "4"] {
             let text = format!("--- a/f\n+++ b/f\n@@ -{start},2 +1,2 @@\n a\n-b\n+c\n");
-            assert!(apply(&dir, text.as_bytes(), false).unwrap_err().contains("does not apply"), "{start}");
+            assert!(apply(&dir, text.as_bytes()).unwrap_err().contains("does not apply"), "{start}");
         }
         assert_eq!(read(&dir, "f"), "a\nb\n");
         fs::remove_dir_all(&dir).unwrap();
@@ -835,7 +834,7 @@ mod tests {
         let k = 20_000;
         let text = format!("--- a/f\n+++ b/f\n@@ -1,{k} +1,{k} @@\n{} zzz\n", " a\n".repeat(k - 1));
         let t = std::time::Instant::now();
-        assert!(apply(&dir, text.as_bytes(), false).unwrap_err().contains("does not apply"));
+        assert!(apply(&dir, text.as_bytes()).unwrap_err().contains("does not apply"));
         assert!(t.elapsed() < std::time::Duration::from_secs(30), "{:?}", t.elapsed());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -846,7 +845,7 @@ mod tests {
         let body: String = (0..60).map(|i| format!("l{i}\n")).collect();
         let dir = tree(&[("f", &format!("{}{body}", "new\n".repeat(40)))]);
         let text = "--- a/f\n+++ b/f\n@@ -2,3 +2,3 @@\n l1\n-l2\n+L2\n l3\n@@ -50,3 +50,3 @@\n l49\n-l50\n+L50\n l51\n";
-        apply(&dir, text.as_bytes(), false).unwrap();
+        apply(&dir, text.as_bytes()).unwrap();
         let want = body.replace("l2\n", "L2\n").replace("l50\n", "L50\n");
         assert_eq!(read(&dir, "f"), format!("{}{want}", "new\n".repeat(40)));
         fs::remove_dir_all(&dir).unwrap();
@@ -992,8 +991,7 @@ mod tests {
                 text.extend_from_slice(line.as_bytes());
                 text.extend_from_slice(if next(5) == 0 { b"\r\n" } else { b"\n" });
             }
-            let sealed = next(2) == 0;
-            let r = std::panic::catch_unwind(|| apply(&pkg, &text, sealed));
+            let r = std::panic::catch_unwind(|| apply(&pkg, &text));
             assert!(r.is_ok(), "case {case} panicked:\n{}", String::from_utf8_lossy(&text));
             if matches!(r, Ok(Ok(()))) {
                 applied += 1;
