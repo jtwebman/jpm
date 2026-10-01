@@ -20,7 +20,10 @@ use crate::resolve::Prefer;
 use crate::rules;
 use crate::semver::{max_satisfying, max_satisfying_peer};
 
-pub const FOREIGN: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock"];
+/// In the order one is read when a project has several: a newer manager's first, as a project that
+/// moved to one usually leaves the old one's lockfile behind; npm's shrinkwrap before its
+/// package-lock, as npm reads them.
+pub const FOREIGN: [&str; 5] = ["bun.lock", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json", "package-lock.json"];
 
 pub struct ForeignLock {
     pub lock: Lockfile,

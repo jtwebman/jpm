@@ -244,11 +244,27 @@ impl Ctx {
             self.source = Some(s.clone());
             return Ok(s);
         }
-        let found: Vec<&'static str> = foreign::FOREIGN.iter().copied().filter(|f| dir.join(f).exists()).collect();
+        let mut found: Vec<&'static str> = foreign::FOREIGN.iter().copied().filter(|f| dir.join(f).exists()).collect();
         if found.len() > 1 {
-            return Err(fail(
-                "ELOCK",
-                format!("{} both lock {}: delete all but one", found.join(" and "), dir.display()),
+            // package.json's `packageManager` names the one the project uses; else FOREIGN's order.
+            let named = project::read_manifest(&dir.join("package.json")).ok().and_then(|m| {
+                let pm = m.doc.get("packageManager")?.as_str()?.split('@').next()?.to_string();
+                found.iter().position(|f| match pm.as_str() {
+                    "npm" => f.ends_with(".json"),
+                    "pnpm" => *f == "pnpm-lock.yaml",
+                    "yarn" => *f == "yarn.lock",
+                    "bun" => *f == "bun.lock",
+                    _ => false,
+                })
+            });
+            let why = if named.is_some() { "as packageManager says" } else { "bun's, pnpm's, yarn's, then npm's" };
+            found.swap(0, named.unwrap_or(0));
+            let all = if found.len() == 2 { "both" } else { "all" };
+            ui::warn(&format!(
+                "{} {all} lock {}: reading {}, {why}; delete the others when they are not in use",
+                found.join(" and "),
+                dir.display(),
+                found[0]
             ));
         }
         let s = match found.first() {

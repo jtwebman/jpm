@@ -42,7 +42,7 @@ fn lockfiles() -> Vec<String> {
                 continue;
             }
             let name = e.file_name().to_string_lossy().trim_end_matches(".gz").to_string();
-            if FOREIGN[..2].contains(&name.as_str()) {
+            if ["package-lock.json", "npm-shrinkwrap.json"].contains(&name.as_str()) {
                 let rel = p.parent().unwrap().strip_prefix(root).unwrap().join(&name);
                 out.push(rel.to_string_lossy().replace('\\', "/"));
             }

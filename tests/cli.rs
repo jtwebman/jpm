@@ -1987,6 +1987,41 @@ fn finds_install_scripts_bun_lock_leaves_out() {
 }
 
 #[test]
+fn reads_one_of_two_lockfiles() {
+    // bun's before npm's, unless packageManager names npm: never a refusal to install.
+    let r = registry();
+    let env = Env::new(&r);
+    let b = |v: &str| common::sha512(&pkg("b", v, json!({})).tarball());
+    env.write(
+        "package-lock.json",
+        &json!({ "lockfileVersion": 3, "packages": {
+            "": { "dependencies": { "b": "^1.0.0" } },
+            "node_modules/b": { "version": "1.0.0", "resolved": format!("{}/b/-/b-1.0.0.tgz", r.url), "integrity": b("1.0.0") }
+        } })
+        .to_string(),
+    );
+    env.write(
+        "bun.lock",
+        &format!(
+            "{{\n  \"lockfileVersion\": 1,\n  \"workspaces\": {{ \"\": {{ \"dependencies\": {{ \"b\": \"^1.0.0\" }} }} }},\n  \"packages\": {{\n    \"b\": [\"b@1.1.0\", \"\", {{}}, \"{}\"],\n  }}\n}}\n",
+            b("1.1.0")
+        ),
+    );
+    for (manager, file, version) in [(None, "bun.lock", "1.1.0"), (Some("npm@10.0.0"), "package-lock.json", "1.0.0")] {
+        let _ = std::fs::remove_file(env.path("jpm.lock"));
+        let _ = std::fs::remove_dir_all(env.path("node_modules"));
+        let mut m = json!({ "dependencies": { "b": "^1.0.0" } });
+        if let Some(pm) = manager {
+            m["packageManager"] = json!(pm);
+        }
+        env.manifest(m);
+        let out = env.ok(&["install"]);
+        assert!(out.contains(&format!("reading {file}")) && out.contains(&format!("from {file}")), "{out}");
+        assert!(env.read("node_modules/b/index.js").contains(&format!("b@{version}")), "{file}");
+    }
+}
+
+#[test]
 fn an_alias_never_takes_another_packages_place() {
     // `b` declares `real` as an alias for `evil` at the version `a`'s real `real` has: each
     // must get its own package.
