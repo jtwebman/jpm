@@ -342,6 +342,8 @@ fn read_npm(file: &str, text: &str) -> Result<Source> {
         return Err(fail(format!("{file} v{v} has no packages map; npm 7 and later write one")));
     };
     let mut nodes = Vec::new();
+    // Each package read, its edges found once all are: `Tree::find_all`.
+    let mut read = Vec::new();
     let mut tree = Tree::default();
     let at: Vec<Option<usize>> = listed
         .iter()
@@ -367,7 +369,11 @@ fn read_npm(file: &str, text: &str) -> Result<Source> {
             scripts: truthy(entry.get("hasInstallScript")),
             ..Node::default()
         };
-        nodes.push(with_edges(node, &Declared::of(entry), &|dep| match tree.find_at(from, dep) {
+        read.push((node, Declared::of(entry), from));
+    }
+    let found = tree.find_all(read.iter().flat_map(|(_, d, from)| d.names().map(|n| (*from, n.to_string()))));
+    for (node, declared, from) in read {
+        nodes.push(with_edges(node, &declared, &|dep| match found.get(&(from, dep.to_string())).copied().flatten() {
             Some(hit) if in_dep_bundle(&tree, hit) => Target::Bundled,
             hit => hit.and_then(|h| npm_edge(dep, tree.entry[h]?)).map_or(Target::Missing, Target::Version),
         }));
@@ -452,6 +458,41 @@ impl<'a> Tree<'a> {
             at = self.up[at];
         }
     }
+
+    /// What `find_at` finds for each `(from, name)`, in one walk down the tree rather than a
+    /// walk up per name: a package thousands of folders deep with thousands of dependencies
+    /// took minutes. On the way down, each name's stack holds the folders that have it, the
+    /// nearest on top.
+    fn find_all(&self, queries: impl Iterator<Item = (usize, String)>) -> HashMap<(usize, String), Option<usize>> {
+        let mut asked: HashMap<usize, Vec<String>> = HashMap::new();
+        for (from, name) in queries {
+            asked.entry(from).or_default().push(name);
+        }
+        let mut out = HashMap::new();
+        let mut nearest: HashMap<&str, Vec<usize>> = HashMap::new();
+        let held =
+            |at: usize| self.children[at].iter().filter(|(_, c)| self.entry[**c].is_some_and(|v| truthy(Some(v))));
+        // Each folder is pushed to be entered, and once entered, again to be left.
+        let mut todo = if self.up.is_empty() { Vec::new() } else { vec![(0, true)] };
+        while let Some((at, enter)) = todo.pop() {
+            if !enter {
+                for (name, _) in held(at) {
+                    nearest.get_mut(name).map(Vec::pop);
+                }
+                continue;
+            }
+            for (name, &child) in held(at) {
+                nearest.entry(name).or_default().push(child);
+            }
+            for name in asked.remove(&at).unwrap_or_default() {
+                let hit = nearest.get(name.as_str()).and_then(|s| s.last().copied());
+                out.insert((at, name), hit);
+            }
+            todo.push((at, false));
+            todo.extend(self.children[at].values().map(|&c| (c, true)));
+        }
+        out
+    }
 }
 
 /// The version of an entry from a registry: not a link, not git or a file, and not a tarball
@@ -494,6 +535,11 @@ impl Declared {
             peers,
             optional_peers,
         }
+    }
+
+    /// Every name `with_edges` looks for.
+    fn names(&self) -> impl Iterator<Item = &str> {
+        self.dependencies.keys().chain(self.optional.keys()).chain(self.peers.keys()).map(String::as_str)
     }
 }
 
@@ -801,6 +847,7 @@ fn read_bun(text: &str) -> Result<Source> {
     let mut tree = Tree::default();
     let at: Vec<usize> = listed.iter().map(|(path, tuple)| tree.add(names(path).into_iter(), tuple)).collect();
     let mut nodes = Vec::new();
+    let mut read = Vec::new();
     for ((path, tuple), from) in listed.iter().zip(at) {
         let Some(t) = bun_tuple(tuple).filter(|t| !t.bundled) else { continue };
         let (real, version) = split_id(t.id);
@@ -822,7 +869,12 @@ fn read_bun(text: &str) -> Result<Source> {
         };
         let mut declared = Declared::of(t.meta);
         declared.optional_peers = list(t.meta.get("optionalPeers")).into_iter().collect();
-        nodes.push(with_edges(node, &declared, &|dep| bun_find(&tree, from, dep)));
+        read.push((node, declared, from));
+    }
+    let found = tree.find_all(read.iter().flat_map(|(_, d, from)| d.names().map(|n| (*from, n.to_string()))));
+    for (node, declared, from) in read {
+        let hit = |dep: &str| found.get(&(from, dep.to_string())).copied().flatten().and_then(|h| tree.entry[h]);
+        nodes.push(with_edges(node, &declared, &|dep| bun_target(hit(dep), dep)));
     }
     let mut groups = groups_of(workspaces.and_then(|w| w.get("")));
     // bun records `catalog:` as written, and the catalogs beside it.
@@ -835,7 +887,7 @@ fn read_bun(text: &str) -> Result<Source> {
             *range = r.to_string();
         }
     }
-    let (specs, root) = root_of(groups, &|name| match bun_find(&tree, 0, name) {
+    let (specs, root) = root_of(groups, &|name| match bun_target(tree.find(0, name), name) {
         Target::Version(v) => Some(v),
         _ => None,
     });
@@ -871,9 +923,9 @@ fn bun_tuple(value: &Value) -> Option<BunTuple<'_>> {
     })
 }
 
-/// The nearest `name` up the hoisted path `from`.
-fn bun_find(tree: &Tree, from: usize, name: &str) -> Target {
-    match tree.find(from, name).map(bun_tuple) {
+/// The edge to `name` that `found`, its nearest entry up the hoisted path, makes.
+fn bun_target(found: Option<&Value>, name: &str) -> Target {
+    match found.map(bun_tuple) {
         None | Some(None) => Target::Missing,
         Some(Some(t)) if t.bundled => Target::Bundled,
         Some(Some(t)) => {
@@ -2415,6 +2467,31 @@ snapshots:
         assert_eq!(source.nodes[0].dependencies.len(), 20);
         // Scoped names are one step.
         assert_eq!(names("a/@s/b/c"), ["a", "@s/b", "c"]);
+    }
+
+    /// Found while fuzzing the importers: a level at a time was still a walk up per dependency,
+    /// so one package 30,000 folders deep with 50,000 dependencies (1 MB) took minutes.
+    #[test]
+    fn finds_every_dependency_in_one_walk() {
+        let missing: serde_json::Map<String, Value> = (0..50_000).map(|i| (format!("d{i}"), json!("1"))).collect();
+        let deep = format!("node_modules/a{}", "/node_modules/a".repeat(30_000));
+        let npm = json!({ "lockfileVersion": 3, "packages": {
+            "node_modules/d7": { "version": "7.0.0" },
+            deep: { "version": "1.0.0", "dependencies": missing },
+        }})
+        .to_string();
+        let bun = json!({ "lockfileVersion": 1, "packages": {
+            "d7": ["d7@7.0.0", "", {}, "sha512-a"],
+            vec!["a"; 30_000].join("/"): ["a@1.0.0", "", { "dependencies": missing }, "sha512-a"],
+        }})
+        .to_string();
+        let start = std::time::Instant::now();
+        for source in [read_npm("package-lock.json", &npm).unwrap(), read_bun(&bun).unwrap()] {
+            let deep = source.nodes.iter().find(|n| n.name == "a").unwrap();
+            assert_eq!((deep.dependencies.len(), deep.dependencies["d7"].as_str()), (50_000, "7.0.0"));
+            assert_eq!(deep.dependencies["d8"], "");
+        }
+        assert!(start.elapsed().as_millis() < 5000, "{:?}", start.elapsed());
     }
 
     #[test]
