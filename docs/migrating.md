@@ -1,7 +1,9 @@
 # Coming from another package manager
 
 Run `jpm install`. With no `jpm.lock`, jpm reads the lockfile that is there and writes
-`jpm.lock` from it:
+`jpm.lock` from it. A project with more than one reads the one package.json's `packageManager`
+names, else the first of `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `npm-shrinkwrap.json` and
+`package-lock.json`, and says which:
 
 - `package-lock.json` and `npm-shrinkwrap.json` (npm 7 and later), `pnpm-lock.yaml`
   (pnpm 9 and later) and `bun.lock` are carried over as they are: the same versions and the
