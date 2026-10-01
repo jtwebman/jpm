@@ -2525,8 +2525,21 @@ fn select_workspaces(select: &Select, root: &Path, all: &[Workspace]) -> Result<
             ));
         }
         let glob = rest.contains('*') && !rest.starts_with(['.', '/']);
+        // A path glob (`./packages/**`), from the current directory as pnpm reads it.
+        let path_glob = rest.contains(['*', '?', '[', '{']) && (rest.starts_with("./") || rest.starts_with("../"));
         let mut hits = if glob {
             all.iter().filter(|w| crate::glob::matches(rest, &w.name)).map(|w| w.path.clone()).collect()
+        } else if path_glob {
+            let pattern = rest.trim_start_matches("./");
+            let at = |w: &Workspace| {
+                crate::util::relative(&normalize(&cwd), &normalize(&w.dir)).to_string_lossy().replace('\\', "/")
+            };
+            let found: HashSet<String> =
+                all.iter().filter(|w| crate::glob::matches(pattern, &at(w))).map(|w| w.path.clone()).collect();
+            if found.is_empty() {
+                return Err(fail("EWORKSPACE", format!("no workspace is at {rest}")));
+            }
+            found
         } else {
             named(rest, root, &cwd, all)?
         };
@@ -2577,7 +2590,15 @@ fn named(arg: &str, root: &Path, cwd: &Path, all: &[Workspace]) -> Result<HashSe
         .iter()
         .filter(|w| dirs.iter().any(|d| normalize(&w.dir).starts_with(d) && normalize(&w.dir) != *d))
         .collect();
-    let hits = if exact.is_empty() { under } else { exact };
+    let mut hits = if exact.is_empty() { under } else { exact };
+    // As pnpm: a scope may be left out when one workspace has the rest of the name.
+    if hits.is_empty() && !arg.contains('/') {
+        let unscoped: Vec<&Workspace> =
+            all.iter().filter(|w| w.name.split_once('/').is_some_and(|(_, n)| n == arg)).collect();
+        if unscoped.len() == 1 {
+            hits = unscoped;
+        }
+    }
     if hits.is_empty() {
         return Err(fail("EWORKSPACE", format!("no workspace is named or at {arg}")));
     }

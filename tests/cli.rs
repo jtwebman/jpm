@@ -763,6 +763,10 @@ fn runs_scripts_by_pnpms_recursive_and_filter() {
     assert_eq!(ran(&["--filter", "b", "run", "build"]), "b");
     assert_eq!(ran(&["-F", "@s/*", "build"]), "@s/a @s/c");
     assert_eq!(ran(&["--filter", "./p/c", "build"]), "@s/c");
+    assert_eq!(ran(&["--filter", "./p/**", "build"]), "@s/a @s/c b");
+    assert_eq!(ran(&["--filter", "./p/[ab]", "build"]), "@s/a b");
+    // A scope left out, as pnpm allows when one workspace has the rest of the name.
+    assert_eq!(ran(&["--filter", "a", "build"]), "@s/a");
     assert_eq!(ran(&["--filter", "b...", "build"]), "@s/a b");
     assert_eq!(ran(&["--filter", "b^...", "build"]), "@s/a");
     assert_eq!(ran(&["--filter", "...@s/a", "build"]), "@s/a b");

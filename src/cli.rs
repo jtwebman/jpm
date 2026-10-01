@@ -182,6 +182,8 @@ struct Cli {
     workspaces: bool,
     /// pnpm's `-r`: every workspace, those without the script skipped; `--filter` narrows it.
     recursive: bool,
+    /// pnpm's `--filter`, a recursive run too: a workspace without the script is skipped.
+    filtered: bool,
     /// yarn's `workspace <name> <command>`: the next word is the workspace's name.
     yarn_workspace: bool,
     /// yarn's `workspaces foreach`: 1 after `workspaces`, 2 once `foreach` follows, until the
@@ -326,7 +328,11 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--dir" | "--prefix" | "-C" | "--cwd" => cli.dir = Some(value()?),
             "--edit-dir" => cli.edit_dir = Some(value()?),
             // pnpm's --filter selects as -w does, with its selectors too (see `select_workspaces`).
-            "-w" | "--workspace" | "-F" | "--filter" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
+            "-w" | "--workspace" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
+            "-F" | "--filter" => {
+                cli.filtered = true;
+                cli.workspace.get_or_insert_with(Vec::new).push(value()?);
+            }
             "-c" | "--call" => cli.call = Some(value()?),
             "-p" | "--package" => cli.packages.get_or_insert_with(Vec::new).push(value()?),
             "--before" => {
@@ -625,7 +631,7 @@ fn opts(cli: &Cli) -> Opts {
         exact: cli.exact,
         workspaces: if cli.workspaces { Some(Select::All) } else { cli.workspace.clone().map(Select::Some) },
         // A recursive run skips the workspaces without the script, as pnpm's does.
-        if_present: cli.if_present || cli.recursive,
+        if_present: cli.if_present || cli.recursive || cli.filtered,
         include_root: cli.include_root,
         ignore_scripts: cli.ignore_scripts,
     }
