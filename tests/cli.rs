@@ -862,6 +862,26 @@ fn repairs_a_damaged_tree_under_verify() {
     assert!(env.read("node_modules/b/index.js").contains("b@1.0.0"));
 }
 
+/// An install killed midway leaves entries part built, under their own names where Windows builds
+/// them in place, and no state: the next install finds each one not intact and builds it again.
+#[test]
+fn rebuilds_entries_an_install_left_part_built() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    // a's file gone, and its link to b: as an install stopped before it got to them leaves them.
+    std::fs::remove_file(env.path("node_modules/a/index.js")).unwrap();
+    let to_b = std::fs::canonicalize(env.path("node_modules/a")).unwrap().parent().unwrap().join("b");
+    std::fs::remove_dir(&to_b).or_else(|_| std::fs::remove_file(&to_b)).unwrap();
+    std::fs::remove_file(env.path("node_modules/.jpm.json")).unwrap();
+    env.ok(&["install", "--no-global-store"]);
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+    assert!(std::fs::read_to_string(to_b.join("index.js")).unwrap().contains("b@1.1.0"));
+    let again = env.ok(&["install", "--no-global-store"]);
+    assert!(again.contains("up to date"), "{again}");
+}
+
 /// The entries built in a project's `.jpm`.
 fn entries(dir: &std::path::Path) -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir(dir.join("node_modules/.jpm"))
