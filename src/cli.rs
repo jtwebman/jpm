@@ -92,6 +92,8 @@ Options
                        script, exec stopping at the first failure; --filter narrows it
   workspace <name> <command>
                        yarn's form of -w <name> <command>
+  workspaces list [--json]
+                       the workspaces as yarn lists them, the root first at .
   workspaces foreach [--include <glob>] [--exclude <glob>] <command>
                        yarn's form of -r <command>; -A, -p and -t are accepted
   run <name>           a bin when no script has the name, as yarn's run takes it
@@ -207,7 +209,7 @@ struct Cli {
     block_exotic_subdeps: Option<bool>,
 }
 
-const COMMANDS: [&str; 13] = [
+const COMMANDS: [&str; 14] = [
     "install",
     "add",
     "remove",
@@ -221,6 +223,7 @@ const COMMANDS: [&str; 13] = [
     "approve",
     "patch",
     "patch-commit",
+    "workspaces",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
 const NOOPS: [&str; 16] = [
@@ -430,6 +433,13 @@ fn positional(cli: &mut Cli, arg: &str) {
         return;
     }
     if cli.command.is_none() && cli.foreach == 1 {
+        // yarn's `workspaces list`, which build scripts read (`--json`, a line a workspace).
+        if arg == "list" {
+            cli.foreach = 0;
+            cli.command = Some("workspaces".into());
+            cli.specs.push(arg.to_string());
+            return;
+        }
         if arg != "foreach" {
             cli.foreach = 0;
             cli.command = Some("run".into());
@@ -661,6 +671,22 @@ fn dispatch(cli: &Cli, command: &str, from_project: bool) -> Result<String, Erro
             let mut changes = Object::new();
             changes.insert("removed", Value::from(removed));
             Ok(installed(cli, &r, started, changes))
+        }
+        "workspaces" => {
+            if cli.specs != ["list"] {
+                return Err(Error::new("EOPTION", "workspaces takes list or foreach"));
+            }
+            let lines: Vec<String> = commands::workspaces_list(o)?
+                .into_iter()
+                .map(|(location, name)| {
+                    if cli.json {
+                        json::to_string(&json::obj([("location", location.into()), ("name", name.into())]))
+                    } else {
+                        location
+                    }
+                })
+                .collect();
+            Ok(lines.join("\n"))
         }
         "lock" => {
             let l = commands::lock_command(o, !cli.json)?;
