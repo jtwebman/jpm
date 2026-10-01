@@ -132,6 +132,8 @@ pub struct Registry {
     /// The documents this run asked the registry for, by cache key, each with whether one was
     /// kept then: what this run keeps never decides where a pin is read from.
     asked: Mutex<HashMap<String, bool>>,
+    /// The most an abbreviated and a full document may hold (see `http::MAX_ABBREVIATED`).
+    caps: [u64; 2],
 }
 
 impl Registry {
@@ -156,6 +158,7 @@ impl Registry {
             unasked: Mutex::default(),
             rechecked: Mutex::default(),
             asked: Mutex::default(),
+            caps: [http::MAX_ABBREVIATED, http::MAX_FULL],
         }
     }
 
@@ -211,7 +214,17 @@ impl Registry {
         if let Some(e) = &etag {
             headers.push(("if-none-match", e));
         }
-        let response = http::get(url, &headers, &self.auth)?;
+        let (kind, cap) = if accept == CORGI { ("abbreviated", self.caps[0]) } else { ("full", self.caps[1]) };
+        let response = http::get_capped(url, &headers, &self.auth, cap).map_err(|e| match e.code {
+            "ETOOLARGE" => Error::new(
+                "ETOOLARGE",
+                format!(
+                    "The registry's {kind} document for \"{name}\" is larger than {} MiB, far past any real package's",
+                    cap >> 20
+                ),
+            ),
+            _ => e,
+        })?;
         let at = now_ms() - response.age.unwrap_or(0) as i64 * 1000;
         match response.status {
             304 if kept.is_some() => {
@@ -660,7 +673,7 @@ impl DocCache {
         let stored = bytes.split_off(end + 1);
         // A JSON body starts with `{`, never with gzip's magic bytes.
         let body = if stored.starts_with(&[0x1f, 0x8b]) {
-            http::gunzip(&stored, http::MAX_DOCUMENT).ok()?
+            http::gunzip(&stored, http::MAX_FULL).ok()?
         } else {
             stored.clone()
         };
@@ -1003,6 +1016,39 @@ mod tests {
         let asked = asked.lock().unwrap().clone();
         let each = |kind: &str, path: &str| (kind.to_string(), path.to_string());
         assert_eq!(asked, [each("full", "/tool-linux-x64-gnu"), each("corgi", "/tool-darwin-x64")]);
+    }
+
+    /// A document past its cap fails at once, naming the package: one abbreviated document over
+    /// the abbreviated cap, and a full one (asked for the publish dates) over the full cap.
+    #[test]
+    fn refuses_a_document_past_its_cap() {
+        let doc = |name: &str, pad: usize| {
+            let dist = r#"{"tarball":"http://t/t.tgz","integrity":"sha512-AAAA"}"#;
+            let manifest =
+                format!(r#"{{"name":"{name}","version":"1.0.0","dist":{dist},"readme":"{}"}}"#, "x".repeat(pad));
+            let time = r#"{"modified":"2000-01-01T00:00:00.000Z","1.0.0":"2000-01-01T00:00:00.000Z"}"#;
+            Some(format!(
+                r#"{{"name":"{name}","dist-tags":{{"latest":"1.0.0"}},"versions":{{"1.0.0":{manifest}}},"time":{time}}}"#
+            ))
+        };
+        let docs = [
+            ("/big".to_string(), (doc("big", 1536 * 1024), doc("big", 0))),
+            ("/dated".to_string(), (doc("dated", 0), doc("dated", 3 * 1024 * 1024))),
+        ];
+        let (base, asked) = registry_of(docs.into_iter().collect());
+        let config = Config { registry: base, ..Config::default() };
+        let mut registry = Registry::new(&config, None);
+        registry.caps = [1 << 20, 2 << 20];
+        let e = registry.pick(&parse_dep("big", "*").unwrap(), None, false).unwrap_err();
+        assert_eq!(e.code, "ETOOLARGE");
+        assert!(e.message.contains("abbreviated document for \"big\" is larger than 1 MiB"), "{}", e.message);
+        // Asked for once: a document past its cap is not tried again.
+        assert_eq!(asked.lock().unwrap().len(), 1);
+        let config = Config { before: Some(now_ms()), ..config };
+        let mut registry = Registry::new(&config, None);
+        registry.caps = [1 << 20, 2 << 20];
+        let e = registry.pick(&parse_dep("dated", "*").unwrap(), None, false).unwrap_err();
+        assert!(e.message.contains("full document for \"dated\" is larger than 2 MiB"), "{}", e.message);
     }
 
     #[test]

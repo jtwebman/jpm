@@ -34,8 +34,15 @@ const MAX_HEAD: usize = 64 * 1024;
 const MAX_DRAIN: u64 = 64 * 1024;
 /// Trailer lines after a chunked body's last chunk, at most.
 const MAX_TRAILERS: usize = 64;
-/// A registry document read whole into memory, after gunzip. Far above the largest packument.
-pub const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
+/// The most a registry document may hold after gunzip, read whole into memory and kept for the
+/// run; up to 64 are read at once. Each cap is about four times the largest document of its
+/// kind measured on registry.npmjs.org (2026-10-01): abbreviated, @prisma/client 38.2 MB,
+/// renovate 35.1 MB, next 25.6 MB, prisma 23.2 MB, sanity 22.8 MB; full (for publish dates),
+/// renovate 71.2 MB, @prisma/client 68.5 MB, sanity 50.1 MB, prisma 43.9 MB, vite 39.0 MB.
+/// A registry that ignores the abbreviated type and sends the full document still fits under
+/// the abbreviated cap, twice over.
+pub const MAX_ABBREVIATED: u64 = 160 * 1024 * 1024;
+pub const MAX_FULL: u64 = 288 * 1024 * 1024;
 
 pub struct Response {
     pub status: u16,
@@ -50,18 +57,18 @@ pub struct Response {
 }
 
 /// A GET, retried on a busy server, a 5xx or a dropped connection. A 4xx is an answer, not a
-/// fault, and comes back for the caller to judge.
-pub fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>) -> Result<Response> {
-    get_capped(url, headers, auth, MAX_DOCUMENT)
-}
-
-/// `get`, its body refused past `cap` bytes.
+/// fault, and comes back for the caller to judge. A body past `cap` bytes is refused
+/// (`ETOOLARGE`), and not tried again.
 pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>, cap: u64) -> Result<Response> {
+    let failed = |u: &str, e: io::Error| match e.kind() {
+        io::ErrorKind::FileTooLarge => Error::new("ETOOLARGE", format!("Request to {u} failed: {e}")),
+        _ => read_error(u, &e),
+    };
     retry(url, |u| {
         let mut r = client().send(u, headers, auth)?;
-        let sent = read_capped(&mut r.body, cap).map_err(|e| read_error(u, &e))?;
+        let sent = read_capped(&mut r.body, cap).map_err(|e| failed(u, e))?;
         let (body, gzipped) = if r.gzip {
-            let body = gunzip(&sent, cap).map_err(|e| read_error(u, &e))?;
+            let body = gunzip(&sent, cap).map_err(|e| failed(u, e))?;
             (body, Some(sent))
         } else {
             (sent, None)
@@ -77,7 +84,7 @@ pub fn get_capped(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, S
     })
 }
 
-/// A GET whose body is read as it arrives, with its declared length; retried like `get` until
+/// A GET whose body is read as it arrives, with its declared length; retried like `get_capped` until
 /// the body starts.
 pub fn open(url: &str, auth: &BTreeMap<String, String>) -> Result<(Box<dyn Read + Send>, Option<u64>)> {
     let r = retry(url, |u| client().send(u, &[], auth))?;
@@ -142,7 +149,7 @@ fn read_capped(body: &mut impl Read, cap: u64) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     body.take(cap + 1).read_to_end(&mut out)?;
     if out.len() as u64 > cap {
-        return Err(io::Error::other(format!("more than {cap} bytes")));
+        return Err(io::Error::new(io::ErrorKind::FileTooLarge, format!("more than {cap} bytes")));
     }
     Ok(out)
 }
@@ -881,6 +888,11 @@ fn percent_decode(s: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A GET under the larger cap, as the registry asks for a full document.
+    fn get(url: &str, headers: &[(&str, &str)], auth: &BTreeMap<String, String>) -> Result<Response> {
+        get_capped(url, headers, auth, MAX_FULL)
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
