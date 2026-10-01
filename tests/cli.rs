@@ -1031,6 +1031,32 @@ fn repairs_a_damaged_tree_under_verify() {
     assert!(env.read("node_modules/b/index.js").contains("b@1.0.0"));
 }
 
+#[test]
+fn verify_finds_a_file_edited_in_place_at_its_size() {
+    // A write through a hardlink (or into a project's clone) keeps the size: its time says so.
+    let r = registry();
+    for flag in [None, Some("--no-global-store")] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+        env.ok(&["install"].into_iter().chain(flag).collect::<Vec<_>>());
+        let file = env.project().join("node_modules/b/index.js");
+        let text = std::fs::read_to_string(&file).unwrap();
+        // As a user could, files from before the store was writable included.
+        let _ = std::process::Command::new("chmod")
+            .args(["-R", "u+w"])
+            .arg(env.store())
+            .arg(env.path("node_modules"))
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&file, text.replace("b@1.0.0", "b@6.6.6")).unwrap();
+        let out = env.ok(&["install", "--verify"].into_iter().chain(flag).collect::<Vec<_>>());
+        assert!(out.contains("repaired"), "{flag:?}: {out}");
+        assert_eq!(env.read("node_modules/b/index.js"), text, "{flag:?}");
+        let again = env.ok(&["install", "--verify"].into_iter().chain(flag).collect::<Vec<_>>());
+        assert!(!again.contains("repaired"), "{flag:?}: {again}");
+    }
+}
+
 /// An install killed midway leaves entries part built, under their own names where Windows builds
 /// them in place, and no state: the next install finds each one not intact and builds it again.
 #[test]

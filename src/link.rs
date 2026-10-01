@@ -819,7 +819,12 @@ impl Linker<'_> {
             let files: Vec<FileEntry> =
                 index.files.iter().filter(|f| entry.pkg.bin.values().any(|b| *b == f.path)).cloned().collect();
             let unpacked_size = files.iter().map(|f| f.size).sum();
-            return Ok(std::sync::Arc::new(Index { files, unpacked_size, suffixed: index.suffixed }));
+            return Ok(std::sync::Arc::new(Index {
+                files,
+                unpacked_size,
+                suffixed: index.suffixed,
+                stamp: index.stamp,
+            }));
         }
         // A directory inside a package is its files under that directory, at their paths there.
         if let Some((_, at)) = entry.pkg.within() {
@@ -902,7 +907,7 @@ impl Linker<'_> {
         // A built package's files are its scripts' to change, a patched one's are not the store's.
         if !entry.build
             && entry.pkg.patch.is_none()
-            && !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| m.len() == f.size))
+            && !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| index.unchanged(f, &m)))
         {
             return Ok(false);
         }
@@ -1047,7 +1052,13 @@ impl Linker<'_> {
             }
             let (from, to) = (src.join(&*stored), dest.join(&f.path));
             match fs::copy(&from, &to) {
-                Ok(_) => Counts::add(&self.counts.copied, 1),
+                Ok(_) => {
+                    Counts::add(&self.counts.copied, 1);
+                    // The store's time, so `--verify` reads it as unchanged (`Index::unchanged`).
+                    if let Ok(t) = fs::metadata(&from).and_then(|m| m.modified()) {
+                        let _ = fs::File::options().write(true).open(&to).and_then(|f| f.set_modified(t));
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(Error::io(&e, format!("cannot copy {}", to.display())).with_code("ELINK")),
             }

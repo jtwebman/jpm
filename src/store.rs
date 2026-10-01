@@ -45,6 +45,14 @@ pub struct Index {
     pub unpacked_size: u64,
     /// Each file is stored as `<path>.jpm` (Windows); see `stored`.
     pub suffixed: bool,
+    /// When its files were all written, in ns since the epoch: a file modified since, through a
+    /// hardlink in any project, is newer (see `unchanged`). `None` in an index from before.
+    pub stamp: Option<u128>,
+}
+
+/// A file's time of last change, in ns since the epoch.
+pub fn mtime_ns(meta: &fs::Metadata) -> Option<u128> {
+    Some(meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos())
 }
 
 /// What a stored file's name ends with where the store suffixes names.
@@ -78,12 +86,28 @@ impl Index {
         let prefix = format!("{at}/");
         let inside = |f: &FileEntry| Some(FileEntry { path: f.path.strip_prefix(&prefix)?.to_string(), ..f.clone() });
         let files: Vec<FileEntry> = self.files.iter().filter_map(inside).collect();
-        Self { unpacked_size: files.iter().map(|f| f.size).sum(), files, suffixed: self.suffixed }
+        Self { unpacked_size: files.iter().map(|f| f.size).sum(), files, suffixed: self.suffixed, stamp: self.stamp }
+    }
+
+    /// The file `meta` is as unpacked: its size, and not modified after the stamp. A clone (macOS)
+    /// keeps its source's time, and a copy is given it, so the rule holds in every project too.
+    pub fn unchanged(&self, f: &FileEntry, meta: &fs::Metadata) -> bool {
+        meta.len() == f.size && self.stamp.is_none_or(|s| mtime_ns(meta).is_some_and(|m| m <= s))
+    }
+
+    /// Stamped now: every file is written.
+    fn stamped(mut self) -> Self {
+        self.stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_nanos());
+        self
     }
 
     fn render(&self) -> String {
         use std::fmt::Write as _;
-        let mut out = format!("jpm-index {} {}\n", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
+        let mut out = format!("jpm-index {} {}", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
+        if let Some(stamp) = self.stamp {
+            let _ = write!(out, " {stamp}");
+        }
+        out.push('\n');
         for f in &self.files {
             let _ = writeln!(out, "{} {} {}", if f.exec { 'x' } else { '-' }, f.size, f.path);
         }
@@ -98,6 +122,10 @@ impl Index {
             Some(size) => (true, size),
             None => (false, head.strip_prefix("jpm-index 1 ")?),
         };
+        let (size, stamp) = match size.split_once(' ') {
+            Some((size, stamp)) => (size, Some(stamp.parse().ok()?)),
+            None => (size, None),
+        };
         let unpacked_size = size.parse().ok()?;
         let files = lines
             .map(|line| {
@@ -110,7 +138,7 @@ impl Index {
                 Some(FileEntry { path: path.to_string(), size: size.parse().ok()?, exec: flag == "x" })
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(Self { files, unpacked_size, suffixed })
+        Some(Self { files, unpacked_size, suffixed, stamp })
     }
 }
 
@@ -407,10 +435,10 @@ impl Store {
         Some(index)
     }
 
-    /// Every file still there at the size the index says: what `--verify` pays for.
+    /// Every file still there, as unpacked (`Index::unchanged`): what `--verify` pays for.
     fn intact(&self, integrity: &str, index: &Index) -> bool {
         let Ok(dir) = self.path_of(integrity) else { return false };
-        index.files.iter().all(|f| fs::metadata(dir.join(index.stored(&f.path))).is_ok_and(|m| m.len() == f.size))
+        index.files.iter().all(|f| fs::metadata(dir.join(index.stored(&f.path))).is_ok_and(|m| index.unchanged(f, &m)))
     }
 
     pub fn was_fetched(&self, integrity: &str) -> bool {
@@ -515,7 +543,7 @@ impl Store {
     /// under `repair`); `temp` is gone or staged either way.
     fn keep(&self, integrity: &str, checked: Result<Index>, temp: &Path, repair: bool) -> Result<Arc<Index>> {
         let temp = temp.to_path_buf();
-        let index = match checked {
+        let index = match checked.map(Index::stamped) {
             // Verified, and nowhere another process could read it yet: the linker's to move.
             Ok(index) if !repair && self.staging.load(Ordering::Relaxed) => {
                 let index = Arc::new(index);
@@ -550,7 +578,7 @@ impl Store {
         // Only a broken entry is replaced: one with no index yet may be another adopt's, mid-publish.
         let result = match self.index(&integrity) {
             Some(index) if self.intact(&integrity, &index) => Ok(index),
-            hit => unpacked.and_then(|index| self.publish(&integrity, index, &temp, hit.is_some())),
+            hit => unpacked.and_then(|index| self.publish(&integrity, index.stamped(), &temp, hit.is_some())),
         };
         remove_tree(&temp);
         Ok((result?, integrity))
@@ -1038,7 +1066,7 @@ pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index
     }
     let unpacked_size = files.values().map(|(size, _)| size).sum();
     let files = files.into_iter().map(|(path, (size, exec))| FileEntry { path, size, exec }).collect();
-    Ok(Index { files, unpacked_size, suffixed: suffix })
+    Ok(Index { files, unpacked_size, suffixed: suffix, stamp: None })
 }
 
 /// A file's name in an entry: its path, and the suffix where the store has one.
@@ -1101,7 +1129,7 @@ fn store_exe(source: &mut dyn Read, dest: &Path, url: &str) -> Result<Index> {
     let size = io::copy(&mut source.take(tar::MAX_ARCHIVE), &mut out)
         .map_err(|e| Error::io(&e, format!("cannot write {}", file.display())))?;
     let files = vec![FileEntry { path: name.to_string(), size, exec: true }];
-    Ok(Index { files, unpacked_size: size, suffixed: SUFFIX_FILES })
+    Ok(Index { files, unpacked_size: size, suffixed: SUFFIX_FILES, stamp: None })
 }
 
 /// Take out of an unpacked repository what `npm pack` would leave out under package.json's
@@ -1567,6 +1595,20 @@ pub mod tests {
         }
         assert_eq!(copy_body(&mut Fails, &mut Writes::default(), &mut buf, file).unwrap_err().code, "EBADTAR");
         assert_ne!(copy_body(&mut &data[..], &mut Fails, &mut buf, file).unwrap_err().code, "EBADTAR");
+    }
+
+    #[test]
+    fn index_keeps_its_stamp() {
+        let index = Index {
+            files: vec![FileEntry { path: "a.js".into(), size: 1, exec: false }],
+            unpacked_size: 1,
+            suffixed: false,
+            stamp: Some(42),
+        };
+        assert_eq!(Index::parse(&index.render()), Some(index));
+        // One from before stamps reads, and is held to sizes alone.
+        assert_eq!(Index::parse("jpm-index 1 1\n- 1 a.js\n").unwrap().stamp, None);
+        assert!(Index::parse("jpm-index 1 1 x\n- 1 a.js\n").is_none());
     }
 
     #[test]
