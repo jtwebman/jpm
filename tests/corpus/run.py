@@ -34,8 +34,11 @@ def repos(path, only):
     return out
 
 
-# A manager in command position: a line's start, or after ; && || | or (.
-OTHER_PM = re.compile(r"(?:^|[;&|(])\s*(pnpm|yarn|bunx?)(?=\s|$)")
+# A manager in command position: a line's start, or after ; && || | or (. bun is a runtime too
+# (bun test, bun build, bun ./x.ts), which jpm installs and leaves as is: only its package
+# manager's commands count, and `bun run` of a script, not of a file.
+AT = r"(?:^|[;&|(])\s*"
+OTHER_PM = re.compile(AT + r"(?:(pnpm|yarn)(?=\s|$)|(bunx)(?=\s|$)|(bun)(?=\s+(?:install|i|add|remove|rm|x|run\s+[\w:-]+(?=\s|$|[;&|)]))\b))")
 
 
 def calls(work):
@@ -52,7 +55,7 @@ def calls(work):
         for key, line in scripts.items() if isinstance(scripts, dict) else []:
             if not isinstance(line, str):
                 continue
-            for pm in set(OTHER_PM.findall(line)):
+            for pm in {next(g for g in m if g) for m in OTHER_PM.findall(line)}:
                 pm = "bun" if pm == "bunx" else pm
                 used[pm] = used.get(pm, 0) + 1
             if key == "preinstall" and ("only-allow" in line or "npm_config_user_agent" in line or "block-npm" in line):
@@ -65,9 +68,11 @@ def fixup(work):
     """The changes `calls` names, made: each script's pnpm, yarn or bun is jpm (dlx and bunx jpx),
     and a preinstall that lets one manager in is gone. The number of scripts changed."""
     changed = 0
-    swap = [(re.compile(r"(^|[;&|(]\s*)(?:pnpm|yarn) dlx(?=\s)"), r"\1jpx"),
-            (re.compile(r"(^|[;&|(]\s*)bunx(?=\s|$)"), r"\1jpx"),
-            (re.compile(r"(^|[;&|(]\s*)(?:pnpm|yarn|bun)(?=\s|$)"), r"\1jpm")]
+    at = r"(^|[;&|(]\s*)"
+    swap = [(re.compile(at + r"(?:pnpm|yarn) dlx(?=\s)"), r"\1jpx"),
+            (re.compile(at + r"(?:bunx|bun x)(?=\s|$)"), r"\1jpx"),
+            (re.compile(at + r"(?:pnpm|yarn)(?=\s|$)"), r"\1jpm"),
+            (re.compile(at + r"bun(?=\s+(?:install|i|add|remove|rm|run\s+[\w:-]+(?:\s|$|[;&|)])))"), r"\1jpm")]
     files = subprocess.run(["git", "ls-files", "package.json", "*/package.json"], cwd=work,
                            capture_output=True, text=True).stdout.split()
     for f in files:
