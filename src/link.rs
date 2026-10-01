@@ -1564,7 +1564,7 @@ fn replace_link(at: &Path, target: &str, within_dir: &Path, dir: bool) -> Result
 /// link to the winner's. Run again, it picks a longer name.
 fn name_shared(global: &Path, wanted: &mut HashMap<String, Entry>, digests: &HashMap<String, String>) {
     // Tests set how much of the digest names show; none makes every name collide.
-    let shown = std::env::var("JPM_DIGEST_SHOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(DIGEST_SHOWN);
+    let shown = crate::util::test_hook("JPM_DIGEST_SHOWN").and_then(|v| v.parse().ok()).unwrap_or(DIGEST_SHOWN);
     let mut named: HashMap<String, (String, String)> = HashMap::new();
     for (id, e) in wanted.iter_mut().filter(|(_, e)| e.shared) {
         // `<name>@<version>-<digest>`, as `keys::store_keys` spells it: the name and version.

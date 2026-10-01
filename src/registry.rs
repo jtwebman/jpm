@@ -526,12 +526,13 @@ fn wildcard(p: &[u8], s: &[u8]) -> bool {
 
 // --- picking a version ------------------------------------------------------------------------
 
-/// The node this tree will run on, for `engines.node`: `JPM_NODE_VERSION`, else `node --version`.
+/// The node this tree will run on, for `engines.node`: `node --version` (in a debug build,
+/// `JPM_NODE_VERSION` first, for the tests).
 /// Asked once, and only when a pick has to rank versions. No node means every engine passes.
 pub fn node_version() -> Option<&'static Version> {
     static NODE: OnceLock<Option<Version>> = OnceLock::new();
     NODE.get_or_init(|| {
-        let text = std::env::var("JPM_NODE_VERSION").ok().or_else(|| {
+        let text = crate::util::test_hook("JPM_NODE_VERSION").or_else(|| {
             let out = std::process::Command::new(crate::run::which("node")?).arg("--version").output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
         })?;
