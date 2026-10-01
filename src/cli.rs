@@ -72,7 +72,8 @@ Options
   --ignore-scripts     install: run no install or lifecycle scripts (also ignore-scripts=true)
   --legacy-peer-deps   install no peers; link one only to what the tree has
                        (also legacy-peer-deps=true; yarn.lock from yarn 1 is read this way)
-  --verify             install: check sizes, links, bins and peers, not file contents
+  --verify             install: check links, bins, peers, and each file's size and time:
+                       one changed since it was unpacked is fetched or linked again
   --no-global-store    install: build package entries in the project, not once in the store
                        (also global-store=false in .npmrc or JPM_GLOBAL_STORE=0)
   --no-verify-node-signature
