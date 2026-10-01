@@ -819,6 +819,44 @@ fn runs_every_script_a_pattern_matches() {
     assert!(fails("/(a)\\1/").contains("backreferences are not read"));
 }
 
+#[cfg(unix)]
+#[test]
+fn execs_and_runs_across_workspaces_as_pnpm_and_yarn_do() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["p/*"] }));
+    for (dir, name, deps) in
+        [("a", "@s/a", json!({})), ("b", "b", json!({ "@s/a": "workspace:*" })), ("c", "c", json!({}))]
+    {
+        let m = json!({ "name": name, "version": "1.0.0", "dependencies": deps,
+            "scripts": { "build": format!("echo {name} >> ../../ran.txt") } });
+        env.write(&format!("p/{dir}/package.json"), &m.to_string());
+    }
+    env.ok(&["install"]);
+    let ran = |args: &[&str]| {
+        let _ = std::fs::remove_file(env.path("ran.txt"));
+        env.ok(args);
+        env.read("ran.txt").lines().map(str::to_string).collect::<Vec<_>>().join(" ")
+    };
+    // In each workspace's own directory, dependencies first.
+    assert_eq!(ran(&["-r", "exec", "sh", "-c", "basename $PWD >> ../../ran.txt"]), "a b c");
+    assert_eq!(ran(&["--filter", "b...", "exec", "sh", "-c", "basename $PWD >> ../../ran.txt"]), "a b");
+    // yarn berry's workspaces foreach, its -p and --exclude its own.
+    assert_eq!(ran(&["workspaces", "foreach", "-A", "-p", "-t", "run", "build"]), "@s/a b c");
+    assert_eq!(ran(&["workspaces", "foreach", "--all", "--exclude", "b", "run", "build"]), "@s/a c");
+    assert_eq!(
+        ran(&["workspaces", "foreach", "--include", "@s/*", "exec", "sh", "-c", "basename $PWD >> ../../ran.txt"]),
+        "a"
+    );
+    // A failure stops the rest.
+    let out = env.jpm(&["-r", "exec", "sh", "-c", "exit 3"]);
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&env.jpm(&["workspaces", "foreach", "--since", "run", "build"]).stderr)
+            .contains("--since")
+    );
+}
+
 #[test]
 fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
     let r = registry();

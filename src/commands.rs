@@ -2760,6 +2760,32 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     if e.call && !e.args.is_empty() {
         return Err(fail("EOPTION", "exec takes a call line or args, not both"));
     }
+    // pnpm's `-r exec` and `--filter x exec`: the command in each workspace picked, in their
+    // dependency order, its own bins first, stopping at the first that fails.
+    if e.opts.workspaces.is_some() {
+        if e.packages.is_some() {
+            return Err(fail("EOPTION", "exec -p installs into one place: not with -w, --filter or -r"));
+        }
+        install_first(&e.opts)?;
+        for top in packages(&e.opts)? {
+            let bins = run::bin_dirs(&top.dir);
+            let line = if e.call {
+                command.to_string()
+            } else {
+                let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(command, &top.dir, &bins);
+                run::shell_line(&run::quote_program(command, cfg!(windows)), &e.args, batch)
+            };
+            if !ui::quiet() {
+                eprintln!("{}", ui::paint(ui::GRAY, &format!("> {}: {line}", top.name), false));
+            }
+            let code = run::wait(&mut run::shell(&line, &top.dir, &bins, &project::find_root(&top.dir).dir))?;
+            if code != 0 {
+                warn(&format!("{command} failed in {} ({}) with code {code}", top.name, top.path));
+                return Ok(code);
+            }
+        }
+        return Ok(0);
+    }
     let cwd = std::path::absolute(e.opts.dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()))
         .unwrap_or_default();
     // The `.bin` of the directory exec installed in (`installed`), if it did, then those above cwd.
