@@ -8,7 +8,9 @@
 //! ```
 //!
 //! A package can import only what it declared, and entries are built in parallel under temp
-//! names and renamed in whole, so a reader never sees half of one.
+//! names and renamed in whole, so a reader never sees half of one. On Windows, a `node_modules`
+//! the install made has its entries built where they stay; two installs of one project take
+//! turns (see `Turn`), so neither meets the other's half-built entries.
 //!
 //! With the global virtual store, entries are built once in `<store>/v1/links` and the project
 //! links its direct deps straight to them: a warm install makes only those links.
@@ -43,6 +45,10 @@ const IN_PLACE: bool = WIN;
 pub const HOIST: &str = "node_modules";
 /// Under `.jpm` when entries are in the global store: Node's fallback to the hoist for `import`.
 pub const HOOK: &str = "hoist.cjs";
+/// The file under `.jpm` that installs of the project take turns on (see `Turn`).
+const TURN: &str = ".lock";
+/// Under `.jpm` while entries are built in place: an install killed midway leaves it (see `Turn`).
+const BUILDING: &str = ".building";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
 /// A global entry's file holding the whole digest of the subgraph it was built for: its name
@@ -305,8 +311,49 @@ struct Linker<'a> {
     copy_only: AtomicBool,
     /// Optional packages settled while linking (project layout): whether each arrived.
     settled: Mutex<HashMap<String, bool>>,
-    /// The project's `node_modules` was made by this run.
+    /// The project's `node_modules` was made by this run, and was still empty when its turn came.
     fresh_nm: bool,
+    /// Entries are built where they stay (see `materialize`).
+    in_place: bool,
+    /// The last install to build entries in place stopped before it finished (see `Turn`): no
+    /// entry there is taken as built.
+    unfinished: bool,
+}
+
+/// The project's turn to link: a lock on `.jpm/.lock`, held from before the state is read until
+/// after it is written, so two installs of one project take turns. Without it, on Windows, one
+/// would take an entry the other was still building in place for built, or the two would build
+/// into one directory (see `materialize`). The second reads the first's state when its turn
+/// comes: a no-op when that tree is the one it wants. The lock goes with the process.
+///
+/// Entries are built in place only with the turn held, and `.jpm/.building` there from before
+/// the first until every one is whole. An install killed midway (Ctrl+C) leaves it, and the next
+/// trusts none of the entries: `intact` cannot tell a patched or install-script package's files
+/// half built.
+struct Turn {
+    _file: fs::File,
+}
+
+impl Turn {
+    /// `None` where the file cannot be made or locked: entries are then never built in place.
+    fn take(entries_dir: &Path) -> Option<Turn> {
+        let path = entries_dir.join(TURN);
+        // A checkout can ship it as a link out of the project, which opening would follow.
+        if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            let _ = remove_link(&path);
+        }
+        // Never written: one that is there already, whatever it is, is only read.
+        let file = fs::File::create_new(&path).or_else(|_| fs::File::open(&path)).ok()?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => {
+                crate::ui::info("waiting for another install of this project to finish");
+                file.lock().ok()?;
+            }
+            Err(fs::TryLockError::Error(_)) => return None,
+        }
+        Some(Turn { _file: file })
+    }
 }
 
 pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
@@ -316,8 +363,12 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     // built there, and stale ones swept away.
     let real_root =
         fs::canonicalize(opts.dir).map_err(|e| Error::io(&e, format!("cannot read {}", opts.dir.display())))?;
-    inside(&opts.dir.join("node_modules"), &real_root)?;
+    let nm = opts.dir.join("node_modules");
+    inside(&nm, &real_root)?;
     inside(&entries_dir, &real_root)?;
+    let made_nm = fs::create_dir(&nm).is_ok();
+    fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
+    let turn = Turn::take(&entries_dir);
     let previous = state::read(opts.dir);
     // `links`: each top's, in the order of `tops`.
     let state_of = |entries: Vec<String>, shared: Vec<String>, complete: bool, links: Vec<RootLinks>| {
@@ -393,10 +444,6 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             },
         );
     }
-    // A `node_modules` this run makes holds nothing but what it links: those links are made
-    // without looking for one there first (see `link_top`).
-    let fresh_nm = fs::create_dir(opts.dir.join("node_modules")).is_ok();
-    fs::create_dir_all(&entries_dir).map_err(|e| Error::io(&e, format!("cannot create {}", entries_dir.display())))?;
     // An entry that lacks an optional package, or reaches one that does, stays in the project:
     // a global copy would be incomplete for everyone else.
     // So does one being built, and one whose peer is a workspace of this project, and every
@@ -445,6 +492,17 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
+    // A `node_modules` this run makes holds nothing but what it links: those links are made
+    // without looking for one there first (see `link_top`). Made, and still empty when the turn
+    // came: another install of the project may have had its turn first.
+    let fresh_nm = made_nm
+        && present.iter().all(|n| n == TURN)
+        && fs::read_dir(&nm).into_iter().flatten().flatten().all(|e| e.file_name() == ".jpm");
+    // Made new, never through a link a checkout put there; removed (as a link, if one) once every
+    // entry is whole.
+    let building = entries_dir.join(BUILDING);
+    let unfinished = fs::symlink_metadata(&building).is_ok();
+    let in_place = IN_PLACE && fresh_nm && turn.is_some() && fs::File::create_new(&building).is_ok();
 
     let linker = Linker {
         opts,
@@ -456,6 +514,8 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         copy_only: AtomicBool::new(false),
         settled: Mutex::default(),
         fresh_nm,
+        in_place,
+        unfinished,
     };
     let failures: Mutex<Vec<Error>> = Mutex::default();
     // In the graph's order, which is the order an install queues their downloads in.
@@ -483,7 +543,12 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         });
         hoist.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
-    if let Some(e) = failures.into_inner().unwrap_or_default().into_iter().next() {
+    let failures = failures.into_inner().unwrap_or_default();
+    // No entry failed: each one built in place is whole.
+    if turn.is_some() && failures.is_empty() && (in_place || unfinished) {
+        let _ = remove_link(&building);
+    }
+    if let Some(e) = failures.into_iter().next() {
         return Err(e);
     }
     hoisted?;
@@ -765,7 +830,7 @@ impl Linker<'_> {
             let nm = fin.join("node_modules");
             inside(&nm, &self.real_root)?;
             inside(&nm.join(".bin"), &self.real_root)?;
-            if self.intact(entry)? {
+            if !self.unfinished && self.intact(entry)? {
                 Counts::add(&self.counts.reused, 1);
                 // Touched, so a prune reads "still wanted" off its mtime.
                 if let Ok(f) = fs::File::open(&fin) {
@@ -785,10 +850,9 @@ impl Linker<'_> {
         // Windows it is built where it stays. A directory renamed there empties the name cache of
         // the file system filters (Windows Defender's among them), and every link made after it
         // has each directory above it read again: renaming each entry into place took a third of
-        // a warm install's time. An install killed midway leaves an entry the next one finds not
-        // intact, and builds again; one that another install of the tree made first is built
-        // beside it and renamed, as anywhere else.
-        if IN_PLACE && self.fresh_nm && fs::create_dir(&fin).is_ok() {
+        // a warm install's time. Another install of the project waits its turn (see `Turn`), and
+        // one killed midway leaves `BUILDING`: the next builds every entry there again.
+        if self.in_place && fs::create_dir(&fin).is_ok() {
             if let Err(e) = self.build(entry, &fin, Made::Root) {
                 remove_tree(&fin);
                 return Err(e);

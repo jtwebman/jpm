@@ -901,6 +901,134 @@ fn rebuilds_entries_an_install_left_part_built() {
     assert!(again.contains("up to date"), "{again}");
 }
 
+/// Two installs of one new project at once, into one new store, its downloads slow: an entry of
+/// a `node_modules` an install made is built under its own name on Windows, and waits there for
+/// its package. Whichever install ends first, every entry is whole then, and both succeed.
+#[test]
+fn two_installs_of_one_new_project_both_end_with_every_entry_whole() {
+    const FILES: usize = 12;
+    let names: Vec<String> = (0..10).map(|i| format!("c{i:02}")).collect();
+    let r = Registry::start(
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let deps = names.get(i + 1).map_or_else(|| json!({}), |d| json!({ d: "1.0.0" }));
+                (0..FILES).fold(pkg(n, "1.0.0", json!({ "dependencies": deps })), |p, j| {
+                    p.file(&format!("lib/f{j}.js"), 0o644, &format!("{n} {j}"))
+                })
+            })
+            .collect(),
+    );
+    let env = Env::new(&r);
+    let deps: serde_json::Map<String, serde_json::Value> = names.iter().map(|n| (n.clone(), json!("1.0.0"))).collect();
+    env.manifest(json!({ "dependencies": deps }));
+    env.ok(&["lock"]);
+    r.slow_tarballs(60);
+    let whole = |when: &str| {
+        for (i, n) in names.iter().enumerate() {
+            for j in 0..FILES {
+                assert_eq!(env.read(&format!("node_modules/{n}/lib/f{j}.js")), format!("{n} {j}"), "{when}: {n} f{j}");
+            }
+            if let Some(d) = names.get(i + 1) {
+                let dep = env.read(&format!("node_modules/{n}/../{d}/index.js"));
+                assert!(dep.contains(&format!("{d}@1.0.0")), "{when}: {n} -> {d}");
+            }
+        }
+    };
+    let text = |o: &std::process::Output| {
+        format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+    };
+    let store_of = |round: usize| env.root.join(format!("store-{round}"));
+    const ROUNDS: usize = 16;
+    for round in 0..ROUNDS {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        let store = store_of(round);
+        let start = || {
+            env.command(&["install", "--no-global-store", "--store", store.to_str().unwrap()])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        let mut both = [start(), start()];
+        // The moment either ends, the tree it installed is whole, the other done or not.
+        let first = loop {
+            if let Some(i) = (0..2).find(|&i| both[i].try_wait().unwrap().is_some()) {
+                break i;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        let [a, b] = both;
+        let (a, b) = (a.wait_with_output().unwrap(), b.wait_with_output().unwrap());
+        let ended = if first == 0 { &a } else { &b };
+        assert!(ended.status.success(), "round {round}, the first to end:\n{}", text(ended));
+        whole(&format!("round {round}, as the first install ended"));
+        assert!(a.status.success() && b.status.success(), "round {round}:\n{}\n{}", text(&a), text(&b));
+        whole(&format!("round {round}, both ended"));
+    }
+    let again = env.ok(&["install", "--no-global-store", "--store", store_of(ROUNDS - 1).to_str().unwrap()]);
+    assert!(again.contains("up to date"), "{again}");
+}
+
+/// An install of a project waits while another holds the project's turn
+/// (`node_modules/.jpm/.lock`), and links once it is let go.
+#[test]
+fn an_install_waits_for_the_projects_turn() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    // No state: the install links rather than reading the tree as up to date.
+    std::fs::remove_file(env.path("node_modules/.jpm.json")).unwrap();
+    let turn = std::fs::OpenOptions::new().write(true).open(env.path("node_modules/.jpm/.lock")).unwrap();
+    turn.lock().unwrap();
+    let mut install = env
+        .command(&["install", "--no-global-store"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(install.try_wait().unwrap().is_none(), "linked while another install held the turn");
+    drop(turn);
+    let out = install.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && text.contains("waiting for another install of this project"), "{text}");
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+    let again = env.ok(&["install", "--no-global-store"]);
+    assert!(again.contains("up to date"), "{again}");
+}
+
+/// An install killed while it built entries in place (Windows) leaves `node_modules/.jpm/.building`,
+/// and no state. The next install takes none of the entries there as built, not even one that
+/// looks whole, and builds each again.
+#[test]
+fn rebuilds_every_entry_after_an_install_stopped_building_in_place() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    env.ok(&["install", "--no-global-store"]);
+    // Gone once every entry was whole, where it was made.
+    let building = env.path("node_modules/.jpm/.building");
+    assert!(!building.exists());
+    // a's file at its size but not what it holds, as a patch or an install script's copy left
+    // half done leaves it: a size is all `intact` reads.
+    let file = env.path("node_modules/a/index.js");
+    let size = env.read("node_modules/a/index.js").len();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::write(&file, "x".repeat(size)).unwrap();
+    std::fs::remove_file(env.path("node_modules/.jpm.json")).unwrap();
+    std::fs::write(&building, "").unwrap();
+    let out = env.ok(&["install", "--no-global-store"]);
+    assert!(out.contains("2 repaired"), "{out}");
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+    assert!(env.read("node_modules/a/../b/index.js").contains("b@1.1.0"));
+    assert!(!building.exists());
+    let again = env.ok(&["install", "--no-global-store"]);
+    assert!(again.contains("up to date"), "{again}");
+}
+
 /// The entries built in a project's `.jpm`.
 fn entries(dir: &std::path::Path) -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir(dir.join("node_modules/.jpm"))
