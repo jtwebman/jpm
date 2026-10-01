@@ -218,9 +218,17 @@ pub fn resolve_threads() -> usize {
     network_threads().saturating_mul(2)
 }
 
-/// Threads for disk-bound work: the cores this process may use.
+/// On Windows, disk-bound threads at most. Each file a thread creates, links or renames there
+/// passes through the file system filters (Windows Defender's among them) and NTFS's locks, where
+/// the other threads' wait: on 24 cores, linking nuxt's 13,600 files took 2.3 times the CPU on 24
+/// threads that it took on 6, and longer. 4 took less CPU still, and longer to link.
+const WINDOWS_DISK_THREADS: usize = 6;
+
+/// Threads for disk-bound work: the cores this process may use, and on Windows no more than
+/// `WINDOWS_DISK_THREADS`.
 pub fn disk_threads() -> usize {
-    std::thread::available_parallelism().map_or(4, usize::from).max(2)
+    let cores = std::thread::available_parallelism().map_or(4, usize::from).max(2);
+    if cfg!(windows) { cores.min(WINDOWS_DISK_THREADS) } else { cores }
 }
 
 #[cfg(test)]
