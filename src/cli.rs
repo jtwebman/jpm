@@ -85,6 +85,10 @@ Options
   -w, --workspace <name|path>
                        add, remove, run: select workspaces (repeatable; parent paths work)
   --workspaces         run: select all workspaces
+  -F, --filter <selector>
+                       as -w, with pnpm's selectors: a name glob (@s/*), !x to leave x out,
+                       x... with what x depends on, ...x with what depends on x, ^ without x
+  -r, --recursive      run: every workspace with the script (pnpm's -r); --filter narrows it
   -h, --help           show help
   -v, --version        show the version
 
@@ -170,6 +174,8 @@ struct Cli {
     implied: bool,
     workspace: Option<Vec<String>>,
     workspaces: bool,
+    /// pnpm's `-r`: every workspace, those without the script skipped; `--filter` narrows it.
+    recursive: bool,
     include_root: bool,
     if_present: bool,
     yes: bool,
@@ -204,7 +210,20 @@ const COMMANDS: [&str; 13] = [
     "patch-commit",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 8] = ["--no-audit", "--no-fund", "--force", "--verbose", "-S", "--save", "-P", "--save-prod"];
+const NOOPS: [&str; 11] = [
+    "--no-audit",
+    "--no-fund",
+    "--force",
+    "--verbose",
+    "-S",
+    "--save",
+    "-P",
+    "--save-prod",
+    // pnpm's, for how a recursive run prints: jpm runs workspaces in their dependency order.
+    "--parallel",
+    "--stream",
+    "--sequential",
+];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
 fn npm_command(name: &str) -> bool {
@@ -268,7 +287,8 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--store" => cli.store = Some(value()?),
             "--dir" | "--prefix" | "-C" => cli.dir = Some(value()?),
             "--edit-dir" => cli.edit_dir = Some(value()?),
-            "-w" | "--workspace" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
+            // pnpm's --filter selects as -w does, with its selectors too (see `select_workspaces`).
+            "-w" | "--workspace" | "-F" | "--filter" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
             "-c" | "--call" => cli.call = Some(value()?),
             "-p" | "--package" => cli.packages.get_or_insert_with(Vec::new).push(value()?),
             "--before" => {
@@ -312,6 +332,7 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             "--no-progress" => cli.no_progress = true,
             "-y" | "--yes" => cli.yes = true,
             "--workspaces" => cli.workspaces = true,
+            "-r" | "--recursive" => cli.recursive = true,
             "--include-workspace-root" => cli.include_root = true,
             "--if-present" => cli.if_present = true,
             "-h" | "--help" => cli.help = true,
@@ -339,6 +360,10 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
     }
     if include_dev {
         cli.production = false;
+    }
+    // `pnpm -r`: every workspace, unless a --filter says which, as pnpm reads them together.
+    if cli.recursive && cli.workspace.is_none() {
+        cli.workspaces = true;
     }
     Ok(cli)
 }
@@ -532,7 +557,8 @@ fn opts(cli: &Cli) -> Opts {
         },
         exact: cli.exact,
         workspaces: if cli.workspaces { Some(Select::All) } else { cli.workspace.clone().map(Select::Some) },
-        if_present: cli.if_present,
+        // A recursive run skips the workspaces without the script, as pnpm's does.
+        if_present: cli.if_present || cli.recursive,
         include_root: cli.include_root,
         ignore_scripts: cli.ignore_scripts,
     }
