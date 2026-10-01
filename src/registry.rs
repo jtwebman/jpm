@@ -297,8 +297,10 @@ impl Registry {
     /// A full document as the registry stood at the release cutoff, by its own dates.
     fn cut(&self, name: &str, full: Arc<Packument>) -> Arc<Packument> {
         let Some(before) = self.before.filter(|_| !self.excluded(name)) else { return full };
-        let modified = full.time.get("modified").or(full.modified.as_ref());
-        if modified.and_then(|m| parse_date(m)).is_some_and(|m| m <= before) {
+        // Every version dated before the cutoff: nothing to take out. By the versions' own dates,
+        // not `modified`, which a registry may leave behind its last publish (npm.jsr.io does).
+        let dated = |v: &str| full.time.get(v).and_then(|t| parse_date(t)).is_some_and(|t| t <= before);
+        if full.versions().all(dated) {
             return full;
         }
         Arc::new(full.copy().until(&full.time, before))

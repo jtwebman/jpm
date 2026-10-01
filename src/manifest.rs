@@ -259,15 +259,21 @@ impl Packument {
     }
 
     /// As the registry stood at `before` (epoch ms): later versions gone, and a tag on one moved to
-    /// the highest version at or below it that is left. A version with no date passes.
+    /// the highest version at or below it that is left. A date that cannot be read is no date
+    /// before the cutoff, and nor is none for a version of a document that dates the others; a
+    /// document with no dates at all (a registry that keeps none) passes.
     pub fn until(mut self, times: &Map, before: i64) -> Self {
+        let dated = times.keys().any(|k| k != "created" && k != "modified");
         let mut held = Map::new();
         self.spans.retain(|v, _| {
-            let date = times.get(v).filter(|t| parse_date(t).is_some_and(|t| t > before));
+            let date = match times.get(v) {
+                Some(t) => parse_date(t).is_none_or(|t| t > before).then(|| t.clone()),
+                None => dated.then(|| "at a date the registry does not give".to_string()),
+            };
             if let Some(date) = date {
-                held.insert(v.clone(), date.clone());
+                held.insert(v.clone(), date);
             }
-            date.is_none()
+            !held.contains_key(v)
         });
         self.held = held;
         let kept: Vec<String> = self.spans.keys().cloned().collect();
@@ -401,6 +407,22 @@ mod tests {
         let p = p.until(&times, parse_date("2022-01-01").unwrap());
         assert_eq!(p.tags["latest"], "1.0.0");
         assert_eq!(p.versions().count(), 1);
+    }
+
+    #[test]
+    fn holds_back_a_version_it_cannot_date() {
+        let doc = br#"{"name":"a","dist-tags":{"latest":"1.2.0"},"versions":{"1.0.0":{},"1.1.0":{},"1.2.0":{}}}"#;
+        let p = Packument::parse(doc.to_vec()).unwrap();
+        // 1.1.0's date cannot be read (a month 13), and 1.2.0 has none where the others have one.
+        let times: Map =
+            [("1.0.0".into(), "2020-01-01T00:00:00.000Z".into()), ("1.1.0".into(), "2021-13-01T00:00:00.000Z".into())]
+                .into();
+        let cut = parse_date("2022-01-01").unwrap();
+        let held = p.copy().until(&times, cut);
+        assert_eq!(held.versions().collect::<Vec<_>>(), ["1.0.0"]);
+        assert_eq!(held.tags["latest"], "1.0.0");
+        // A registry that dates nothing: nothing to go by, as before.
+        assert_eq!(p.until(&Map::new(), cut).versions().count(), 3);
     }
 
     #[test]
