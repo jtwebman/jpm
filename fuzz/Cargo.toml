@@ -1,0 +1,121 @@
+[package]
+name = "jpm-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "cargo-fuzz targets for jpm's parsers; never part of the jpm build"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace: the root's `cargo build`, `clippy` and `test` never see this crate, and it
+# never sees the root's release profile.
+[workspace]
+members = ["."]
+
+[lib]
+name = "jpm"
+path = "src/lib.rs"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# What jpm itself depends on, as its Cargo.toml has it: src/ is compiled into this crate.
+jpm-crypto = { path = "../crates/crypto" }
+jpm-pk = { path = "../crates/pk" }
+jpm-tls = { path = "../crates/tls" }
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
+webpki-roots = "1"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"
+
+[target."cfg(windows)".dependencies]
+junction = "2.1.0"
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "tar"
+path = "fuzz_targets/tar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extract"
+path = "fuzz_targets/extract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lockfile"
+path = "fuzz_targets/lockfile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "foreign"
+path = "fuzz_targets/foreign.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "yaml"
+path = "fuzz_targets/yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "semver"
+path = "fuzz_targets/semver.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "spec"
+path = "fuzz_targets/spec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packument"
+path = "fuzz_targets/packument.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "npmrc"
+path = "fuzz_targets/npmrc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "x509"
+path = "fuzz_targets/x509.rs"
+test = false
+doc = false
+bench = false
