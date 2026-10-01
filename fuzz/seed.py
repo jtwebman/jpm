@@ -185,6 +185,24 @@ def by_hand():
     put("manifest", '{"name":"a","version":"1.0.0","bin":"x.js","dist":{"shasum":"0000000000000000000000000000000000000000"}}')
 
 
+def patches():
+    put("patch", "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n")
+    put("patch", "diff --git a/lib/x.js b/lib/y.js\nsimilarity index 50%\nrename from lib/x.js\nrename to lib/y.js\n"
+                 "--- a/lib/x.js\n+++ b/lib/y.js\n@@ -1,2 +1,2 @@\n x\r\n-y\r\n+z\r\n")
+    put("patch", "diff --git a/new.js b/new.js\nnew file mode 100755\n--- /dev/null\n+++ b/new.js\n@@ -0,0 +1 @@\n+n\n"
+                 "\\ No newline at end of file\n")
+    put("patch", "diff --git a/index.js b/index.js\ndeleted file mode 100644\nindex 1234567..0000000\n--- a/index.js\n"
+                 "+++ /dev/null\n@@ -1,3 +0,0 @@\n-a\n-b\n-c\n")
+    put("patch", 'diff --git "a/sp ace.js" "b/\\303\\274.js"\n--- "a/sp ace.js"\n+++ "b/\\303\\274.js"\n@@ -1 +1 @@\n-a\n+b\n')
+    node = ROOT / "tests" / "fixtures" / "node"
+    keys = sorted(node.glob("*.asc"))
+    for sig in node.glob("*.sig"):
+        s, doc = sig.read_bytes(), (node / sig.name[:-4]).read_bytes()
+        for key in keys:
+            k = key.read_bytes()
+            put("pgp", len(s).to_bytes(2, "big") + s + len(k).to_bytes(2, "big") + k + doc)
+
+
 def certs():
     for f in pathlib.Path("/etc/ssl/certs").glob("*.pem"):
         text = f.read_text(errors="ignore")
@@ -205,6 +223,7 @@ def main():
     tars()
     conformance()
     by_hand()
+    patches()
     certs()
     for e in a.extra:
         extra(e)
