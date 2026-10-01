@@ -212,6 +212,79 @@ Windows runs.
 | pnpm 12.8.1 | 50 MB | 273 MB | 442 MB |
 | aube 2.6.1 | 53 MB | 352 MB | 455 MB |
 
+## A developer machine, macOS
+
+Apple M4 Max (14 cores, 36 GB), macOS 26.7, on a home connection, 2026-10-01, medians of 5
+runs of eight managers with `bench/bench-mac.sh`; 480 runs, 0 failed. Microsoft Defender
+real-time protection was off. `du` counts an APFS clone at its full size, and jpm, pnpm and
+bun copy files out of their stores as clones on a Mac, so their disk column overstates what
+those files take.
+
+**Wall time**
+
+| manager | nitro cold | nuxt cold | next cold | nitro warm | nuxt warm | next warm | nitro ci | nuxt ci | next ci | nitro repeat | nuxt repeat | next repeat |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **jpm** | 636 ms | **3.02 s** | **2.64 s** | **21 ms** | 594 ms | 189 ms | **396 ms** | **2.81 s** | **2.31 s** | **13 ms** | **12 ms** | **16 ms** |
+| bun 1.4.2 | **500 ms** | **3.02 s** | 3.04 s | 38 ms | 472 ms | **181 ms** | 448 ms | 2.92 s | 2.53 s | 22 ms | 117 ms | 21 ms |
+| aube 2.6.1 | 1.18 s | 8.37 s | 4.88 s | 46 ms | **335 ms** | 1.95 s | 769 ms | 6.61 s | 4.16 s | 20 ms | 186 ms | **16 ms** |
+| pnpm 12.8.1 | 818 ms | 5.92 s | 5.48 s | 105 ms | 900 ms | 453 ms | 898 ms | 6.22 s | 5.53 s | 22 ms | 22 ms | 31 ms |
+| deno 2.9.6 | 676 ms | 8.88 s | 5.01 s | 45 ms | 697 ms | 182 ms | 475 ms | 4.35 s | 4.09 s | 17 ms | 26 ms | 18 ms |
+| upm 1.3.1 | 1.17 s | 6.43 s | 5.13 s | 601 ms | 3.04 s | 2.13 s | 1.01 s | 5.77 s | 4.97 s | 45 ms | 60 ms | 50 ms |
+| yarn 4.18.1 | 1.14 s | 6.18 s | 6.80 s | 470 ms | 2.71 s | 3.00 s | 872 ms | 4.18 s | 5.65 s | 237 ms | 462 ms | 375 ms |
+| npm 12.1.0 | 1.02 s | 9.23 s | 5.06 s | 598 ms | 3.15 s | 3.21 s | 719 ms | 3.65 s | 3.36 s | 307 ms | 514 ms | 323 ms |
+
+**CPU time (every process the install starts)**
+
+| manager | nitro cold | nuxt cold | next cold | nitro warm | nuxt warm | next warm | nitro ci | nuxt ci | next ci | nitro repeat | nuxt repeat | next repeat |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **jpm** | 540 ms | 5.67 s | 2.57 s | **10 ms** | 1.06 s | 120 ms | 500 ms | 5.76 s | 2.32 s | **0 ms** | **0 ms** | **0 ms** |
+| bun 1.4.2 | **360 ms** | **4.07 s** | **1.96 s** | **10 ms** | **210 ms** | **90 ms** | **320 ms** | **3.86 s** | 1.74 s | **0 ms** | 40 ms | **0 ms** |
+| aube 2.6.1 | 1.15 s | 13.68 s | 5.27 s | 70 ms | 420 ms | 2.88 s | 790 ms | 9.20 s | 4.75 s | 10 ms | 120 ms | **0 ms** |
+| pnpm 12.8.1 | 1.43 s | 11.97 s | 8.36 s | 130 ms | 1.26 s | 240 ms | 1.35 s | 11.09 s | 8.53 s | **0 ms** | **0 ms** | **0 ms** |
+| deno 2.9.6 | 410 ms | 4.39 s | 2.14 s | 30 ms | 740 ms | 110 ms | 360 ms | 4.16 s | **1.72 s** | **0 ms** | 20 ms | **0 ms** |
+| upm 1.3.1 | 1.66 s | 16.76 s | 10.09 s | 530 ms | 9.28 s | 6.66 s | 1.10 s | 14.39 s | 9.13 s | 20 ms | 30 ms | 20 ms |
+| yarn 4.18.1 | 1.98 s | 9.87 s | 7.32 s | 600 ms | 3.98 s | 2.63 s | 1.83 s | 7.77 s | 5.48 s | 220 ms | 660 ms | 410 ms |
+| npm 12.1.0 | 1.22 s | 9.48 s | 6.25 s | 800 ms | 4.67 s | 4.29 s | 990 ms | 5.80 s | 5.01 s | 260 ms | 530 ms | 260 ms |
+
+**Peak memory (RSS)**
+
+| manager | nitro cold | nuxt cold | next cold | nitro warm | nuxt warm | next warm | nitro ci | nuxt ci | next ci | nitro repeat | nuxt repeat | next repeat |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **jpm** | **59 MB** | **180 MB** | **151 MB** | **3.6 MB** | 8.8 MB | **5.5 MB** | **21 MB** | **57 MB** | **47 MB** | **2.6 MB** | **2.8 MB** | **2.6 MB** |
+| bun 1.4.2 | 61 MB | 211 MB | 260 MB | 6.0 MB | **8.7 MB** | 6.1 MB | 30 MB | 121 MB | 79 MB | 6.0 MB | 8.8 MB | 6.2 MB |
+| aube 2.6.1 | 124 MB | 658 MB | 365 MB | 24 MB | 50 MB | 40 MB | 58 MB | 374 MB | 161 MB | 13 MB | 15 MB | 11 MB |
+| pnpm 12.8.1 | 90 MB | 255 MB | 414 MB | 31 MB | 57 MB | 43 MB | 77 MB | 191 MB | 389 MB | 19 MB | 19 MB | 19 MB |
+| deno 2.9.6 | 91 MB | 483 MB | 584 MB | 13 MB | 22 MB | 13 MB | 60 MB | 208 MB | 407 MB | 12 MB | 19 MB | 12 MB |
+| upm 1.3.1 | 243 MB | 642 MB | 593 MB | 56 MB | 123 MB | 120 MB | 172 MB | 467 MB | 535 MB | 46 MB | 47 MB | 46 MB |
+| yarn 4.18.1 | 680 MB | 1288 MB | 3063 MB | 205 MB | 390 MB | 1075 MB | 651 MB | 1141 MB | 3002 MB | 115 MB | 203 MB | 116 MB |
+| npm 12.1.0 | 280 MB | 888 MB | 502 MB | 153 MB | 519 MB | 621 MB | 149 MB | 406 MB | 308 MB | 99 MB | 130 MB | 99 MB |
+
+**Disk after a cold install (`node_modules` and the store, a hardlinked file once)**
+
+| manager | nitro | nuxt | next |
+| --- | ---: | ---: | ---: |
+| **jpm** | 56 MB | 394 MB | 653 MB |
+| bun 1.4.2 | 56 MB | 391 MB | 687 MB |
+| aube 2.6.1 | 78 MB | 558 MB | 767 MB |
+| pnpm 12.8.1 | 98 MB | 631 MB | 1058 MB |
+| deno 2.9.6 | 57 MB | 402 MB | 661 MB |
+| upm 1.3.1 | **39 MB** | **248 MB** | **337 MB** |
+| yarn 4.18.1 | 53 MB | 362 MB | 637 MB |
+| npm 12.1.0 | 57 MB | 421 MB | 522 MB |
+
+**Cache after a cold install (what CI saves and restores)**
+
+| manager | nitro | nuxt | next |
+| --- | ---: | ---: | ---: |
+| **jpm** | 56 MB | 211 MB | 336 MB |
+| bun 1.4.2 | 30 MB | 204 MB | 357 MB |
+| aube 2.6.1 | 78 MB | 557 MB | 439 MB |
+| pnpm 12.8.1 | 71 MB | 447 MB | 740 MB |
+| deno 2.9.6 | 31 MB | 219 MB | 343 MB |
+| upm 1.3.1 | 39 MB | 247 MB | 337 MB |
+| yarn 4.18.1 | **27 MB** | **176 MB** | 319 MB |
+| npm 12.1.0 | 30 MB | 228 MB | **192 MB** |
+
 ## Running them
 
 See [bench/README.md](../bench/README.md):
