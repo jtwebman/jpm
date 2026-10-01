@@ -9,8 +9,11 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::manifest::parse_date;
-use crate::registry::{INSECURE, registry_base};
+use crate::registry::{DEFAULT_REGISTRY, INSECURE, registry_base};
 use crate::util::{from_base64, now_ms, to_base64};
+
+/// jsr's npm registry, the `@jsr` scope's unless a config names another.
+const JSR_REGISTRY: &str = "https://npm.jsr.io";
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -216,7 +219,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         }
     }
     // jsr's npm registry, as pnpm has it by default.
-    scopes.entry("@jsr".to_string()).or_insert_with(|| registry_base(Some("https://npm.jsr.io")));
+    scopes.entry("@jsr".to_string()).or_insert_with(|| registry_base(Some(JSR_REGISTRY)));
     let mut auth = BTreeMap::new();
     for (dart, found) in &fields {
         if let Some(header) = authorization(found) {
@@ -351,11 +354,23 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     // pnpm-workspace.yaml's release age comes with the repository too: under the project's
     // .npmrc, and held to the same rule.
     let mut pnpm = pnpm_layer(dir);
-    if restrict_project(&mut pnpm, &[global.clone(), user.clone()])?.iter().any(|k| k == "min-release-age") {
+    let yaml = dir.join(crate::rules::PNPM_WORKSPACE);
+    for key in restrict_project(&mut pnpm, &[global.clone(), user.clone()])? {
+        if let Some(wide) = key.strip_prefix("min-release-age-exclude=") {
+            crate::ui::warn(&format!(
+                "{} excludes {wide} from minimumReleaseAge: only ~/.npmrc, the global npmrc, npm_config_* \
+                 or a flag may exclude more than one package or scope; ignored",
+                yaml.display()
+            ));
+            continue;
+        }
+        if key != "min-release-age" {
+            continue;
+        }
         crate::ui::warn(&format!(
             "{} sets minimumReleaseAge, which lets in newer versions than ~/.npmrc, the global npmrc, \
              npm_config_* or a flag does; ignored",
-            dir.join(crate::rules::PNPM_WORKSPACE).display()
+            yaml.display()
         ));
     }
     let mut cli = Layer::new();
@@ -422,9 +437,47 @@ const USER_ONLY: [&str; 5] = ["ca", "cafile", "proxy", "https-proxy", "http-prox
 
 /// Take out of a project's layer what would weaken the checks the layers `below` it (global,
 /// user) make: the settings above, `strict-ssl=false`, `block-exotic-subdeps=false`,
-/// `verify-node-signature=false`, and a release cutoff laxer than theirs. The keys taken out, as written.
+/// `verify-node-signature=false`, a release cutoff laxer than theirs, a release-age exclusion
+/// broader than one package or one scope, and a registry over http on a host they (or the default
+/// registry) reach over https, where their token would go in the clear. The keys taken out, as
+/// written.
 fn restrict_project(project: &mut Layer, below: &[Layer]) -> Result<Vec<String>> {
     let mut dropped = Vec::new();
+    // Hosts the layers below reach over https: their credentials must not go to them over http.
+    let named = below.iter().flat_map(|l| l.iter()).filter(|(k, _)| registry_key(k)).map(|(_, v)| v.as_str());
+    let secure: Vec<String> = named
+        .chain([DEFAULT_REGISTRY, JSR_REGISTRY])
+        .filter(|v| v.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")))
+        .filter_map(host_of)
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
+    let downgrades: Vec<(String, String)> = project
+        .iter()
+        .filter(|(k, v)| {
+            registry_key(k)
+                && v.get(..7).is_some_and(|s| s.eq_ignore_ascii_case("http://"))
+                && host_of(v).is_some_and(|h| secure.contains(&h.to_ascii_lowercase()))
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (key, value) in downgrades {
+        project.remove(&key);
+        dropped.push(format!("{key}={value}"));
+    }
+    // One package, or every package of one scope: never a pattern that takes in more.
+    if let Some(list) = project.get("min-release-age-exclude") {
+        let (kept, wide): (Vec<&str>, Vec<&str>) =
+            list.split(',').map(str::trim).filter(|p| !p.is_empty()).partition(|p| narrow_exclusion(p));
+        if !wide.is_empty() {
+            dropped.push(format!("min-release-age-exclude={}", wide.join(",")));
+            let kept = kept.join(",");
+            if kept.is_empty() {
+                project.remove("min-release-age-exclude");
+            } else {
+                project.insert("min-release-age-exclude".into(), kept);
+            }
+        }
+    }
     let mut take_out = |project: &mut Layer, key: &str, when: &dyn Fn(&str) -> bool| {
         if project.remove(key).is_some_and(|v| when(&v)) {
             dropped.push(key.to_string());
@@ -449,6 +502,25 @@ fn restrict_project(project: &mut Layer, below: &[Layer]) -> Result<Vec<String>>
         }
     }
     Ok(dropped)
+}
+
+/// `registry` or `@scope:registry`.
+fn registry_key(key: &str) -> bool {
+    key == "registry" || (key.starts_with('@') && key.ends_with(":registry"))
+}
+
+/// A release-age exclusion a project's file may make: a package by name, or `@scope/*`, every
+/// package of one scope. A wildcard elsewhere (`*`, `**`, `@*/*`, `a*`) could take in every
+/// package the user's cutoff holds back.
+fn narrow_exclusion(pattern: &str) -> bool {
+    let wild = |s: &str| s.contains(['*', '?']);
+    if !wild(pattern) {
+        return true;
+    }
+    pattern
+        .strip_prefix('@')
+        .and_then(|p| p.strip_suffix("/*"))
+        .is_some_and(|scope| !scope.is_empty() && !wild(scope) && !scope.contains('/'))
 }
 
 /// npm's global file is `<prefix>/etc/npmrc`, the prefix being where node is installed.
@@ -614,6 +686,48 @@ mod tests {
         assert_eq!(restricted("before=2999-01-01", "").1, ["before"]);
         assert!(restricted("min-release-age=0", "min-release-age=0").1.is_empty());
         assert!(restricted("before=2000-01-01", "").1.is_empty());
+    }
+
+    #[test]
+    fn a_project_npmrc_cannot_send_the_users_token_over_http() {
+        let config = |rc: &str, user_rc: &str| {
+            let tokens = "//registry.npmjs.org/:_authToken=t\n//r.test/:_authToken=u";
+            let user = parse_npmrc(&format!("{user_rc}\n{tokens}"), &no_env).unwrap();
+            let mut project = parse_npmrc(rc, &no_env).unwrap();
+            let dropped = restrict_project(&mut project, std::slice::from_ref(&user)).unwrap();
+            (to_config(&[user, project], None).unwrap(), dropped)
+        };
+        let auth = |c: &Config, url: &str| crate::registry::auth_for(&c.auth, url);
+        // The default registry over http: the project's registry goes, and the token stays on https.
+        let (c, dropped) = config("registry=http://registry.npmjs.org/", "");
+        assert_eq!(dropped, ["registry=http://registry.npmjs.org/"]);
+        assert_eq!(c.registry, "https://registry.npmjs.org");
+        assert_eq!(auth(&c, "http://registry.npmjs.org/a"), None);
+        assert_eq!(auth(&c, "https://registry.npmjs.org/a").as_deref(), Some("Bearer t"));
+        // A host the user reaches over https, named over http for a scope, in any case.
+        let (c, dropped) = config("@s:registry=HTTP://R.test/", "registry=https://r.test/");
+        assert_eq!(dropped, ["@s:registry=HTTP://R.test/"]);
+        assert_eq!(auth(&c, "http://r.test/@s/a"), None);
+        // A registry the user reaches over http alone is the project's to name: its token goes.
+        let (c, dropped) = config("registry=http://r.test/", "");
+        assert!(dropped.is_empty(), "{dropped:?}");
+        assert_eq!(auth(&c, "http://r.test/a").as_deref(), Some("Bearer u"));
+    }
+
+    #[test]
+    fn a_project_excludes_one_package_or_scope_from_the_cutoff_at_most() {
+        let restricted = |rc: &str| {
+            let mut project = parse_npmrc(rc, &no_env).unwrap();
+            let dropped = restrict_project(&mut project, &[]).unwrap();
+            (project.get("min-release-age-exclude").cloned(), dropped)
+        };
+        assert_eq!(restricted("min-release-age-exclude=a,@s/b,@s/*"), (Some("a,@s/b,@s/*".into()), vec![]));
+        for wide in ["*", "**", "@*/*", "*/*", "a*", "@s*/*", "@s/**", "?", "@/*"] {
+            let (left, dropped) = restricted(&format!("min-release-age-exclude=a,{wide}"));
+            assert_eq!(left.as_deref(), Some("a"), "{wide}");
+            assert_eq!(dropped, [format!("min-release-age-exclude={wide}")]);
+        }
+        assert_eq!(restricted("min-release-age-exclude=**").0, None);
     }
 
     #[test]

@@ -125,7 +125,8 @@ Notes
   (git diff), names it in patchedDependencies and installs.
   Config: --registry > npm_config_* > project .npmrc > ~/.npmrc > global npmrc. The project's
   cannot set ca, cafile, proxies, strict-ssl=false, block-exotic-subdeps=false,
-  verify-node-signature=false or a laxer min-release-age. TLS trusts Mozilla's and the system's roots plus NODE_EXTRA_CA_CERTS, or only
+  verify-node-signature=false, a laxer min-release-age, a min-release-age-exclude wider than a
+  package or @scope/*, or an http:// registry on a host reached over https. TLS trusts Mozilla's and the system's roots plus NODE_EXTRA_CA_CERTS, or only
   cafile or ca; proxies (http:// only) come from https-proxy, proxy and noproxy in .npmrc, else
   HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   New picks skip versions under min-release-age days old (default 1; 0 turns it off).

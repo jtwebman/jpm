@@ -1944,6 +1944,36 @@ fn reads_the_release_age_in_pnpm_workspace_yaml() {
     assert!(env.lock()["packages"].get("b@1.1.0").is_some());
 }
 
+/// A repository may exclude a package, or a scope, from the release age: never every package.
+#[test]
+fn a_repository_cannot_exclude_every_package_from_the_release_age() {
+    let r = Registry::start(vec![
+        pkg("b", "1.0.0", json!({})),
+        pkg("b", "1.1.0", json!({ "_published": "2999-01-01T00:00:00.000Z" })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "^1.0.0" } }));
+    let lock = || env.command(&["lock"]).env_remove("npm_config_min_release_age").output().unwrap();
+    for (file, text, said) in [
+        (".npmrc", "min-release-age-exclude=**\n", ".npmrc sets min-release-age-exclude=**"),
+        ("pnpm-workspace.yaml", "minimumReleaseAgeExclude: ['@*/*', '*']\n", "excludes @*/*,* from minimumReleaseAge"),
+    ] {
+        env.write(file, text);
+        let out = lock();
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && text.contains(said), "{text}");
+        let packages = &env.lock()["packages"];
+        assert!(packages.get("b@1.0.0").is_some() && packages.get("b@1.1.0").is_none(), "{packages}");
+        std::fs::remove_file(env.path(file)).unwrap();
+        std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    }
+    // Naming the package is the project's to do.
+    env.write(".npmrc", "min-release-age-exclude=b\n");
+    let out = lock();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(env.lock()["packages"].get("b@1.1.0").is_some());
+}
+
 #[test]
 fn legacy_peer_deps_links_only_peers_the_tree_has() {
     let r = registry();
