@@ -35,6 +35,10 @@ use crate::util::{relative, temp_suffix};
 use crate::{pool, sys};
 
 const WIN: bool = cfg!(windows);
+/// Whether an entry in a `node_modules` this install made is built where it stays, not under a
+/// temp name renamed into place (see `materialize`): Windows, where the rename costs every link
+/// after it.
+const IN_PLACE: bool = WIN;
 /// The hidden hoist, under `.jpm`: no entry key is spelled like it.
 pub const HOIST: &str = "node_modules";
 /// Under `.jpm` when entries are in the global store: Node's fallback to the hoist for `import`.
@@ -199,6 +203,17 @@ impl Counts {
             removed: g(&self.removed),
         }
     }
+}
+
+/// What of an entry is there before `build`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Made {
+    /// Nothing: its directory is a new name.
+    Nothing,
+    /// Its directory, empty (see `materialize`).
+    Root,
+    /// Its package's files too, moved in whole (see `move_in`).
+    Files,
 }
 
 /// What an entry links a dependency to: another entry, or the directory of a workspace (or the
@@ -525,7 +540,8 @@ impl Linker<'_> {
             let temp = global.join(format!(".tmp-{}", temp_suffix()));
             let (moved, built) = match self.move_in(entry, &temp) {
                 Ok(moved) => {
-                    let built = self.build(entry, &temp, moved.is_some()).and_then(|()| {
+                    let made = if moved.is_some() { Made::Files } else { Made::Nothing };
+                    let built = self.build(entry, &temp, made).and_then(|()| {
                         if let Some(digest) = &entry.digest {
                             fs::write(temp.join(DIGEST_FILE), digest)
                                 .map_err(|e| Error::io(&e, format!("cannot write {}", temp.display())))?;
@@ -613,7 +629,7 @@ impl Linker<'_> {
     /// Rebuild an entry and take its name in one rename, so no reader sees a partial entry.
     fn swap_in(&self, entry: &Entry, fin: &Path, root: &Path) -> Result<()> {
         let temp = root.join(format!(".tmp-{}", temp_suffix()));
-        if let Err(e) = self.build(entry, &temp, false) {
+        if let Err(e) = self.build(entry, &temp, Made::Nothing) {
             remove_tree(&temp);
             return Err(e);
         }
@@ -760,8 +776,23 @@ impl Linker<'_> {
             }
             return self.swap_in(entry, &fin, &self.entries_dir);
         }
+        // Nothing in a `node_modules` this install made has a reader to see half an entry, so on
+        // Windows it is built where it stays. A directory renamed there empties the name cache of
+        // the file system filters (Windows Defender's among them), and every link made after it
+        // has each directory above it read again: renaming each entry into place took a third of
+        // a warm install's time. An install killed midway leaves an entry the next one finds not
+        // intact, and builds again; one that another install of the tree made first is built
+        // beside it and renamed, as anywhere else.
+        if IN_PLACE && self.fresh_nm && fs::create_dir(&fin).is_ok() {
+            if let Err(e) = self.build(entry, &fin, Made::Root) {
+                remove_tree(&fin);
+                return Err(e);
+            }
+            Counts::add(&self.counts.entries, 1);
+            return Ok(());
+        }
         let temp = self.temp_name();
-        let built = self.build(entry, &temp, false).and_then(|()| {
+        let built = self.build(entry, &temp, Made::Nothing).and_then(|()| {
             fs::rename(&temp, &fin)
                 .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
         });
@@ -815,19 +846,20 @@ impl Linker<'_> {
         Ok(true)
     }
 
-    /// `moved`: the package's files are in place already (see `move_in`).
-    fn build(&self, entry: &Entry, temp: &Path, moved: bool) -> Result<()> {
+    /// `made`: what of the entry is there already.
+    fn build(&self, entry: &Entry, temp: &Path, made: Made) -> Result<()> {
         let pkg = entry.pkg;
         let nm = temp.join("node_modules");
         let pkg_dir = nm.join(pkg.dir_name());
-        if moved {
+        if made == Made::Files {
             Counts::add(&self.counts.linked, self.index(entry)?.files.len());
         } else {
             // Before the directory clone (macOS) as well as the file links.
             self.ready(pkg)?;
             let parent = pkg_dir.parent().unwrap_or(&nm);
-            // From the top, each once: `temp` is a new name.
-            for dir in [temp, &nm].into_iter().chain(Some(parent).filter(|p| *p != nm)) {
+            // From the top, each once: `temp` is a new name, or made empty.
+            let top = (made == Made::Nothing).then_some(temp);
+            for dir in top.into_iter().chain([nm.as_path()]).chain(Some(parent).filter(|p| *p != nm)) {
                 fs::create_dir(dir)
                     .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?;
             }
