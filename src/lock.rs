@@ -963,13 +963,14 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         known.insert(format!("{}@link:{path}", ws.name));
     }
     // Every copy of a package is one tarball: the facts that name it are the same.
+    let whole = Whole::new(lock);
     let mut bases: std::collections::HashMap<&str, &LockEntry> = std::collections::HashMap::new();
     for (key, e) in &lock.packages {
         let at = format!("packages[{key:?}]");
         let (base, suffix) = split_peers(key);
         let source = check_key(base)?;
         if !suffix.is_empty() {
-            check_suffix(&at, base, suffix, e, lock)?;
+            check_suffix(&at, base, suffix, e, &whole)?;
         }
         if let Some(first) = bases.insert(base, e)
             && (first.integrity != e.integrity || first.resolved != e.resolved || first.version != e.version)
@@ -1069,10 +1070,10 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
         let link = format!("link:{path}");
         let parent = Some((ws.name.as_str(), link.as_str()));
         let top = Asks { specs: ws.specs.as_ref(), peers: &ws.peer_dependencies, base: path, parent };
-        check_links(&top, &edges, &at, lock)?;
+        check_links(&top, &edges, &at, &whole)?;
     }
     let root = Asks { specs: lock.root.specs.as_ref(), peers: &Deps::new(), base: "", parent: None };
-    check_links(&root, &lock.root.dependencies, "root", lock)?;
+    check_links(&root, &lock.root.dependencies, "root", &whole)?;
     for (name, version) in &lock.root.dependencies {
         spec::check_name(name, name).map_err(|_| fail(format!("root.dependencies[{name:?}] is not a package name")))?;
         if !known.contains(&format!("{name}@{version}")) {
@@ -1134,7 +1135,8 @@ struct Asks<'a> {
 /// name says so: an edit cannot point a name at another directory, repository, commit or url.
 /// A name linked by name alone is a workspace, and never a `file:` directory another top names
 /// by its path, which may share the name.
-fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()> {
+fn check_links(top: &Asks, deps: &Deps, at: &str, whole: &Whole) -> Result<()> {
+    let lock = whole.lock;
     for (name, version) in deps {
         let version = &crate::graph::edge_base(name, version).to_string();
         if version.starts_with(WITHIN) {
@@ -1154,7 +1156,7 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
         if let Some(path) = version.strip_prefix("link:") {
             let dirs: Vec<&spec::Spec> = asked.iter().filter(|s| s.kind == Kind::Directory).collect();
             let named = if dirs.is_empty() && !lock.packages.contains_key(&format!("{name}@{version}")) {
-                by_name(path, lock)
+                by_name(path, whole)
             } else {
                 dirs.iter().any(|s| spec::join_path(top.base, &s.fetch_spec[5..]) == path)
             };
@@ -1165,7 +1167,7 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
                     s.kind == Kind::Workspace
                         && s.fetch_name != *name
                         && ws.is_some_and(|w| w.name == s.fetch_name)
-                        && lock.workspaces.values().filter(|w| w.name == s.fetch_name).count() == 1
+                        && whole.named(&s.fetch_name) == 1
                 })
             };
             // A peer settled on a directory of its name the tree has (a host that depends on its
@@ -1183,7 +1185,7 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
         } else if let Some((real, _)) = crate::graph::split_alias(version)
             && !asked.iter().any(|s| s.fetch_name == real)
-            && !(top.peers.contains_key(name) && a_top_aliases(lock, name, real))
+            && !(top.peers.contains_key(name) && a_top_aliases(whole, name, real))
         {
             // An edit cannot put another package under a name a spec gave to one it names.
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
@@ -1195,32 +1197,90 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, lock: &Lockfile) -> Result<()>
 /// Whether the root or a workspace declares `name` as an alias of `real`: a workspace's peer by
 /// that name settles on that copy, as pnpm has it and as npm hoists it (hono's root has typescript
 /// as an alias of @typescript/typescript6; gutenberg's workspaces have prettier as wp-prettier).
-fn a_top_aliases(lock: &Lockfile, name: &str, real: &str) -> bool {
-    let specs = std::iter::once(&lock.root.specs).chain(lock.workspaces.values().map(|w| &w.specs));
-    let ranges = specs.flat_map(|s| s.iter().flat_map(Specs::groups)).filter_map(|(_, g)| g?.get(name));
-    ranges.filter_map(|r| spec::parse_dep(name, r).ok()).any(|s| s.fetch_name == real)
+fn a_top_aliases(whole: &Whole, name: &str, real: &str) -> bool {
+    let aliases = whole.aliases.get_or_init(|| {
+        let mut out = HashSet::new();
+        for (_, specs) in whole.tops() {
+            let ranges = specs.into_iter().flat_map(Specs::groups).flat_map(|(_, g)| g.into_iter().flatten());
+            for (name, range) in ranges {
+                if let Ok(s) = spec::parse_dep(name, range) {
+                    out.insert((name.clone(), s.fetch_name));
+                }
+            }
+        }
+        out
+    });
+    aliases.contains(&(name.to_string(), real.to_string()))
 }
 
 /// Whether the workspace entry at `path` may be linked by its name: the one entry so named, or
 /// one no top reaches by a `file:` or `link:` path.
-fn by_name(path: &str, lock: &Lockfile) -> bool {
-    let Some(target) = lock.workspaces.get(path) else { return false };
-    if lock.workspaces.values().filter(|w| w.name == target.name).count() == 1 {
+fn by_name(path: &str, whole: &Whole) -> bool {
+    let Some(target) = whole.lock.workspaces.get(path) else { return false };
+    if whole.named(&target.name) == 1 {
         return true;
     }
-    let tops = std::iter::once(("", lock.root.specs.as_ref()))
-        .chain(lock.workspaces.iter().map(|(p, w)| (p.as_str(), w.specs.as_ref())));
     // ponytail: a workspace that is also some top's `file:` path, sharing its name with another
     // `file:` directory, is refused here; tell the two apart in the lockfile if that turns up.
-    !tops
-        .flat_map(|(base, specs)| {
+    let paths = whole.paths.get_or_init(|| {
+        let mut out = HashSet::new();
+        for (base, specs) in whole.tops() {
             let ranges = specs.into_iter().flat_map(Specs::groups).flat_map(|(_, g)| g.into_iter().flatten());
-            ranges.filter_map(move |(name, range)| {
-                let s = spec::parse_dep(name, range).ok().filter(|s| s.kind == Kind::Directory)?;
-                Some(spec::join_path(base, &s.fetch_spec[5..]))
-            })
-        })
-        .any(|p| p == path)
+            for (name, range) in ranges {
+                if let Some(s) = spec::parse_dep(name, range).ok().filter(|s| s.kind == Kind::Directory) {
+                    out.insert(spec::join_path(base, &s.fetch_spec[5..]));
+                }
+            }
+        }
+        out
+    });
+    !paths.contains(path)
+}
+
+/// What some checks ask of the whole lockfile, worked out the first time one asks and kept for
+/// the rest of `validate`. Worked out again for each entry or edge, as it was, a lockfile of a
+/// few thousand peer suffixes or workspaces (a few hundred KB) took minutes to check.
+struct Whole<'a> {
+    lock: &'a Lockfile,
+    /// Each package key without its peer suffix.
+    bases: std::cell::OnceCell<HashSet<&'a str>>,
+    /// How many workspace entries have each name.
+    names: std::cell::OnceCell<std::collections::HashMap<&'a str, usize>>,
+    /// Every directory a top's `file:` or `link:` spec names, by its path.
+    paths: std::cell::OnceCell<HashSet<String>>,
+    /// Every `(name, package)` a top's spec asks for under that name: an alias's real package.
+    aliases: std::cell::OnceCell<HashSet<(String, String)>>,
+}
+
+impl<'a> Whole<'a> {
+    fn new(lock: &'a Lockfile) -> Self {
+        Self {
+            lock,
+            bases: Default::default(),
+            names: Default::default(),
+            paths: Default::default(),
+            aliases: Default::default(),
+        }
+    }
+
+    /// How many workspace entries are named `name`.
+    fn named(&self, name: &str) -> usize {
+        let names = self.names.get_or_init(|| {
+            let mut out = std::collections::HashMap::new();
+            for w in self.lock.workspaces.values() {
+                *out.entry(w.name.as_str()).or_default() += 1;
+            }
+            out
+        });
+        names.get(name).copied().unwrap_or(0)
+    }
+
+    /// The root and each workspace: its directory and its specs.
+    fn tops(&self) -> impl Iterator<Item = (&'a str, Option<&'a Specs>)> {
+        let lock = self.lock;
+        std::iter::once(("", lock.root.specs.as_ref()))
+            .chain(lock.workspaces.iter().map(|(p, w)| (p.as_str(), w.specs.as_ref())))
+    }
 }
 
 fn check_edges(
@@ -1266,7 +1326,8 @@ fn escapes(value: &str) -> bool {
 /// A copy's peer suffix, `(peer@version)...` as pnpm writes it: groups sorted as text, one per
 /// name, each a copy the lockfile has (or its package, where a cycle cut the key short), and
 /// each the copy it links under that name. A linked directory and a runtime have no peers.
-fn check_suffix(at: &str, base: &str, suffix: &str, e: &LockEntry, lock: &Lockfile) -> Result<()> {
+fn check_suffix(at: &str, base: &str, suffix: &str, e: &LockEntry, whole: &Whole) -> Result<()> {
+    let lock = whole.lock;
     let bad = |why: &str| Err(fail(format!("{at} has a peer suffix that {why}")));
     if is_link(base) || split_key(base).is_some_and(|(_, v)| v.starts_with(runtime::PROTOCOL)) {
         return bad("only a registry, git or tarball package may have");
@@ -1284,7 +1345,10 @@ fn check_suffix(at: &str, base: &str, suffix: &str, e: &LockEntry, lock: &Lockfi
         if !names.insert(name) || (i > 0 && format!("({})", groups[i - 1]) >= format!("({inner})")) {
             return bad("is not sorted, one group a name");
         }
-        let cut = || split_peers(inner).1.is_empty() && lock.packages.keys().any(|k| split_peers(k).0 == *inner);
+        let cut = || {
+            split_peers(inner).1.is_empty()
+                && whole.bases.get_or_init(|| lock.packages.keys().map(|k| split_peers(k).0).collect()).contains(inner)
+        };
         if !known(inner) && !cut() {
             return bad(&format!("names {inner}, which is not in packages"));
         }
@@ -1681,6 +1745,33 @@ package h@1.0.0
   integrity sha512-h
 ";
         assert!(parse_lockfile(linked, LOCKFILE).is_err());
+    }
+
+    /// Found while fuzzing jpm.lock: a peer suffix cut short by a cycle was looked for among
+    /// every key, for each entry, and a workspace linked by a name others share looked through
+    /// every top's specs, for each edge. 20,000 such entries (1 MB) or 1,000 such workspaces over
+    /// 10,000 specs (370 KB) took minutes to check.
+    #[test]
+    fn checks_in_linear_time() {
+        let mut text = String::from("jpm-lock 2\nhash 0\nroot\n");
+        for i in 0..20_000 {
+            text.push_str(&format!("package a{i:05}@1.0.0(p@1.0.0)\n  integrity sha512-a\n"));
+        }
+        text.push_str(
+            "package p@1.0.0(x@1.0.0)\n  integrity sha512-p\n  dep x 1.0.0\n  peer x ^1\n  settled x required\n",
+        );
+        text.push_str("package x@1.0.0\n  integrity sha512-x\n");
+        assert_eq!(parse_lockfile(&text, LOCKFILE).unwrap().packages.len(), 20_002);
+        let mut text = String::from("jpm-lock 2\nhash 0\nroot\n");
+        for i in 0..10_000 {
+            text.push_str(&format!("  spec dependencies q{i} ^1\n"));
+        }
+        for i in 0..1_000 {
+            text.push_str(&format!(
+                "workspace w{i}\n  name n\n  version 1.0.0\n  spec dependencies n workspace:*\n  dep n link:w0\n"
+            ));
+        }
+        assert_eq!(parse_lockfile(&text, LOCKFILE).unwrap().workspaces.len(), 1_000);
     }
 
     #[test]
