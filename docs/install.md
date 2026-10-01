@@ -14,7 +14,9 @@ Where security software stops a script piped into `iex`, download it and run it 
 The script downloads the binary for your platform from the
 [latest release](https://github.com/jtwebman/jpm/releases/latest), checks its SHA-256, and
 puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v0.1.0` picks a release and `JPM_INSTALL`
-another directory. Each platform has its own build:
+another directory. The SHA-256 comes from the `SHA256SUMS` of the same release, so it catches a
+download cut short or corrupted, not a release whose files were replaced: for that, see
+[Verifying a release](#verifying-a-release). Each platform has its own build:
 
 | Platform          | Release asset           | Target                                       |
 | ----------------- | ----------------------- | -------------------------------------------- |
@@ -42,3 +44,73 @@ Or build it:
 ```sh
 cargo build --release    # target/release/jpm
 ```
+
+## Verifying a release
+
+Every file of a release (each binary, `install.sh`, `install.ps1`, `LICENSE`,
+`THIRD_PARTY_NOTICES.md` and `SHA256SUMS`) has a signed
+[build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations):
+a record, signed through Sigstore with a certificate GitHub Actions issues and logged in Sigstore's
+public transparency log, that the file with that SHA-256 was built by
+[`release.yml`](../.github/workflows/release.yml) in `jtwebman/jpm` from a `v*` tag. Someone who
+replaced a release's files, and its `SHA256SUMS` with them, cannot make these. Checking one takes
+the [GitHub CLI](https://cli.github.com) 2.49 or later, signed in (`gh auth login`).
+
+**The install scripts do not check attestations.** They check the SHA-256 against `SHA256SUMS`
+only, which a replaced release would replace too. Checking provenance would need `gh`, which most
+machines do not have, and an installer that checks only where it can would pass the same
+tampered release elsewhere, so they leave it to you. Check the binary the script installed:
+
+```sh
+gh attestation verify ~/.jpm/bin/jpm --repo jtwebman/jpm                    # macOS and Linux
+```
+
+```powershell
+gh attestation verify $HOME\.jpm\bin\jpm.exe --repo jtwebman/jpm            # Windows
+```
+
+Or download and check the files yourself before running anything. Set the version and the asset
+for your platform (the table above):
+
+Linux:
+
+```sh
+gh release download v0.1.0 --repo jtwebman/jpm --pattern jpm-linux-x64
+gh attestation verify jpm-linux-x64 --repo jtwebman/jpm
+chmod +x jpm-linux-x64 && mkdir -p ~/.jpm/bin && mv jpm-linux-x64 ~/.jpm/bin/jpm
+```
+
+macOS:
+
+```sh
+gh release download v0.1.0 --repo jtwebman/jpm --pattern jpm-darwin-arm64
+gh attestation verify jpm-darwin-arm64 --repo jtwebman/jpm
+chmod +x jpm-darwin-arm64 && mkdir -p ~/.jpm/bin && mv jpm-darwin-arm64 ~/.jpm/bin/jpm
+```
+
+Windows (PowerShell):
+
+```powershell
+gh release download v0.1.0 --repo jtwebman/jpm --pattern jpm-windows-x64.exe
+gh attestation verify jpm-windows-x64.exe --repo jtwebman/jpm
+New-Item -ItemType Directory -Force "$HOME\.jpm\bin" | Out-Null; Move-Item -Force jpm-windows-x64.exe "$HOME\.jpm\bin\jpm.exe"
+```
+
+To check the install script itself before running it (it then installs the latest release):
+
+```sh
+gh release download --repo jtwebman/jpm --pattern install.sh
+gh attestation verify install.sh --repo jtwebman/jpm && sh install.sh
+```
+
+```powershell
+gh release download --repo jtwebman/jpm --pattern install.ps1
+gh attestation verify install.ps1 --repo jtwebman/jpm; if ($?) { powershell -ExecutionPolicy Bypass -File install.ps1 }
+```
+
+`gh attestation verify` exits non-zero, and prints why, when a file has no attestation from
+`jtwebman/jpm` or its signature does not check out; don't run a file that fails. To also require
+the release workflow and the tag you meant, add
+`--signer-workflow jtwebman/jpm/.github/workflows/release.yml --source-ref refs/tags/v0.1.0`.
+`SHA256SUMS` is attested too: once it verifies, the sums in it vouch for every other file of the
+release.

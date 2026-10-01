@@ -1,0 +1,15 @@
+# The workflows pin every action by commit; this moves the pins (and the version comments beside
+# them) as new releases come out, in one weekly PR. A release is a week old before it is offered.
+# The container image digests in release.yml and the tool versions there (cross, zig,
+# cargo-zigbuild) are not covered: they move by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
