@@ -1,4 +1,5 @@
 //! Versions and ranges: lines of the input, each tried as both, and every pair compared.
+//! `AtMost` must pick what `max_satisfying("<=v")` picks.
 #![no_main]
 
 use jpm::semver;
@@ -12,6 +13,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = semver::is_exact(l);
         let _ = semver::valid_range(l);
     }
+    let at_most = semver::AtMost::new(lines.iter().copied());
     for a in &lines {
         for b in &lines {
             let _ = semver::satisfies(a, b);
@@ -23,5 +25,9 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = semver::max_satisfying(lines.iter().copied(), a);
         let _ = semver::max_satisfying_peer(lines.iter().copied(), a);
+        if semver::parse(a).is_some() {
+            let want = semver::max_satisfying(lines.iter().copied(), &format!("<={a}"));
+            assert_eq!(at_most.find(a), want, "<={a:?} over {lines:?}");
+        }
     }
 });
