@@ -329,8 +329,9 @@ pub fn edge_base<'a>(name: &str, version: &'a str) -> &'a str {
         return version;
     }
     let key = format!("{name}@{version}");
-    let base = split_peers(&key).0.len();
-    &version[..base - name.len() - 1]
+    // A name holding an `@` can put where the key splits inside the name (`a@b(c@1` at `1)`):
+    // then the version has no suffix of its own.
+    split_peers(&key).0.len().checked_sub(name.len() + 1).map_or(version, |base| &version[..base])
 }
 
 /// The resolution with one package per key, peer suffixes gone: what a resolve starts from, as
@@ -582,6 +583,18 @@ mod tests {
             }
         }
         (key, "")
+    }
+
+    #[test]
+    fn takes_a_suffix_off_an_edge_only_from_its_version() {
+        assert_eq!(edge_base("a", "1.0.0(b@1.0.0)"), "1.0.0");
+        assert_eq!(edge_base("@s/a", "npm:@s/b@1.0.0(c@1.0.0)(d@2.0.0)"), "npm:@s/b@1.0.0");
+        assert_eq!(edge_base("a", "1.0.0"), "1.0.0");
+        // Found by fuzzing jpm.lock: the key `a@b(c@1@1)` splits inside the name, and taking the
+        // suffix off the version underflowed: a panic, and an abort in a release build.
+        assert_eq!(edge_base("a@b(c@1", "1)"), "1)");
+        let lock = "jpm-lock 2\nhash 0\nroot\n  dep a@b(c@1 1)\n";
+        assert!(crate::lock::parse_lockfile(lock, "jpm.lock").is_err());
     }
 
     #[test]
