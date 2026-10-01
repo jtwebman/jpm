@@ -1607,6 +1607,15 @@ fn names_that_differ_only_in_case() {
     let hoisted = std::fs::canonicalize(env.path("node_modules/.jpm/node_modules/jsonstream")).unwrap();
     let want = if cfg!(any(target_os = "macos", windows)) { "JSONStream@" } else { "jsonstream@" };
     assert!(hoisted.to_string_lossy().contains(want), "{}", hoisted.display());
+    // Each package that depends on one of them gets that one, in either layout: two entries
+    // whose names differ only in case would be one directory where the disk folds case.
+    for flags in [&["install"][..], &["install", "--no-global-store"]] {
+        let _ = std::fs::remove_dir_all(env.project().join("node_modules"));
+        env.ok(flags);
+        let name = |rel: &str| env.read(rel).contains(&format!("\"name\":\"{}\"", rel.split('/').nth(3).unwrap()));
+        assert!(name("node_modules/up/../JSONStream/package.json"), "{flags:?}");
+        assert!(name("node_modules/low/../jsonstream/package.json"), "{flags:?}");
+    }
 }
 
 #[test]
