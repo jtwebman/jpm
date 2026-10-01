@@ -88,9 +88,12 @@ Options
   -F, --filter <selector>
                        as -w, with pnpm's selectors: a name glob (@s/*), !x to leave x out,
                        x... with what x depends on, ...x with what depends on x, ^ without x
-  -r, --recursive      run: every workspace with the script (pnpm's -r); --filter narrows it
+  -r, --recursive      run, exec: every workspace (pnpm's -r), run skipping those without the
+                       script, exec stopping at the first failure; --filter narrows it
   workspace <name> <command>
                        yarn's form of -w <name> <command>
+  workspaces foreach [--include <glob>] [--exclude <glob>] <command>
+                       yarn's form of -r <command>; -A, -p and -t are accepted
   run <name>           a bin when no script has the name, as yarn's run takes it
   -h, --help           show help
   -v, --version        show the version
@@ -181,6 +184,9 @@ struct Cli {
     recursive: bool,
     /// yarn's `workspace <name> <command>`: the next word is the workspace's name.
     yarn_workspace: bool,
+    /// yarn's `workspaces foreach`: 1 after `workspaces`, 2 once `foreach` follows, until the
+    /// command; its own flags (`-p` is parallel there) are read while it is 2.
+    foreach: u8,
     include_root: bool,
     if_present: bool,
     yes: bool,
@@ -295,6 +301,25 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
             i += 1;
             Ok(v)
         };
+        // yarn's `workspaces foreach` flags, before its command: every workspace, as -r.
+        if cli.foreach == 2 {
+            match flag.as_str() {
+                "-A" | "--all" | "-R" | "--recursive" | "-p" | "--parallel" | "-t" | "--topological"
+                | "--topological-dev" | "-v" | "--verbose" | "-i" | "--interlaced" => continue,
+                "--include" => {
+                    cli.workspace.get_or_insert_with(Vec::new).push(value()?);
+                    continue;
+                }
+                "--exclude" => {
+                    cli.workspace.get_or_insert_with(Vec::new).push(format!("!{}", value()?));
+                    continue;
+                }
+                "--since" | "--from" | "-W" | "--worktree" => {
+                    return Err(format!("workspaces foreach {flag}: jpm selects with --include, --exclude and -r"));
+                }
+                _ => {}
+            }
+        }
         match flag.as_str() {
             "--registry" => cli.registry = Some(value()?),
             "--store" => cli.store = Some(value()?),
@@ -392,6 +417,25 @@ fn positional(cli: &mut Cli, arg: &str) {
     if cli.command.is_none() && arg == "workspace" && cli.workspace.is_none() {
         cli.yarn_workspace = true;
         return;
+    }
+    // yarn's `workspaces foreach [flags] <command>`: -r <command>.
+    if cli.command.is_none() && cli.foreach == 0 && arg == "workspaces" {
+        cli.foreach = 1;
+        return;
+    }
+    if cli.command.is_none() && cli.foreach == 1 {
+        if arg != "foreach" {
+            cli.foreach = 0;
+            cli.command = Some("run".into());
+            cli.specs.push("workspaces".into());
+            return positional(cli, arg);
+        }
+        cli.foreach = 2;
+        cli.recursive = true;
+        return;
+    }
+    if cli.foreach == 2 {
+        cli.foreach = 3;
     }
     if cli.command.is_some() {
         cli.specs.push(arg.to_string());
@@ -537,8 +581,8 @@ fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option
         (cli.dev && cli.production, "--production skips what --dev adds".into()),
         (cli.lock && command != "fetch", "--lock only applies to fetch".into()),
         (
-            selects && !matches!(command, "add" | "remove" | "run"),
-            "-w and --workspaces only apply to add, remove and run: install is always the whole tree".into(),
+            selects && !matches!(command, "add" | "remove" | "run" | "exec"),
+            "-w and --workspaces only apply to add, remove, run and exec: install is always the whole tree".into(),
         ),
         (cli.workspace.is_some() && cli.workspaces, "-w and --workspaces are exclusive".into()),
         (cli.if_present && command != "run", "--if-present only applies to run".into()),
