@@ -1,7 +1,7 @@
 //! A minimal ustar/pax/GNU tar reader for npm tarballs: regular files only, paths hardened,
 //! sizes bounded. Streams: each file's bytes go to the caller as they inflate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Read};
 
 use crate::error::{Error, Result};
@@ -22,15 +22,19 @@ fn bad(message: impl Into<String>) -> Error {
 /// Read every regular file, calling `each(path, mode, size, bytes)`. `each` must read exactly
 /// `size` bytes, or the rest are skipped for it. The first path component is stripped.
 pub fn read_entries(input: impl Read, each: impl FnMut(&str, u32, u64, &mut dyn Read) -> Result<()>) -> Result<()> {
-    read_limited(input, MAX_FILES, each)
+    read_limited(input, MAX_FILES, cfg!(windows), each)
 }
 
+/// `read_entries`, with its limit on files, and the check for short names Windows makes under
+/// `short_names`.
 fn read_limited(
     mut input: impl Read,
     max_files: usize,
+    short_names: bool,
     mut each: impl FnMut(&str, u32, u64, &mut dyn Read) -> Result<()>,
 ) -> Result<()> {
     let mut files = 0;
+    let mut names = ShortNames::default();
     let mut global: BTreeMap<String, String> = BTreeMap::new();
     let mut next: BTreeMap<String, String> = BTreeMap::new();
     let mut long_name = String::new();
@@ -83,6 +87,14 @@ fn read_limited(
         // Regular files only: `1` and `2` are links, which npm refuses outright.
         let regular = matches!(kind, b'0' | 0 | b'7');
         let path = if regular { safe_path(&raw) } else { None };
+        if let Some(path) = &path {
+            if path.split('/').any(device) {
+                return Err(bad(format!("Tarball entry {path} is a Windows device name")));
+            }
+            if short_names && let Some((short, long)) = names.add(path) {
+                return Err(bad(format!("Tarball entry {short} may be the short name Windows gives {long}")));
+            }
+        }
         let mut body = (&mut input).take(size);
         if let Some(path) = path {
             files += 1;
@@ -153,6 +165,194 @@ pub fn plain(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\0', '\n', '\r', ':', '\\'])
         && path.split('/').all(|p| !p.is_empty() && !p.ends_with(['.', ' ']) && p != "..")
+}
+
+/// A name Windows reads as a device whatever its extension, in any case, with spaces before the
+/// dot or none: `con`, `NUL.js`, `com1 .txt`, `LPT¹`. Refused on every OS, so a package unpacks
+/// the same everywhere: no real one has such a name.
+pub fn device(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).trim_end_matches(' ').to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+        return true;
+    }
+    let port = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"));
+    port.is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+}
+
+/// Where Windows makes 8.3 names, a file can be opened by its short name: `PACKAG~1.JSO` is
+/// `package.json`. An entry named as Windows may have named another in the same directory would
+/// be written over it. Real packages ship names of that shape (rspack's `612~3.js` chunks), so
+/// only a pair is refused: a short-shaped name and a long name it may be the short name of, in
+/// either order, since the linker writes files in an order of its own.
+#[derive(Default)]
+struct ShortNames {
+    /// Directories already looked at, lowercased: each part of a path is looked at once.
+    seen: HashSet<String>,
+    /// Paths named in the maps below.
+    paths: Vec<String>,
+    /// Long names by each short name Windows may give them (see `Long::keys`), and short-shaped
+    /// names by theirs.
+    longs: HashMap<u64, usize>,
+    shorts: HashMap<u64, usize>,
+    /// By directory: a long name and a short-shaped one in it, and one of each Windows may map
+    /// past ASCII in its own way, which then pairs with any of the other kind there.
+    dirs: HashMap<String, [Option<usize>; 4]>,
+    hasher: std::hash::RandomState,
+}
+
+const LONG: usize = 0;
+const SHORT: usize = 1;
+/// Past these two, the same kinds past ASCII.
+const ODD: usize = 2;
+
+impl ShortNames {
+    /// `path`'s parts added: the short-shaped path and the long one it may stand for, once there
+    /// are both.
+    fn add(&mut self, path: &str) -> Option<(String, String)> {
+        // ASCII case only: its byte offsets are the path's.
+        let lower = path.to_ascii_lowercase();
+        let mut start = 0;
+        for part in path.split('/') {
+            let end = start + part.len();
+            if end == path.len() || self.seen.insert(lower[..end].to_string()) {
+                let dir = &lower[..start.saturating_sub(1)];
+                if let Some(pair) = self.part(dir, part, &path[..end]) {
+                    return Some(pair);
+                }
+            }
+            start = end + 1;
+        }
+        None
+    }
+
+    /// One part of a path, `at`, in `dir`: the pair it makes, if it makes one.
+    fn part(&mut self, dir: &str, part: &str, at: &str) -> Option<(String, String)> {
+        let (keys, long, odd) = if let Some(s) = Short::parse(part) {
+            (s.keys(), false, s.odd)
+        } else {
+            let l = Long::parse(part)?;
+            (l.keys(), true, l.odd)
+        };
+        let (mine, theirs) = if long { (LONG, SHORT) } else { (SHORT, LONG) };
+        let slots = self.dirs.get(dir).copied().unwrap_or_default();
+        // One past ASCII pairs with any of the other kind in its directory, and one in ASCII
+        // with any such of the other kind.
+        let mut other = if odd { slots[theirs] } else { slots[theirs + ODD] };
+        if other.is_none() && !odd {
+            let found = if long { &self.shorts } else { &self.longs };
+            other = keys.iter().find_map(|k| found.get(&self.key(dir, k)).copied());
+        }
+        if let Some(i) = other {
+            let other = self.paths[i].clone();
+            return Some(if long { (other, at.to_string()) } else { (at.to_string(), other) });
+        }
+        let i = self.paths.len();
+        self.paths.push(at.to_string());
+        let slots = self.dirs.entry(dir.to_string()).or_default();
+        slots[mine].get_or_insert(i);
+        if odd {
+            slots[mine + ODD].get_or_insert(i);
+        } else {
+            for k in &keys {
+                let key = self.key(dir, k);
+                if long { &mut self.longs } else { &mut self.shorts }.entry(key).or_insert(i);
+            }
+        }
+        None
+    }
+
+    fn key(&self, dir: &str, short: &str) -> u64 {
+        use std::hash::BuildHasher as _;
+        self.hasher.hash_one((dir, short))
+    }
+}
+
+/// A name Windows makes no short name for, since it is one: up to eight characters, then at
+/// most one dot and three more, of those 8.3 allows (and any past ASCII).
+fn is_83(part: &str) -> bool {
+    let (base, ext) = part.rsplit_once('.').unwrap_or((part, ""));
+    let allowed = |c: char| !c.is_ascii() || c.is_ascii_alphanumeric() || "$%'-_@~`!(){}^#&".contains(c);
+    !base.is_empty()
+        && base.chars().count() <= 8
+        && ext.chars().count() <= 3
+        && base.chars().chain(ext.chars()).all(allowed)
+}
+
+/// A long name as Windows starts its short name: uppercased, without spaces, leading dots or
+/// dots before the extension, `+,;=[]` as `_`. `odd` when what Windows keeps of it is past
+/// ASCII, which it maps in ways of its own.
+struct Long {
+    base: Vec<char>,
+    ext: String,
+    odd: bool,
+}
+
+impl Long {
+    fn parse(part: &str) -> Option<Self> {
+        if is_83(part) {
+            return None;
+        }
+        let name = part.trim_start_matches('.');
+        let (base, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+        let short = |s: &str| -> Vec<char> {
+            let each = |c: char| if "+,;=[]".contains(c) { '_' } else { c.to_ascii_uppercase() };
+            s.chars().filter(|c| *c != '.' && *c != ' ').map(each).collect()
+        };
+        let (base, ext) = (short(base), short(ext));
+        let ext: String = ext.into_iter().take(3).collect();
+        let odd = !ext.is_ascii() || base.iter().take(6).any(|c| !c.is_ascii());
+        Some(Self { base, ext, odd })
+    }
+
+    /// Each short name Windows may give it, without the digits after `~`: its first `7 - d`
+    /// characters, or all of them when fewer, for a number of `d` digits; past four alike, its
+    /// first two and four hex digits (`#` here).
+    fn keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = (1..=6)
+            .map(|d: usize| {
+                let base: String = self.base.iter().take(7 - d).collect();
+                format!("{base}~{d}.{}", self.ext)
+            })
+            .collect();
+        if self.base.len() >= 2 {
+            keys.push(format!("{}{}#.{}", self.base[0], self.base[1], self.ext));
+        }
+        keys
+    }
+}
+
+/// A name shaped as Windows makes a short one: 8.3, its first part a prefix, `~` and a number.
+struct Short {
+    prefix: String,
+    digits: usize,
+    ext: String,
+    odd: bool,
+}
+
+impl Short {
+    fn parse(part: &str) -> Option<Self> {
+        if !is_83(part) {
+            return None;
+        }
+        let (base, ext) = part.rsplit_once('.').unwrap_or((part, ""));
+        let (prefix, n) = base.rsplit_once('~')?;
+        // Windows counts from 1, so `612~0.js` is never one.
+        if prefix.is_empty() || n.starts_with('0') || n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let odd = !part.is_ascii();
+        Some(Self { prefix: prefix.to_ascii_uppercase(), digits: n.len(), ext: ext.to_ascii_uppercase(), odd })
+    }
+
+    /// The names `Long::keys` makes that this one may be.
+    fn keys(&self) -> Vec<String> {
+        let mut keys = vec![format!("{}~{}.{}", self.prefix, self.digits, self.ext)];
+        let p = self.prefix.as_bytes();
+        if self.digits == 1 && p.len() == 6 && p[2..].iter().all(u8::is_ascii_hexdigit) {
+            keys.push(format!("{}#.{}", &self.prefix[..2], self.ext));
+        }
+        keys
+    }
 }
 
 fn name(header: &[u8]) -> String {
@@ -283,9 +483,12 @@ pub mod tests {
             ("package/d", 0o644, b""),
         ]);
         assert!(
-            read_limited(four.as_slice(), 3, |_, _, _, _| Ok(())).unwrap_err().message.contains("more than 3 files")
+            read_limited(four.as_slice(), 3, false, |_, _, _, _| Ok(()))
+                .unwrap_err()
+                .message
+                .contains("more than 3 files")
         );
-        assert!(read_limited(four.as_slice(), 4, |_, _, _, _| Ok(())).is_ok());
+        assert!(read_limited(four.as_slice(), 4, false, |_, _, _, _| Ok(())).is_ok());
     }
 
     #[test]
@@ -309,6 +512,95 @@ pub mod tests {
         ] {
             assert_eq!(safe_path(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn refuses_device_names() {
+        for name in ["con", "CON", "nul.js", "Aux.d.ts", "com1", "COM9.txt", "lpt3.md", "prn ", "nul .js", "LPT¹"] {
+            assert!(device(name), "{name}");
+        }
+        for name in
+            ["console.js", "connect", "com10", "com0", "lpt", "auxiliary.js", "nul_", "con_.js", "x.con", "conx"]
+        {
+            assert!(!device(name), "{name}");
+        }
+        // On every OS: a package unpacks the same everywhere.
+        for path in ["package/lib/aux.js", "package/CON/x.js", "package/x/Com1.txt"] {
+            let a = build(&[("package/index.js", 0o644, b"x"), (path, 0o644, b"y")]);
+            let e = read_entries(a.as_slice(), |_, _, _, _| Ok(())).unwrap_err();
+            assert_eq!(e.code, "EBADTAR");
+            assert!(e.message.contains(&path["package/".len()..]) && e.message.contains("device name"), "{e}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_short_name_beside_the_long_one() {
+        let pair = |a: &str, b: &str| {
+            let mut names = ShortNames::default();
+            names.add(a).or_else(|| names.add(b))
+        };
+        let both = |long: &str, short: &str| Some((short.to_string(), long.to_string()));
+        // Either order, any case, in the same directory.
+        assert_eq!(pair("package.json", "PACKAG~1.JSO"), both("package.json", "PACKAG~1.JSO"));
+        assert_eq!(pair("packag~1.jso", "package.json"), both("package.json", "packag~1.jso"));
+        assert_eq!(pair("lib/Package.json", "LIB/PACKAG~2.JSO"), both("lib/Package.json", "LIB/PACKAG~2.JSO"));
+        assert_eq!(pair("a/node_modules/x.js", "a/NODE_M~1/y.js"), both("a/node_modules", "a/NODE_M~1"));
+        assert_eq!(pair(".eslintrc.json", "ESLINT~1.JSO"), both(".eslintrc.json", "ESLINT~1.JSO"));
+        assert_eq!(pair("a b+c.json", "ABC~1.JSO"), None);
+        assert_eq!(pair("a b+c.json", "AB_C~1.JSO"), both("a b+c.json", "AB_C~1.JSO"));
+        assert_eq!(pair("ab.longext", "AB~1.LON"), both("ab.longext", "AB~1.LON"));
+        assert_eq!(pair("rslib-runtime~0.mjs", "rslib-~1.mjs"), both("rslib-runtime~0.mjs", "rslib-~1.mjs"));
+        // Past nine, fewer of the name's characters; past four alike, two and a hash.
+        assert_eq!(pair("package.json", "PACKA~12.JSO"), both("package.json", "PACKA~12.JSO"));
+        assert_eq!(pair("package.json", "PA3F2C~1.JSO"), both("package.json", "PA3F2C~1.JSO"));
+        // Past ASCII, Windows maps a name as it will: paired with any of the other kind.
+        assert_eq!(pair("café-latte.js", "CAFELA~1.JS"), both("café-latte.js", "CAFELA~1.JS"));
+        // Not what Windows would make for it: another directory, extension or prefix, a number
+        // it never gives, or a long name that is already 8.3.
+        for (a, b) in [
+            ("package.json", "x/PACKAG~1.JSO"),
+            ("package.json", "PACKAG~1.JS"),
+            ("package.json", "PACK~1.JSO"),
+            ("package.json", "PACKAG~0.JSO"),
+            ("lazy-compilation.js", "l~3.js"),
+            ("612.js", "612~3.js"),
+            ("612~0.js", "612~3.js"),
+            ("rslib-runtime~0.mjs", "RSLIB-~1.JS"),
+        ] {
+            assert_eq!(pair(a, b), None, "{a} {b}");
+        }
+        // Names real packages ship (rspack's chunks, next's), alone or beside others, unpack.
+        let real = [
+            "package/dist/612~0.js",
+            "package/dist/612~3.js",
+            "package/dist/l~0.js",
+            "package/dist/l~3.js",
+            "package/dist/1~184.cjs",
+            "package/dist/0~795.js",
+            "package/dist/index.js",
+            "package/dist/lazy-compilation.js",
+            "package/dist/rslib-runtime~0.mjs",
+            "package/dist/chunks/turbopack-0xtlpa~_u2u~0.js",
+        ];
+        let a = build(&real.map(|p| (p, 0o644, b"x".as_slice())));
+        assert_eq!(read_limited(a.as_slice(), MAX_FILES, true, |_, _, _, _| Ok(())).map_err(|e| e.message), Ok(()));
+        // A pair is refused where Windows makes short names, and only there.
+        let a = build(&[("package/package.json", 0o644, b"{}"), ("package/PACKAG~1.JSO", 0o644, b"x")]);
+        let e = read_limited(a.as_slice(), MAX_FILES, true, |_, _, _, _| Ok(())).unwrap_err();
+        assert_eq!(e.message, "Tarball entry PACKAG~1.JSO may be the short name Windows gives package.json");
+        assert!(read_limited(a.as_slice(), MAX_FILES, false, |_, _, _, _| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn checks_short_names_in_linear_time() {
+        // Many short-shaped names and many long ones in one directory, none a pair.
+        let mut names = ShortNames::default();
+        let start = std::time::Instant::now();
+        for i in 0..50_000 {
+            assert_eq!(names.add(&format!("dir/A{i:05}~1.JS")), None);
+            assert_eq!(names.add(&format!("dir/b-long-name-{i}.js")), None);
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
     }
 
     #[test]
