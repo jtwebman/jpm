@@ -105,12 +105,14 @@ pub fn parse_npmrc(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<L
         }
         value = expand_env(&value, env);
         if let Some(list) = key.strip_suffix("[]") {
-            let joined = match out.get(list) {
-                Some(have) if !have.is_empty() && !value.is_empty() => format!("{have},{value}"),
-                Some(have) if !have.is_empty() => have.clone(),
-                _ => value,
-            };
-            out.insert(list.to_string(), joined);
+            // Added to in place: copying the list for each line made a long one quadratic.
+            let have = out.entry(list.to_string()).or_default();
+            if !value.is_empty() {
+                if !have.is_empty() {
+                    have.push(',');
+                }
+                have.push_str(&value);
+            }
         } else {
             out.insert(key, value);
         }
@@ -563,6 +565,18 @@ mod tests {
         assert_eq!(layer["list"], "a,b");
         assert_eq!(layer["opt"], "x");
         assert_eq!(layer["lit"], "${TOKEN}");
+    }
+
+    #[test]
+    fn joins_lists_in_one_pass() {
+        let layer = parse_npmrc("l[]=\nl[]=a\nl[]=\nl[]=b\nm=x\nm[]=y\nn[]=", &no_env).unwrap();
+        assert_eq!((layer["l"].as_str(), layer["m"].as_str(), layer["n"].as_str()), ("a,b", "x,y", ""));
+        // Found while fuzzing: each `key[]=` line copied the list so far, so a project's .npmrc
+        // of 100,000 of them (1.4 MB) took minutes and a gigabyte to read.
+        let text: String = (0..100_000).map(|i| format!("ca[]=v{i}\n")).collect();
+        let layer = parse_npmrc(&text, &no_env).unwrap();
+        assert_eq!(layer["ca"].len(), text.len() - 100_000 * "ca[]=\n".len() + 99_999);
+        assert!(layer["ca"].starts_with("v0,v1,") && layer["ca"].ends_with(",v99999"));
     }
 
     #[test]
