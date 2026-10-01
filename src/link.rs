@@ -53,6 +53,11 @@ const DIGEST_FILE: &str = ".subgraph";
 const DIGEST_SHOWN: usize = 8;
 /// Files per job when one package's files are linked on several threads.
 const PLACE_CHUNK: usize = 256;
+/// Entries built at once, per disk thread, counting those waiting on their package's download:
+/// two, so that waiting leaves others building. One on Windows, where entries built in parallel
+/// wait on each other in the file system filters while the downloads wait on Defender: on a nuxt
+/// install from a lockfile, the second thread each took a fifth of the CPU and saved no time.
+const BUILDS_PER_DISK_THREAD: usize = if WIN { 1 } else { 2 };
 
 pub struct Inputs {
     pub hash: String,
@@ -464,7 +469,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         // on a thread of its own: its links are nearly all in one directory, which takes one
         // writer at a time.
         let hoist = s.spawn(|| linker.hoist(&entries_dir.join(HOIST)));
-        pool::run(pool::disk_threads() * 2, ids, |id, _| {
+        pool::run(pool::disk_threads() * BUILDS_PER_DISK_THREAD, ids, |id, _| {
             let entry = &linker.wanted[id];
             let placed = match linker.global_of(entry) {
                 _ if !linker.present(entry) => Ok(()),
