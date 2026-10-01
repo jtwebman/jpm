@@ -552,7 +552,7 @@ impl Walk<'_> {
         let Some(read) = self.opts.tarball else {
             return Err(Error::new("EINVALIDSPEC", format!("nothing reads tarballs here, so not {source}")));
         };
-        let memo = if dir.is_empty() { source.to_string() } else { format!("{source} {dir}") };
+        let memo = if dir.is_empty() { source.to_string() } else { format!("{source}\0{dir}") };
         let cell = self.picks.lock().unwrap_or_else(PoisonError::into_inner).entry(memo).or_default().clone();
         cell.get_or_init(|| read(source, pinned, dir)).clone()
     }
@@ -760,10 +760,12 @@ impl Walk<'_> {
                     s.records.insert(found.key(), found.clone());
                 }
             }
+            // Out of the range, the workspace is still the one linked, as pnpm links it (prisma's
+            // `workspace:8.0.0-rc.13` once its workspace is at rc.14): said, not refused.
             if !fits(&found.version, &spec.fetch_spec) {
-                return fail(format!(
-                    "no workspace version of {} satisfies {} (have {})",
-                    spec.fetch_name, spec.fetch_spec, found.version
+                lock(&self.state).warnings.insert(format!(
+                    "workspace {} is {}, which {} does not satisfy: linked anyway, as pnpm links it",
+                    spec.fetch_name, found.version, spec.fetch_spec
                 ));
             }
             if spec.fetch_name != spec.name {
