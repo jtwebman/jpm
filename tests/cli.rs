@@ -799,6 +799,26 @@ fn reads_yarns_and_pnpms_command_lines_in_scripts() {
     assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("missing script"));
 }
 
+#[cfg(unix)]
+#[test]
+fn runs_every_script_a_pattern_matches() {
+    // pnpm's run "/^build:.*/", in name order, across workspaces with -r.
+    let r = registry();
+    let env = Env::new(&r);
+    let scripts = |who: &str| json!({ "build:js": format!("echo {who}-js >> ../ran.txt"), "build:css": format!("echo {who}-css >> ../ran.txt"), "test": "echo no", "/b/": "echo never" });
+    env.manifest(json!({ "name": "root", "workspaces": ["w"], "scripts": { "build:x": "echo root-x > ran.txt" } }));
+    env.write("w/package.json", &json!({ "name": "w", "scripts": scripts("w") }).to_string());
+    env.ok(&["install"]);
+    env.ok(&["run", "/^build:.*/"]);
+    assert_eq!(env.read("ran.txt"), "root-x\n");
+    let _ = std::fs::remove_file(env.path("ran.txt"));
+    env.ok(&["-r", "run", "/^build:(js|css)$/"]);
+    assert_eq!(env.read("ran.txt"), "w-css\nw-js\n");
+    let fails = |pat: &str| String::from_utf8_lossy(&env.jpm(&["run", pat]).stderr).into_owned();
+    assert!(fails("/^nothing$/").contains("no script matches"));
+    assert!(fails("/(a)\\1/").contains("backreferences are not read"));
+}
+
 #[test]
 fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
     let r = registry();

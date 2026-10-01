@@ -2610,6 +2610,32 @@ pub struct ScriptResult {
 /// One package.json script, or one per workspace picked. `replace`: a single script may take
 /// over this process, so signals and the exit code are the script's own.
 pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> Result<(i32, Vec<ScriptResult>)> {
+    // pnpm's `run /regex/`: each script whose name matches, in name order, wherever picked, a
+    // workspace without it skipped. The pattern runs in linear time (`ScriptPattern`).
+    if let Some(pattern) = run::ScriptPattern::of(script) {
+        let pattern = pattern.map_err(|m| fail("ESCRIPT", m))?;
+        let mut names: Vec<String> = Vec::new();
+        for top in packages(opts)? {
+            // A script named like a pattern itself is never one to run here: it would match again.
+            let scripts = top.manifest.scripts(&top.file)?;
+            names.extend(scripts.keys().filter(|k| run::ScriptPattern::of(k).is_none() && pattern.matches(k)).cloned());
+        }
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            return Err(fail("ENOSCRIPT", format!("no script matches {script}")));
+        }
+        let each = Opts { if_present: true, ..opts.clone() };
+        let (mut code, mut all) = (0, Vec::new());
+        for name in names {
+            let (c, r) = run_script(&name, args, &each, false)?;
+            if code == 0 {
+                code = c;
+            }
+            all.extend(r);
+        }
+        return Ok((code, all));
+    }
     let logged = opts.workspaces.is_some();
     let tops = packages(opts)?;
     // A name no script has may be a bin, as yarn's run and pnpm's --filter <bin> take it: a plain
