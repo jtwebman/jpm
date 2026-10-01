@@ -89,6 +89,9 @@ Options
                        as -w, with pnpm's selectors: a name glob (@s/*), !x to leave x out,
                        x... with what x depends on, ...x with what depends on x, ^ without x
   -r, --recursive      run: every workspace with the script (pnpm's -r); --filter narrows it
+  workspace <name> <command>
+                       yarn's form of -w <name> <command>
+  run <name>           a bin when no script has the name, as yarn's run takes it
   -h, --help           show help
   -v, --version        show the version
 
@@ -176,6 +179,8 @@ struct Cli {
     workspaces: bool,
     /// pnpm's `-r`: every workspace, those without the script skipped; `--filter` narrows it.
     recursive: bool,
+    /// yarn's `workspace <name> <command>`: the next word is the workspace's name.
+    yarn_workspace: bool,
     include_root: bool,
     if_present: bool,
     yes: bool,
@@ -210,7 +215,7 @@ const COMMANDS: [&str; 13] = [
     "patch-commit",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 11] = [
+const NOOPS: [&str; 16] = [
     "--no-audit",
     "--no-fund",
     "--force",
@@ -223,6 +228,14 @@ const NOOPS: [&str; 11] = [
     "--parallel",
     "--stream",
     "--sequential",
+    // An install that may change the lockfile, as jpm's is unless --frozen-lockfile.
+    "--no-frozen-lockfile",
+    "--no-immutable",
+    // yarn's run -T, a bin of the root: a workspace's run finds the root's bins already.
+    "-T",
+    "--top-level",
+    // bun's --bun, which runs a bin's node shebang under bun: the bin's own runtime is kept.
+    "--bun",
 ];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
@@ -285,7 +298,7 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
         match flag.as_str() {
             "--registry" => cli.registry = Some(value()?),
             "--store" => cli.store = Some(value()?),
-            "--dir" | "--prefix" | "-C" => cli.dir = Some(value()?),
+            "--dir" | "--prefix" | "-C" | "--cwd" => cli.dir = Some(value()?),
             "--edit-dir" => cli.edit_dir = Some(value()?),
             // pnpm's --filter selects as -w does, with its selectors too (see `select_workspaces`).
             "-w" | "--workspace" | "-F" | "--filter" => cli.workspace.get_or_insert_with(Vec::new).push(value()?),
@@ -370,6 +383,16 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
 
 /// The first word is the command, or, as in pnpm, a script: `jpm test` is `run test`.
 fn positional(cli: &mut Cli, arg: &str) {
+    // yarn's `workspace <name> <command>`: -w <name> <command>.
+    if cli.command.is_none() && cli.yarn_workspace {
+        cli.yarn_workspace = false;
+        cli.workspace.get_or_insert_with(Vec::new).push(arg.to_string());
+        return;
+    }
+    if cli.command.is_none() && arg == "workspace" && cli.workspace.is_none() {
+        cli.yarn_workspace = true;
+        return;
+    }
     if cli.command.is_some() {
         cli.specs.push(arg.to_string());
     } else if let Some(cmd) = alias(arg) {
