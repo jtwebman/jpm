@@ -905,10 +905,13 @@ impl Linker<'_> {
         let pkg_dir = nm.join(entry.pkg.dir_name());
         let index = self.index(entry)?;
         // A built package's files are its scripts' to change, a patched one's are not the store's.
-        if !entry.build
-            && entry.pkg.patch.is_none()
-            && !index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| index.unchanged(f, &m)))
-        {
+        // Under `verify`, one the store fetched again was changed there, and links to it still
+        // hold the changed files, which the new stamp would take for new: built again.
+        let files_ok = || {
+            !(self.opts.verify && self.opts.store.was_fetched(&entry.pkg.integrity))
+                && index.files.iter().all(|f| fs::metadata(pkg_dir.join(&f.path)).is_ok_and(|m| index.unchanged(f, &m)))
+        };
+        if !entry.build && entry.pkg.patch.is_none() && !files_ok() {
             return Ok(false);
         }
         let deps = self.deps_of(entry.pkg)?;
