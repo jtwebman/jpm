@@ -733,6 +733,44 @@ fn links_workspaces() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn runs_scripts_by_pnpms_recursive_and_filter() {
+    // b depends on @s/a; @s/c stands alone; d has no build script.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["p/*"] }));
+    let ws = |dir: &str, name: &str, deps: serde_json::Value, build: bool| {
+        let scripts = if build { json!({ "build": format!("echo {name} >> ../../ran.txt") }) } else { json!({}) };
+        let m = json!({ "name": name, "version": "1.0.0", "dependencies": deps, "scripts": scripts });
+        env.write(&format!("p/{dir}/package.json"), &m.to_string());
+    };
+    ws("a", "@s/a", json!({}), true);
+    ws("b", "b", json!({ "@s/a": "workspace:*" }), true);
+    ws("c", "@s/c", json!({}), true);
+    ws("d", "d", json!({}), false);
+    env.ok(&["install"]);
+    let ran = |args: &[&str]| {
+        let _ = std::fs::remove_file(env.path("ran.txt"));
+        env.ok(args);
+        let mut got: Vec<String> = env.read("ran.txt").lines().map(str::to_string).collect();
+        got.sort();
+        got.join(" ")
+    };
+    // -r: every workspace with the script, d skipped as pnpm skips it.
+    assert_eq!(ran(&["-r", "build"]), "@s/a @s/c b");
+    assert_eq!(ran(&["-r", "run", "build"]), "@s/a @s/c b");
+    assert_eq!(ran(&["--filter", "b", "run", "build"]), "b");
+    assert_eq!(ran(&["-F", "@s/*", "build"]), "@s/a @s/c");
+    assert_eq!(ran(&["--filter", "./p/c", "build"]), "@s/c");
+    assert_eq!(ran(&["--filter", "b...", "build"]), "@s/a b");
+    assert_eq!(ran(&["--filter", "b^...", "build"]), "@s/a");
+    assert_eq!(ran(&["--filter", "...@s/a", "build"]), "@s/a b");
+    assert_eq!(ran(&["--filter", "...^@s/a", "build"]), "b");
+    assert_eq!(ran(&["-r", "--filter", "!b", "--parallel", "build"]), "@s/a @s/c");
+    assert!(String::from_utf8_lossy(&env.jpm(&["--filter", "[main]", "build"]).stderr).contains("not by git ref"));
+}
+
 #[test]
 fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
     let r = registry();

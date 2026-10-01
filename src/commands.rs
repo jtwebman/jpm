@@ -2432,14 +2432,17 @@ fn basename(dir: &Path) -> String {
 
 /// Every workspace after the ones it depends on (by `workspace:` or a fitting range), otherwise
 /// as declared. A cycle comes out together, as declared, and is reported.
-fn run_order(all: &[Workspace]) -> (Vec<Workspace>, Vec<Vec<Workspace>>) {
-    let depends = |ws: &Workspace, dep: &Workspace| {
-        [&ws.manifest.dependencies, &ws.manifest.dev_dependencies, &ws.manifest.optional_dependencies].iter().any(|g| {
-            g.iter().any(|(n, r)| {
-                spec::parse_dep(n, r).is_ok_and(|s| s.fetch_name == dep.name && project::links_to(&s, &dep.version))
-            })
+/// Whether `ws` depends on the workspace `dep` (by `workspace:` or a fitting range).
+fn depends_on(ws: &Workspace, dep: &Workspace) -> bool {
+    [&ws.manifest.dependencies, &ws.manifest.dev_dependencies, &ws.manifest.optional_dependencies].iter().any(|g| {
+        g.iter().any(|(n, r)| {
+            spec::parse_dep(n, r).is_ok_and(|s| s.fetch_name == dep.name && project::links_to(&s, &dep.version))
         })
-    };
+    })
+}
+
+fn run_order(all: &[Workspace]) -> (Vec<Workspace>, Vec<Vec<Workspace>>) {
+    let depends = depends_on;
     let n = all.len();
     let (mut index, mut low) = (vec![usize::MAX; n], vec![0; n]);
     let (mut stack, mut on) = (Vec::new(), vec![false; n]);
@@ -2498,26 +2501,87 @@ fn run_order(all: &[Workspace]) -> (Vec<Workspace>, Vec<Vec<Workspace>>) {
 }
 
 /// The workspaces an option names: a name, a path from the root or cwd, or a directory above
-/// some. Every entry has to find one.
+/// some. Every entry has to find one. pnpm's `--filter` selectors read too: a name glob
+/// (`@scope/*`), `!` to leave out, `x...` for x and what it depends on, `...x` for x and what
+/// depends on it, `^` to leave x itself out (`x^...`, `...^x`).
 fn select_workspaces(select: &Select, root: &Path, all: &[Workspace]) -> Result<Vec<Workspace>> {
     let Select::Some(list) = select else { return Ok(all.to_vec()) };
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut picked: HashSet<String> = HashSet::new();
-    for arg in list {
-        let dirs = [normalize(&root.join(arg)), normalize(&cwd.join(arg))];
-        let exact: Vec<&Workspace> =
-            all.iter().filter(|w| w.name == *arg || dirs.contains(&normalize(&w.dir))).collect();
-        let under: Vec<&Workspace> = all
-            .iter()
-            .filter(|w| dirs.iter().any(|d| normalize(&w.dir).starts_with(d) && normalize(&w.dir) != *d))
-            .collect();
-        let hits = if exact.is_empty() { under } else { exact };
-        if hits.is_empty() {
-            return Err(fail("EWORKSPACE", format!("no workspace is named or at {arg}")));
+    let mut left_out: HashSet<String> = HashSet::new();
+    for raw in list {
+        let (out, rest) = raw.strip_prefix('!').map_or((false, raw.as_str()), |r| (true, r));
+        let (rest, deps) = rest.strip_suffix("...").map_or((rest, false), |r| (r, true));
+        let (rest, dependents) = rest.strip_prefix("...").map_or((rest, false), |r| (r, true));
+        let (rest, own_out) = match (rest.strip_suffix('^'), rest.strip_prefix('^')) {
+            (Some(r), _) if deps => (r, true),
+            (_, Some(r)) if dependents => (r, true),
+            _ => (rest, false),
+        };
+        if rest.starts_with('[') || rest.starts_with('{') {
+            return Err(fail(
+                "EWORKSPACE",
+                format!("--filter {raw}: jpm selects by name, glob or path, not by git ref"),
+            ));
         }
-        picked.extend(hits.into_iter().map(|w| w.path.clone()));
+        let glob = rest.contains('*') && !rest.starts_with(['.', '/']);
+        let mut hits = if glob {
+            all.iter().filter(|w| crate::glob::matches(rest, &w.name)).map(|w| w.path.clone()).collect()
+        } else {
+            named(rest, root, &cwd, all)?
+        };
+        // The graph around the selection, as far as it goes.
+        let grow = |forward: bool, hits: &HashSet<String>| -> HashSet<String> {
+            let mut set = hits.clone();
+            loop {
+                let more: Vec<String> = all
+                    .iter()
+                    .filter(|w| !set.contains(&w.path))
+                    .filter(|w| {
+                        all.iter()
+                            .filter(|o| set.contains(&o.path))
+                            .any(|o| if forward { depends_on(o, w) } else { depends_on(w, o) })
+                    })
+                    .map(|w| w.path.clone())
+                    .collect();
+                if more.is_empty() {
+                    return set;
+                }
+                set.extend(more);
+            }
+        };
+        let base = hits.clone();
+        if deps {
+            hits = grow(true, &base);
+        }
+        if dependents {
+            hits.extend(grow(false, &base));
+        }
+        if own_out {
+            hits.retain(|p| !base.contains(p));
+        }
+        if out { left_out.extend(hits) } else { picked.extend(hits) }
     }
-    Ok(all.iter().filter(|w| picked.contains(&w.path)).cloned().collect())
+    // Only exclusions: everything else.
+    if picked.is_empty() && !left_out.is_empty() {
+        picked = all.iter().map(|w| w.path.clone()).collect();
+    }
+    Ok(all.iter().filter(|w| picked.contains(&w.path) && !left_out.contains(&w.path)).cloned().collect())
+}
+
+/// The workspaces a name or a path names: the one so named or there, else every one under it.
+fn named(arg: &str, root: &Path, cwd: &Path, all: &[Workspace]) -> Result<HashSet<String>> {
+    let dirs = [normalize(&root.join(arg)), normalize(&cwd.join(arg))];
+    let exact: Vec<&Workspace> = all.iter().filter(|w| w.name == arg || dirs.contains(&normalize(&w.dir))).collect();
+    let under: Vec<&Workspace> = all
+        .iter()
+        .filter(|w| dirs.iter().any(|d| normalize(&w.dir).starts_with(d) && normalize(&w.dir) != *d))
+        .collect();
+    let hits = if exact.is_empty() { under } else { exact };
+    if hits.is_empty() {
+        return Err(fail("EWORKSPACE", format!("no workspace is named or at {arg}")));
+    }
+    Ok(hits.into_iter().map(|w| w.path.clone()).collect())
 }
 
 fn normalize(p: &Path) -> PathBuf {
