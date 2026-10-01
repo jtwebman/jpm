@@ -2612,15 +2612,23 @@ pub struct ScriptResult {
 pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> Result<(i32, Vec<ScriptResult>)> {
     let logged = opts.workspaces.is_some();
     let tops = packages(opts)?;
+    // A name no script has may be a bin, as yarn's run and pnpm's --filter <bin> take it: a plain
+    // name only, found in the top's `node_modules/.bin` or above, never a path.
+    let plain = !script.is_empty() && !script.contains(['/', '\\', ' ']) && !script.starts_with('.');
+    let bin_of = |dir: &Path| {
+        let exts: &[&str] = if cfg!(windows) { &[".cmd", ".exe", ""] } else { &[""] };
+        plain && run::bin_dirs(dir).iter().any(|d| exts.iter().any(|x| d.join(format!("{script}{x}")).is_file()))
+    };
     let found = tops.iter().any(|t| t.manifest.scripts(&t.file).is_ok_and(|s| s.contains_key(script)));
-    if found {
+    if found || tops.iter().any(|t| bin_of(&t.dir)) {
         install_first(opts)?;
     }
     let mut results = Vec::new();
     let single = tops.len() == 1;
     for top in tops {
         let scripts = top.manifest.scripts(&top.file)?;
-        let Some(command) = scripts.get(script).and_then(Value::as_str) else {
+        let bin = (!scripts.contains_key(script) && bin_of(&top.dir)).then(|| run::quote(script, cfg!(windows), false));
+        let Some(command) = scripts.get(script).and_then(Value::as_str).or(bin.as_deref()) else {
             if !opts.if_present && logged {
                 warn(&format!("missing script \"{script}\" in {}", top.file.display()));
             }

@@ -771,6 +771,34 @@ fn runs_scripts_by_pnpms_recursive_and_filter() {
     assert!(String::from_utf8_lossy(&env.jpm(&["--filter", "[main]", "build"]).stderr).contains("not by git ref"));
 }
 
+#[cfg(unix)]
+#[test]
+fn reads_yarns_and_pnpms_command_lines_in_scripts() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["p/*"], "scripts": { "hi": "echo root-hi" } }));
+    env.write(
+        "p/a/package.json",
+        r#"{ "name": "a", "version": "1.0.0", "scripts": { "hi": "echo a-hi" }, "dependencies": { "cli": "1.0.0" } }"#,
+    );
+    env.ok(&["install"]);
+    let says = |args: &[&str], want: &str| {
+        let out = env.ok(args);
+        assert!(out.contains(want), "{args:?}: {out}");
+    };
+    // A name no script has is a bin, as yarn's run and pnpm's --filter <bin> take it.
+    says(&["--filter", "a", "hello"], "hello-from-cli");
+    says(&["workspace", "a", "hello"], "hello-from-cli");
+    says(&["workspace", "a", "run", "hi"], "a-hi");
+    says(&["--cwd", "p/a", "hi"], "a-hi");
+    says(&["run", "-T", "hi"], "root-hi");
+    env.ok(&["install", "--no-frozen-lockfile"]);
+    env.ok(&["install", "--no-immutable"]);
+    // Never a path.
+    let out = env.jpm(&["run", "../../x"]);
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("missing script"));
+}
+
 #[test]
 fn a_workspace_tree_is_up_to_date_until_a_workspace_changes() {
     let r = registry();
