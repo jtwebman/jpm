@@ -130,17 +130,23 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Comman
         let all = std::env::split_paths(&path).chain(std::iter::once(dir));
         path = std::env::join_paths(all).unwrap_or(path);
     }
+    // The shell is named by its full path: found on the PATH the script gets, a dependency's bin
+    // called `sh` (or `cmd`) would run in its place, approved or not.
     #[cfg(windows)]
     let mut command = {
         use std::os::windows::process::CommandExt;
-        let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
+        let system = || std::env::var_os("SystemRoot").map(|r| Path::new(&r).join("System32").join("cmd.exe"));
+        let comspec = std::env::var_os("ComSpec").map(PathBuf::from).filter(|c| c.is_absolute()).or_else(system);
+        let comspec = comspec.unwrap_or_else(|| "cmd.exe".into());
         let mut c = Command::new(comspec);
         c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{line}\""));
         c
     };
     #[cfg(not(windows))]
     let mut command = {
-        let mut c = Command::new("sh");
+        let sh = Path::new("/bin/sh");
+        let mut c =
+            Command::new(if sh.is_file() { sh.to_path_buf() } else { which("sh").unwrap_or_else(|| "sh".into()) });
         c.args(["-c", line]);
         c
     };
