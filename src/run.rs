@@ -266,6 +266,277 @@ pub fn script_env(command: &mut Command, file: &Path, name: &str, script: &str, 
         .env("npm_execpath", std::env::current_exe().unwrap_or_default());
 }
 
+// --- pnpm's `run /regex/` --------------------------------------------------------------------
+
+/// A script-name pattern, `/…/` as pnpm's run takes it (`pnpm run "/^build:.*/"`), matched in
+/// time linear in the name whatever the pattern: a Thompson NFA run on a set of states, never a
+/// backtracking search, so a pattern from a package.json (`/^(a+)+$/`) cannot hang the run.
+/// Literals, `.`, `*`, `+`, `?`, `|`, groups, `[…]` classes and `\` escapes, `^` and `$` at the
+/// ends; counted repeats, backreferences and lookaround are refused by name.
+pub struct ScriptPattern {
+    prog: Vec<Inst>,
+    start: bool,
+    end: bool,
+}
+
+/// A pattern is for a script name: longer than this, or with more states, is refused.
+const MAX_PATTERN: usize = 256;
+const MAX_STATES: usize = 1000;
+const MAX_DEPTH: usize = 32;
+
+#[derive(Clone)]
+enum Set {
+    Any,
+    One(char),
+    Class(bool, Vec<(char, char)>),
+}
+
+impl Set {
+    fn has(&self, c: char) -> bool {
+        match self {
+            Set::Any => true,
+            Set::One(x) => *x == c,
+            Set::Class(negated, ranges) => ranges.iter().any(|(a, b)| (*a..=*b).contains(&c)) != *negated,
+        }
+    }
+}
+
+enum Re {
+    Set(Set),
+    Cat(Vec<Re>),
+    Alt(Vec<Re>),
+    Star(Box<Re>),
+    Plus(Box<Re>),
+    Opt(Box<Re>),
+}
+
+enum Inst {
+    Char(Set),
+    Split(usize, usize),
+    Jump(usize),
+    Match,
+}
+
+impl ScriptPattern {
+    /// `Some` for a `/…/` argument, its error for one jpm will not run.
+    pub fn of(arg: &str) -> Option<std::result::Result<Self, String>> {
+        let body = arg.strip_prefix('/')?.strip_suffix('/')?;
+        Some(Self::parse(body).map_err(|why| format!("script pattern {arg}: {why}")))
+    }
+
+    fn parse(body: &str) -> std::result::Result<Self, String> {
+        if body.len() > MAX_PATTERN {
+            return Err(format!("longer than {MAX_PATTERN} characters"));
+        }
+        let start = body.starts_with('^');
+        let body = body.strip_prefix('^').unwrap_or(body);
+        let end = body.ends_with('$') && !body.ends_with("\\$");
+        let body = if end { &body[..body.len() - 1] } else { body };
+        let chars: Vec<char> = body.chars().collect();
+        let mut at = 0;
+        let re = alt(&chars, &mut at, 0)?;
+        if at < chars.len() {
+            return Err(format!("unmatched {:?}", chars[at]));
+        }
+        let mut prog = Vec::new();
+        emit(&re, &mut prog);
+        prog.push(Inst::Match);
+        if prog.len() > MAX_STATES {
+            return Err(format!("more than {MAX_STATES} states"));
+        }
+        Ok(Self { prog, start, end })
+    }
+
+    pub fn matches(&self, name: &str) -> bool {
+        let n = self.prog.len();
+        let (mut now, mut next) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let mut seen = vec![usize::MAX; n];
+        let mut step = 0;
+        let matched = |set: &Vec<usize>| set.iter().any(|pc| matches!(self.prog[*pc], Inst::Match));
+        self.add(&mut now, &mut seen, step, 0);
+        for c in name.chars() {
+            if matched(&now) && !self.end {
+                return true;
+            }
+            step += 1;
+            next.clear();
+            for &pc in &now {
+                if let Inst::Char(set) = &self.prog[pc]
+                    && set.has(c)
+                {
+                    self.add(&mut next, &mut seen, step, pc + 1);
+                }
+            }
+            if !self.start {
+                self.add(&mut next, &mut seen, step, 0);
+            }
+            std::mem::swap(&mut now, &mut next);
+        }
+        matched(&now)
+    }
+
+    /// `pc` and every state its jumps and splits reach, once a step.
+    fn add(&self, set: &mut Vec<usize>, seen: &mut [usize], step: usize, pc: usize) {
+        let mut todo = vec![pc];
+        while let Some(pc) = todo.pop() {
+            if seen[pc] == step {
+                continue;
+            }
+            seen[pc] = step;
+            match self.prog[pc] {
+                Inst::Jump(to) => todo.push(to),
+                Inst::Split(a, b) => {
+                    todo.push(b);
+                    todo.push(a);
+                }
+                _ => set.push(pc),
+            }
+        }
+    }
+}
+
+fn alt(c: &[char], at: &mut usize, depth: usize) -> std::result::Result<Re, String> {
+    if depth > MAX_DEPTH {
+        return Err(format!("groups nested more than {MAX_DEPTH} deep"));
+    }
+    let mut arms = vec![cat(c, at, depth)?];
+    while c.get(*at) == Some(&'|') {
+        *at += 1;
+        arms.push(cat(c, at, depth)?);
+    }
+    Ok(if arms.len() == 1 { arms.pop().unwrap_or(Re::Cat(Vec::new())) } else { Re::Alt(arms) })
+}
+
+fn cat(c: &[char], at: &mut usize, depth: usize) -> std::result::Result<Re, String> {
+    let mut parts = Vec::new();
+    while let Some(&ch) = c.get(*at) {
+        if ch == '|' || ch == ')' {
+            break;
+        }
+        *at += 1;
+        let atom = match ch {
+            '.' => Re::Set(Set::Any),
+            '(' => {
+                if c.get(*at) == Some(&'?') {
+                    return Err("lookaround and (?…) groups are not read".into());
+                }
+                let inner = alt(c, at, depth + 1)?;
+                if c.get(*at) != Some(&')') {
+                    return Err("unclosed (".into());
+                }
+                *at += 1;
+                inner
+            }
+            '[' => Re::Set(class(c, at)?),
+            '\\' => {
+                let e = *c.get(*at).ok_or("a trailing \\")?;
+                *at += 1;
+                if e.is_ascii_digit() {
+                    return Err("backreferences are not read".into());
+                }
+                Re::Set(match e {
+                    'd' => Set::Class(false, vec![('0', '9')]),
+                    'w' => Set::Class(false, vec![('a', 'z'), ('A', 'Z'), ('0', '9'), ('_', '_')]),
+                    _ => Set::One(e),
+                })
+            }
+            '{' => return Err("counted repeats ({n,m}) are not read".into()),
+            '*' | '+' | '?' => return Err(format!("{ch} repeats nothing")),
+            '^' | '$' => return Err(format!("{ch} only at the start or end")),
+            other => Re::Set(Set::One(other)),
+        };
+        let atom = match c.get(*at) {
+            Some('*') => Re::Star(Box::new(atom)),
+            Some('+') => Re::Plus(Box::new(atom)),
+            Some('?') => Re::Opt(Box::new(atom)),
+            _ => {
+                parts.push(atom);
+                continue;
+            }
+        };
+        *at += 1;
+        if matches!(c.get(*at), Some('*' | '+' | '?' | '{')) {
+            return Err("a repeat of a repeat is not read".into());
+        }
+        parts.push(atom);
+    }
+    Ok(Re::Cat(parts))
+}
+
+fn class(c: &[char], at: &mut usize) -> std::result::Result<Set, String> {
+    let negated = c.get(*at) == Some(&'^');
+    if negated {
+        *at += 1;
+    }
+    let mut ranges = Vec::new();
+    loop {
+        let mut ch = *c.get(*at).ok_or("unclosed [")?;
+        *at += 1;
+        if ch == ']' && !ranges.is_empty() {
+            return Ok(Set::Class(negated, ranges));
+        }
+        if ch == '\\' {
+            ch = *c.get(*at).ok_or("unclosed [")?;
+            *at += 1;
+        }
+        if c.get(*at) == Some(&'-') && c.get(*at + 1).is_some_and(|n| *n != ']') {
+            let hi = c[*at + 1];
+            *at += 2;
+            ranges.push((ch, hi));
+        } else {
+            ranges.push((ch, ch));
+        }
+    }
+}
+
+fn emit(re: &Re, p: &mut Vec<Inst>) {
+    match re {
+        Re::Set(s) => p.push(Inst::Char(s.clone())),
+        Re::Cat(parts) => parts.iter().for_each(|r| emit(r, p)),
+        Re::Alt(arms) => {
+            let mut jumps = Vec::new();
+            for (i, arm) in arms.iter().enumerate() {
+                if i + 1 < arms.len() {
+                    let split = p.len();
+                    p.push(Inst::Split(split + 1, 0));
+                    emit(arm, p);
+                    jumps.push(p.len());
+                    p.push(Inst::Jump(0));
+                    let next = p.len();
+                    p[split] = Inst::Split(split + 1, next);
+                } else {
+                    emit(arm, p);
+                }
+            }
+            let end = p.len();
+            for j in jumps {
+                p[j] = Inst::Jump(end);
+            }
+        }
+        Re::Star(inner) => {
+            let split = p.len();
+            p.push(Inst::Split(split + 1, 0));
+            emit(inner, p);
+            p.push(Inst::Jump(split));
+            let out = p.len();
+            p[split] = Inst::Split(split + 1, out);
+        }
+        Re::Plus(inner) => {
+            let start = p.len();
+            emit(inner, p);
+            let out = p.len() + 1;
+            p.push(Inst::Split(start, out));
+        }
+        Re::Opt(inner) => {
+            let split = p.len();
+            p.push(Inst::Split(split + 1, 0));
+            emit(inner, p);
+            let out = p.len();
+            p[split] = Inst::Split(split + 1, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +568,44 @@ mod tests {
         assert_eq!(quote_program(r"C:\a&b (1)\x.cmd", true), r#""C:\a&b (1)\x.cmd""#);
         assert_eq!(quote_program(r"C:\100%\x.cmd", true), r"C:\100%%cd:~,%\x.cmd");
         assert_eq!(quote_program("/my dir/a", false), "'/my dir/a'");
+    }
+
+    #[test]
+    fn matches_script_names_as_pnpms_run_patterns() {
+        let p = |pat: &str| ScriptPattern::of(pat).unwrap().unwrap();
+        let names = ["build", "build:js", "build:css", "copy-build", "test", "prebuild"];
+        let hits = |pat: &str| names.iter().filter(|n| p(pat).matches(n)).copied().collect::<Vec<_>>();
+        assert_eq!(hits("/^build:.*/"), ["build:js", "build:css"]);
+        assert_eq!(hits("/^(copy-build|build-.*)$/"), ["copy-build"]);
+        assert_eq!(hits("/build/"), ["build", "build:js", "build:css", "copy-build", "prebuild"]);
+        assert_eq!(hits("/^build$/"), ["build"]);
+        assert_eq!(hits("/^[bt][a-z]+$/"), ["build", "test"]);
+        assert_eq!(hits("/^build:(js|css)?$/"), ["build:js", "build:css"]);
+        assert!(ScriptPattern::of("build").is_none(), "a plain name is no pattern");
+    }
+
+    #[test]
+    fn a_hostile_script_pattern_runs_in_linear_time() {
+        // Exponential on a backtracking engine; a set of states takes them in stride.
+        let long = format!("{}!", "a".repeat(10_000));
+        let start = std::time::Instant::now();
+        for pat in ["/^(a+)+$/", "/^(a|a)*$/", "/^(a*)*b$/", "/((a?)*)*c/"] {
+            assert!(!ScriptPattern::of(pat).unwrap().unwrap().matches(&long), "{pat}");
+        }
+        assert!(start.elapsed().as_millis() < 2000, "{:?}", start.elapsed());
+        for (pat, why) in [
+            ("/a{1,9}/", "counted repeats"),
+            ("/(a)\\1/", "backreferences"),
+            ("/(?=a)/", "lookaround"),
+            ("/a**/", "a repeat of a repeat"),
+            ("/(a/", "unclosed ("),
+            ("/[a/", "unclosed ["),
+            ("/a^b/", "only at the start or end"),
+        ] {
+            let err = ScriptPattern::of(pat).unwrap().err().unwrap_or_default();
+            assert!(err.contains(why), "{pat}: {err}");
+        }
+        assert!(ScriptPattern::of(&format!("/{}/", "a".repeat(300))).unwrap().is_err());
+        assert!(ScriptPattern::of(&format!("/{}{}/", "(".repeat(40), ")".repeat(40))).unwrap().is_err());
     }
 }
