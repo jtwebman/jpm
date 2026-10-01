@@ -51,13 +51,41 @@ pub fn chosen(res: &Resolution, trusted: &HashSet<String>) -> HashSet<String> {
         .collect()
 }
 
+/// Whether the project itself names `id`, a package that is not the registry's (a git, tarball
+/// or `file:` package): a top depends on its source directly, or an override of the root's
+/// names it. A directory inside another package's tarball never is: its name is whatever that
+/// package's author gave it, and approving a trusted name must not approve it.
+pub fn named_by_project(res: &Resolution, id: &str) -> bool {
+    let Some(p) = res.packages.get(id) else { return false };
+    if p.within().is_some() {
+        return false;
+    }
+    let Some((name, source)) = crate::graph::split_key(crate::graph::split_peers(id).0) else { return false };
+    let tops = std::iter::once(&res.root.dependencies).chain(
+        res.packages.values().filter(|p| p.local.is_some()).flat_map(|p| [&p.dependencies, &p.optional_dependencies]),
+    );
+    let mut edges = tops.flat_map(|deps| deps.iter());
+    edges.any(|(n, v)| n == name && crate::graph::edge_base(n, v) == source)
+        || res.root.overrides.iter().any(|o| {
+            o.name == name
+                && o.value
+                    .as_deref()
+                    .is_some_and(|v| spec::parse_dep(name, v).is_ok_and(|s| spec::names_source(&s, "", source)))
+        })
+}
+
 /// Packages with install scripts that do not run, as `name@version`, for the install to say so.
+/// A directory inside another package's tarball says which: its name and version are only what
+/// that package's author wrote.
 pub fn skipped(res: &Resolution, chosen: &HashSet<String>, installed: &dyn Fn(&str) -> bool) -> Vec<String> {
     let mut out: Vec<String> = res
         .packages
         .iter()
         .filter(|(id, p)| p.scripts && !chosen.contains(*id) && installed(id))
-        .map(|(_, p)| format!("{}@{}", p.name, p.version))
+        .map(|(_, p)| match p.within() {
+            Some((parent, at)) => format!("{}@{} (the directory {at} inside {parent})", p.name, p.version),
+            None => format!("{}@{}", p.name, p.version),
+        })
         .collect();
     out.sort();
     out.dedup();

@@ -1702,6 +1702,44 @@ fn approvals_hold_only_for_the_registrys_own_package() {
     assert!(!env.exists("node_modules/bld/pwned.txt"));
 }
 
+/// A registry package may ship a directory as a dependency of its own (`file:./sub`) and give
+/// it any name, a trusted one among them. Approving that name approves the registry's package of
+/// that name, never the directory: its scripts do not run, approved or not.
+#[cfg(unix)]
+#[test]
+fn approving_a_name_never_runs_a_directory_another_package_ships() {
+    let r = scripted();
+    let fake = r#"{ "name": "bld", "version": "1.0.0", "scripts": { "postinstall": "touch pwned.txt" } }"#;
+    r.publish(pkg("host", "1.0.0", json!({ "dependencies": { "bld": "file:./fake" } })).file(
+        "fake/package.json",
+        0o644,
+        fake,
+    ));
+    for flags in [&["install"][..], &["install", "--no-global-store"]] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "dependencies": { "bld": "1.0.0", "host": "1.0.0" }, "trustedDependencies": ["bld"] }));
+        let said = env.ok(flags);
+        let out = env.jpm(&["approve", "bld"]);
+        assert!(!env.exists("node_modules/host/../bld/pwned.txt"), "approving bld ran the directory's script");
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && text.contains("not the registry's"), "{text}");
+        // The install names where the directory is, not only the name and version it wears.
+        assert!(said.contains("the directory fake inside host@1.0.0"), "{said}");
+        // Approved by a lockfile edit: it still does not run, and the registry's package does.
+        let lock = env.read("jpm.lock");
+        let at = lock.find("package bld@path:host@1.0.0/fake\n").expect(&lock);
+        let line = lock[at..].find("  scripts\n").unwrap() + at + "  scripts\n".len();
+        let edited = format!("{}  build\n{}", &lock[..line], &lock[line..]);
+        let at = edited.find("package bld@1.0.0\n").unwrap();
+        let line = edited[at..].find("  scripts\n").unwrap() + at + "  scripts\n".len();
+        env.write("jpm.lock", &format!("{}  build\n{}", &edited[..line], &edited[line..]));
+        let out = env.ok(&[&["install", "--frozen-lockfile"][..], &flags[1..]].concat());
+        assert!(out.contains("tarball is not the registry's"), "{out}");
+        assert!(!env.exists("node_modules/host/../bld/pwned.txt"), "the directory's script ran");
+        assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn seals_shared_entries() {
