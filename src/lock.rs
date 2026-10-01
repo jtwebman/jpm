@@ -2,7 +2,7 @@
 //! the two. Written with fixed field order and sorted maps, so the same resolution is always the
 //! same bytes.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::bin;
@@ -964,7 +964,7 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
     }
     // Every copy of a package is one tarball: the facts that name it are the same.
     let whole = Whole::new(lock);
-    let mut bases: std::collections::HashMap<&str, &LockEntry> = std::collections::HashMap::new();
+    let mut bases: HashMap<&str, &LockEntry> = HashMap::new();
     for (key, e) in &lock.packages {
         let at = format!("packages[{key:?}]");
         let (base, suffix) = split_peers(key);
@@ -1144,16 +1144,20 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, whole: &Whole) -> Result<()> {
                 "{at}.dependencies[{name:?}] is {version}: only the package that ships it links it"
             )));
         }
-        let ranges = top.specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
-        let asked: Vec<spec::Spec> = ranges
-            .chain(top.peers.get(name))
-            .filter_map(|range| match crate::rules::find(&lock.root.overrides, top.parent, name, range) {
-                Some(Some(value)) => spec::parse_dep(name, value).ok(),
-                Some(None) => None,
-                None => spec::parse_dep(name, range).ok(),
+        // Only a link, a source or an alias is checked against what is asked: a registry version,
+        // nearly every edge, never matches its ranges against the overrides.
+        let asked = std::cell::OnceCell::new();
+        let asked = || {
+            asked.get_or_init(|| {
+                let ranges = top.specs.into_iter().flat_map(Specs::groups).filter_map(|(_, g)| g?.get(name));
+                ranges
+                    .chain(top.peers.get(name))
+                    .filter_map(|range| whole.ask(top.parent, name, range))
+                    .collect::<Vec<_>>()
             })
-            .collect();
+        };
         if let Some(path) = version.strip_prefix("link:") {
+            let asked = asked();
             let dirs: Vec<&spec::Spec> = asked.iter().filter(|s| s.kind == Kind::Directory).collect();
             let named = if dirs.is_empty() && !lock.packages.contains_key(&format!("{name}@{version}")) {
                 by_name(path, whole)
@@ -1180,11 +1184,11 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, whole: &Whole) -> Result<()> {
                 return Err(fail(format!("{at}.dependencies[{name:?}] links {path}, which its specs do not name")));
             }
         } else if (spec::is_git(version) || version.contains("://") || version.starts_with("file:"))
-            && !asked.iter().any(|s| spec::names_source(s, top.base, version))
+            && !asked().iter().any(|s| spec::names_source(s, top.base, version))
         {
             return Err(fail(format!("{at}.dependencies[{name:?}] is {version}, which its specs do not name")));
         } else if let Some((real, _)) = crate::graph::split_alias(version)
-            && !asked.iter().any(|s| s.fetch_name == real)
+            && !asked().iter().any(|s| s.fetch_name == real)
             && !(top.peers.contains_key(name) && a_top_aliases(whole, name, real))
         {
             // An edit cannot put another package under a name a spec gave to one it names.
@@ -1211,6 +1215,13 @@ fn a_top_aliases(whole: &Whole, name: &str, real: &str) -> bool {
         out
     });
     aliases.contains(&(name.to_string(), real.to_string()))
+}
+
+/// Whether `spec` asks the registry for `name` itself: a version, range or tag, not an alias,
+/// a directory, a workspace or a source.
+fn registry_version(name: &str, spec: &str) -> bool {
+    spec::parse_dep(name, spec)
+        .is_ok_and(|s| matches!(s.kind, Kind::Version | Kind::Range | Kind::Tag) && s.fetch_name == name)
 }
 
 /// Whether the workspace entry at `path` may be linked by its name: the one entry so named, or
@@ -1245,11 +1256,27 @@ struct Whole<'a> {
     /// Each package key without its peer suffix.
     bases: std::cell::OnceCell<HashSet<&'a str>>,
     /// How many workspace entries have each name.
-    names: std::cell::OnceCell<std::collections::HashMap<&'a str, usize>>,
+    names: std::cell::OnceCell<HashMap<&'a str, usize>>,
     /// Every directory a top's `file:` or `link:` spec names, by its path.
     paths: std::cell::OnceCell<HashSet<String>>,
     /// Every `(name, package)` a top's spec asks for under that name: an alias's real package.
     aliases: std::cell::OnceCell<HashSet<(String, String)>>,
+    /// The root's overrides, by the name they override.
+    overrides: std::cell::OnceCell<HashMap<&'a str, Rules>>,
+    /// What `ask` made of each `(parent, name, range)`.
+    asked: std::cell::RefCell<HashMap<AskKey, Option<spec::Spec>>>,
+}
+
+/// A parent (where it matters), a name and a range.
+type AskKey = (Option<(String, String)>, String, String);
+
+/// The overrides of one name, in order.
+struct Rules {
+    rules: Vec<Override>,
+    /// Each asks for a registry version of the name (see `ask`).
+    registry: bool,
+    /// Some apply only under a parent.
+    scoped: bool,
 }
 
 impl<'a> Whole<'a> {
@@ -1260,13 +1287,55 @@ impl<'a> Whole<'a> {
             names: Default::default(),
             paths: Default::default(),
             aliases: Default::default(),
+            overrides: Default::default(),
+            asked: Default::default(),
         }
+    }
+
+    /// What a top asks for under `name` with `range`, once the overrides have their say.
+    /// Matching a range against every override of its name is an intersection each, so it is
+    /// skipped where the answer cannot matter: when the range and every override of the name
+    /// ask for a registry version of it, whichever applies asks for one. What the checks read
+    /// of what is asked (a directory, a workspace, a source, the package an alias names) is the
+    /// same either way.
+    fn ask(&self, parent: Option<(&str, &str)>, name: &str, range: &str) -> Option<spec::Spec> {
+        let by_name = self.overrides.get_or_init(|| {
+            let mut out: HashMap<&str, Rules> = HashMap::new();
+            for o in &self.lock.root.overrides {
+                let rules =
+                    out.entry(o.name.as_str()).or_insert(Rules { rules: Vec::new(), registry: true, scoped: false });
+                rules.registry &= o.value.as_deref().is_some_and(|v| registry_version(&o.name, v));
+                rules.scoped |= o.parent.is_some();
+                rules.rules.push(o.clone());
+            }
+            out
+        });
+        let Some(rules) = by_name.get(name) else { return spec::parse_dep(name, range).ok() };
+        if rules.registry && registry_version(name, range) {
+            return spec::parse_dep(name, range).ok();
+        }
+        // Each range once, and for each parent only where an override names one.
+        let key = (
+            rules.scoped.then(|| parent.map(|(n, v)| (n.to_string(), v.to_string()))).flatten(),
+            name.to_string(),
+            range.to_string(),
+        );
+        if let Some(hit) = self.asked.borrow().get(&key) {
+            return hit.clone();
+        }
+        let asked = match crate::rules::find(&rules.rules, parent, name, range) {
+            Some(Some(value)) => spec::parse_dep(name, value).ok(),
+            Some(None) => None,
+            None => spec::parse_dep(name, range).ok(),
+        };
+        self.asked.borrow_mut().insert(key, asked.clone());
+        asked
     }
 
     /// How many workspace entries are named `name`.
     fn named(&self, name: &str) -> usize {
         let names = self.names.get_or_init(|| {
-            let mut out = std::collections::HashMap::new();
+            let mut out = HashMap::new();
             for w in self.lock.workspaces.values() {
                 *out.entry(w.name.as_str()).or_default() += 1;
             }
@@ -1772,6 +1841,37 @@ package h@1.0.0
             ));
         }
         assert_eq!(parse_lockfile(&text, LOCKFILE).unwrap().workspaces.len(), 1_000);
+    }
+
+    /// Found while fuzzing: each workspace edge was matched against every override of its name,
+    /// a range intersection each. 4,000 overrides of one name over 2,000 workspaces, each asking
+    /// for its own range (310 KB), took 3.8 s in a release build and over 30 s in a test build.
+    #[test]
+    fn checks_overrides_in_linear_time() {
+        let lockfile = |link: bool| {
+            let mut text = String::from("jpm-lock 2\nhash 0\nroot\n");
+            for i in 0..10_000 {
+                text.push_str(&format!("  override npm x@>={}.0.0 1.0.0\n", 100 + i));
+            }
+            text.push_str("package x@1.0.0\n  integrity sha512-x\n");
+            if link {
+                text.push_str("workspace x\n  name x\n  version 1.0.0\n");
+            }
+            let dep = if link { "link:x" } else { "1.0.0" };
+            for i in 0..4_000 {
+                text.push_str(&format!(
+                    "workspace w{i}\n  name w{i}\n  version 1.0.0\n  spec dependencies x ^1.0.{i}\n  dep x {dep}\n"
+                ));
+            }
+            text
+        };
+        for link in [false, true] {
+            let text = lockfile(link);
+            let start = std::time::Instant::now();
+            let lock = parse_lockfile(&text, LOCKFILE).unwrap();
+            assert_eq!(lock.root.overrides.len(), 10_000);
+            assert!(start.elapsed() < std::time::Duration::from_secs(2), "{link}: {:?}", start.elapsed());
+        }
     }
 
     #[test]
