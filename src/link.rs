@@ -579,6 +579,13 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         }
         inside(&top.nm, &real_root)?;
     }
+    // nx (and tools like it) read pnpm-lock.yaml only beside pnpm's state file, and stop without
+    // it: "pnpm lockfile detected, but node_modules/.modules.yaml is missing". jpm's layout is not
+    // pnpm's, so the file says only what they read: nothing hoisted. One already there is kept.
+    let modules = opts.dir.join("node_modules").join(".modules.yaml");
+    if opts.dir.join("pnpm-lock.yaml").is_file() && fs::symlink_metadata(&modules).is_err() {
+        crate::util::write_atomic(&modules, b"hoistedDependencies: {}\n")?;
+    }
     // Each top is a `node_modules` of its own: a workspace's are linked side by side.
     let links: Vec<RootLinks> = pool::map(pool::disk_threads(), tops.iter().collect(), |top| linker.link_top(top))
         .into_iter()
