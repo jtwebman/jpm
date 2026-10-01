@@ -229,11 +229,11 @@ fn says_what_it_does_not_read() {
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
     env.write(
         "pnpm-workspace.yaml",
-        "minimumReleaseAge: 1440\npublicHoistPattern: ['@types/*']\npeerDependencyRules:\n  ignoreMissing: [x]\n",
+        "minimumReleaseAge: 1440\nhoistPattern: ['*']\npeerDependencyRules:\n  ignoreMissing: [x]\n",
     );
     let out = env.ok(&["install"]);
     assert!(!out.contains("minimumReleaseAge"), "read as min-release-age: {out}");
-    assert!(out.contains("pnpm-workspace.yaml sets publicHoistPattern, which jpm does not read"), "{out}");
+    assert!(out.contains("pnpm-workspace.yaml sets hoistPattern, which jpm does not read"), "{out}");
     assert!(!out.contains("peerDependencyRules"), "only settings that change the tree: {out}");
 }
 

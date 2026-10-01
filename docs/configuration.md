@@ -72,6 +72,16 @@ already set. Plain
 `node app.js`, outside jpm, gets neither: an undeclared import fails there unless the project
 is installed with `--no-global-store`.
 
+Some packages of the hidden hoist are also linked in the root's `node_modules`, as pnpm's
+`public-hoist-pattern` does: where tsc (`"types": ["node"]`), an editor's eslint and prettier,
+and tools that npm's and yarn's flat layout let find anything, look. By default those are
+`@types/*`, `*eslint*` and `*prettier*`; `*` matches any characters, a scope's `/` too, and a
+`!` pattern leaves names out. `public-hoist-pattern[]=<pattern>` in `.npmrc` (one line each)
+takes the default's place, an empty `public-hoist-pattern[]=` links none, and
+`shamefully-hoist=true` links every one, close to npm's and yarn's layout.
+`publicHoistPattern` and `shamefullyHoist` in `pnpm-workspace.yaml` are read the same way when
+`.npmrc` says nothing. A package the root declares is always its own, never the hoist's.
+
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects
 still use. A project that is gone, or on a drive that is not mounted, is dropped from the

@@ -20,9 +20,7 @@ pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 const YARNRC: &str = ".yarnrc.yml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 14] = [
-    "publicHoistPattern",
-    "shamefullyHoist",
+const UNREAD: [&str; 12] = [
     "hoistPattern",
     "nodeLinker",
     "hoistWorkspacePackages",
@@ -169,6 +167,8 @@ pub struct Rules {
     pub extensions: Vec<Extension>,
     /// What another manager's lockfile records of them (`project::Extended`).
     extended: crate::project::Extended,
+    /// pnpm-workspace.yaml's `publicHoistPattern` (`shamefullyHoist: true` is `*`).
+    pub public_hoist: Option<Vec<String>>,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -211,6 +211,13 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             ui::warn(&format!("{PNPM_WORKSPACE} sets autoInstallPeers to false; jpm installs missing peers"));
         }
         rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
+        rules.public_hoist = if y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
+            Some(vec!["*".to_string()])
+        } else {
+            y.get("publicHoistPattern")
+                .and_then(Value::as_array)
+                .map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        };
         let built = y.get("onlyBuiltDependencies").and_then(Value::as_array).into_iter().flatten();
         for name in built.filter_map(Value::as_str) {
             rules.builds.insert(name.to_string(), true);

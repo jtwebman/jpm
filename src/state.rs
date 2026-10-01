@@ -272,13 +272,15 @@ pub fn state_hash(
     salt: &str,
     global: bool,
     platform: &crate::sys::Platform,
+    public_hoist: &[String],
 ) -> String {
     short_hash(&format!(
-        "jpm-state-3\n{lock_hash}\nproduction:{}\nstore:{}\nsalt:{salt}\nglobal:{}\n{}",
+        "jpm-state-3\n{lock_hash}\nproduction:{}\nstore:{}\nsalt:{salt}\nglobal:{}\n{}\npublic:{}",
         u8::from(production),
         store.display(),
         u8::from(global),
-        json::to_string(&platform.to_value())
+        json::to_string(&platform.to_value()),
+        public_hoist.join(",")
     ))
 }
 

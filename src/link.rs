@@ -98,6 +98,8 @@ pub struct Options<'a> {
     pub tarballs: Option<BTreeMap<String, Option<Stamp>>>,
     /// The project's patches, found by their hash.
     pub patches: &'a [crate::patch::Patch],
+    /// Names of the hidden hoist linked at the root too (`public-hoist-pattern`); `!` leaves out.
+    pub public_hoist: &'a [String],
     /// Puts a package in the store, waiting for its download if one is under way. With it,
     /// entries are built as their packages arrive rather than after the last one. With the
     /// global store, optional packages must be settled before, as whether they arrived decides
@@ -110,6 +112,15 @@ pub struct Options<'a> {
 
 /// See `Options::fetch`.
 pub type Fetch<'a> = dyn Fn(&Package) -> Result<()> + Sync + 'a;
+
+/// A package of the hidden hoist linked at the root too: its name, its entry's package directory,
+/// and whether that is in the global store (linked to as it is, not relative).
+type Public = (String, PathBuf, bool);
+
+/// What the root links of the hidden hoist unless a setting says otherwise: type packages
+/// (tsc's `types: ["node"]` looks for @types/node at the root) and the linters and formatters
+/// that editors and configs find there.
+pub const PUBLIC_HOIST: [&str; 3] = ["@types/*", "*eslint*", "*prettier*"];
 
 /// Downloads under way: which have finished (or failed), and how many workers still run.
 #[derive(Default)]
@@ -564,7 +575,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(e) = failures.into_iter().next() {
         return Err(e);
     }
-    hoisted?;
+    let public = hoisted?;
     // Downloads no entry took whole, into the store as they are.
     opts.store.flush()?;
     let hook = entries_dir.join(HOOK);
@@ -587,9 +598,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         crate::util::write_atomic(&modules, b"hoistedDependencies: {}\n")?;
     }
     // Each top is a `node_modules` of its own: a workspace's are linked side by side.
-    let links: Vec<RootLinks> = pool::map(pool::disk_threads(), tops.iter().collect(), |top| linker.link_top(top))
-        .into_iter()
-        .collect::<Result<_>>()?;
+    let links: Vec<RootLinks> =
+        pool::map(pool::disk_threads(), tops.iter().collect(), |top| linker.link_top(top, &public))
+            .into_iter()
+            .collect::<Result<_>>()?;
     linker.sweep_temp();
     let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
     dropped.extend(settled.iter().filter(|(_, arrived)| !**arrived).map(|(id, _)| id.clone()));
@@ -1112,7 +1124,7 @@ impl Linker<'_> {
     /// links to the workspace's own directory. What it linked, for the state. In a `node_modules`
     /// this run made, and the scope and `.bin` directories made in it, the links are made
     /// straight away: nothing is there to read, replace or sweep, and no symlink can lead out.
-    fn link_top(&self, top: &Top) -> Result<RootLinks> {
+    fn link_top(&self, top: &Top, public: &[Public]) -> Result<RootLinks> {
         let nm = &top.nm;
         no_case_twins(top.dependencies.keys(), nm)?;
         let fresh = match fs::create_dir(nm) {
@@ -1156,6 +1168,24 @@ impl Linker<'_> {
             links.insert(name.clone(), target);
             direct.push((name.clone(), pkg));
         }
+        // The hidden hoist's packages a public pattern names, at the root as well: where tsc,
+        // an editor's eslint and a script's require look under npm and yarn. Never in place of
+        // what the root declares (the hoist leaves those out already).
+        if top.path.is_empty() {
+            for (name, real, shared) in public {
+                let at = nm.join(name);
+                let parent = at.parent().unwrap_or(nm);
+                if name.contains('/') {
+                    inside(parent, real_root)?;
+                    fs::create_dir_all(parent)
+                        .map_err(|e| Error::io(&e, "cannot create a scope directory").with_code("ELINK"))?;
+                }
+                let target = if *shared { real.clone() } else { relative(parent, real) };
+                let target = target.to_string_lossy().into_owned();
+                replace_link(&at, &target, nm, true)?;
+                links.insert(name.clone(), target);
+            }
+        }
         let bin_dir = nm.join(".bin");
         let mut bins: BTreeMap<String, (String, String, &Package)> = BTreeMap::new();
         for (name, pkg) in &direct {
@@ -1196,7 +1226,7 @@ impl Linker<'_> {
             Counts::add(&self.counts.bins, 1);
         }
         if !fresh {
-            let names: HashSet<String> = direct.into_iter().map(|(n, _)| n).collect();
+            let names: HashSet<String> = links.keys().cloned().collect();
             self.sweep(nm, &names, "");
             self.sweep(&bin_dir, &bins.keys().cloned().collect(), "");
         }
@@ -1245,7 +1275,7 @@ impl Linker<'_> {
     /// stays out: Node looks here first, so it would hide the root's own (a workspace, a git
     /// dependency), and the root's `node_modules` is the next place Node looks anyway. Links
     /// that are already right stay; the rest converge.
-    fn hoist(&self, dir: &Path) -> Result<()> {
+    fn hoist(&self, dir: &Path) -> Result<Vec<Public>> {
         let real_root = &self.real_root;
         let linked = |name: &str, version: &String| {
             let id = format!("{name}@{version}");
@@ -1284,6 +1314,16 @@ impl Linker<'_> {
                 .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?,
         };
         let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
+        let patterns = self.opts.public_hoist;
+        let named = |p: &str, n: &str| crate::glob::name_matches(p, n);
+        let public: Vec<Public> = pick
+            .iter()
+            .filter(|(n, _)| {
+                patterns.iter().any(|p| !p.starts_with('!') && named(p, n))
+                    && !patterns.iter().any(|p| p.strip_prefix('!').is_some_and(|p| named(p, n)))
+            })
+            .map(|(n, e)| (n.to_string(), self.root_of(e).join(&e.home), e.shared))
+            .collect();
         // Each scope directory once, before the links that go in it.
         let scopes: BTreeSet<&str> = pick.keys().filter_map(|n| n.split_once('/').map(|(s, _)| s)).collect();
         for scope in scopes {
@@ -1309,7 +1349,7 @@ impl Linker<'_> {
             }
         }
         self.sweep(dir, &keep, "");
-        Ok(())
+        Ok(public)
     }
 
     /// An install killed mid-entry leaves a `.tmp-*`: it goes once its pid is gone and it is an

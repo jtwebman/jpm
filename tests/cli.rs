@@ -2189,6 +2189,62 @@ fn writes_the_state_file_nx_reads_beside_a_pnpm_lockfile() {
 }
 
 #[test]
+fn links_undeclared_types_linters_and_formatters_at_the_root() {
+    // tsc's `types: ["node"]`, an editor's eslint and prettier look at the root, where npm and
+    // yarn put them: pnpm's public-hoist-pattern, @types/*, *eslint* and *prettier* by default.
+    let r = Registry::start(vec![
+        pkg(
+            "lib",
+            "1.0.0",
+            json!({ "dependencies": { "@types/x": "1.0.0", "@s/eslint-plugin-y": "1.0.0", "prettier": "1.0.0", "other": "1.0.0" } }),
+        ),
+        pkg("@types/x", "1.0.0", json!({})),
+        pkg("@s/eslint-plugin-y", "1.0.0", json!({})),
+        pkg("prettier", "1.0.0", json!({})),
+        pkg("prettier", "2.0.0", json!({})),
+        pkg("other", "1.0.0", json!({})),
+    ]);
+    let at_root = |env: &Env| {
+        let mut names: Vec<&str> = ["@types/x", "@s/eslint-plugin-y", "prettier", "other"]
+            .into_iter()
+            .filter(|n| env.exists(&format!("node_modules/{n}")))
+            .collect();
+        names.sort();
+        names.join(" ")
+    };
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "lib": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert_eq!(at_root(&env), "@s/eslint-plugin-y @types/x prettier");
+    assert!(env.read("node_modules/@types/x/index.js").contains("@types/x@1.0.0"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(at_root(&env), "@s/eslint-plugin-y @types/x prettier");
+    // What the root declares is its own, never the hoist's.
+    env.manifest(json!({ "dependencies": { "lib": "1.0.0", "prettier": "2.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/prettier/index.js").contains("prettier@2.0.0"));
+    // .npmrc's patterns take the default's place; an empty list links none; shamefully-hoist all.
+    env.manifest(json!({ "dependencies": { "lib": "1.0.0" } }));
+    for (npmrc, want) in [
+        ("public-hoist-pattern[]=other\n", "other"),
+        ("public-hoist-pattern[]=*\npublic-hoist-pattern[]=!@types/*\n", "@s/eslint-plugin-y other prettier"),
+        ("public-hoist-pattern[]=\n", ""),
+        ("shamefully-hoist=true\n", "@s/eslint-plugin-y @types/x other prettier"),
+    ] {
+        env.write(".npmrc", npmrc);
+        env.ok(&["install"]);
+        assert_eq!(at_root(&env), want, "{npmrc}");
+    }
+    // And pnpm-workspace.yaml's, when .npmrc says nothing.
+    std::fs::remove_file(env.path(".npmrc")).unwrap();
+    env.write("pnpm-workspace.yaml", "publicHoistPattern: ['@types/*']\n");
+    env.ok(&["install"]);
+    assert_eq!(at_root(&env), "@types/x");
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
