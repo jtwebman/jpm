@@ -1,12 +1,16 @@
 name: release
 
-# A v* tag builds every platform and publishes the release. A pull request that changes this
-# file or install.sh, or a manual run, builds, checks and sums the same binaries without publishing.
+# A pushed v* tag builds every platform, attests the files and publishes the release. A pull request
+# that changes this file or an installer, or a manual run (from any ref), builds, checks, sums and
+# stages the same files without attesting or publishing them.
+#
+# Every action is pinned by commit (Dependabot moves the pins: .github/dependabot.yml), every
+# container image by digest, and every downloaded tool by version and hash.
 on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [.github/workflows/release.yml, install.sh]
+    paths: [.github/workflows/release.yml, install.sh, install.ps1]
   workflow_dispatch:
 
 permissions:
@@ -36,23 +40,45 @@ jobs:
           - { os: windows-11-arm, target: aarch64-pc-windows-msvc, asset: jpm-windows-arm64.exe }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The toolchain is the one rust-toolchain.toml pins.
       - run: rustup target add ${{ matrix.target }}
       - if: matrix.musl
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # install-action checks the download against the SHA-256 in its own (pinned) manifest.
       - if: matrix.cross
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cross@0.2.5
       # zig links against an old glibc's symbols without an old system to build on. It is only
-      # a build tool: nothing of it is in the binary.
+      # a build tool: nothing of it is in the binary. pip takes only these wheels (Linux x64 and
+      # arm64, the two runners), by hash.
       - if: matrix.glibc
         run: |
+          cat > "$RUNNER_TEMP/zig.txt" <<'EOF'
+          ziglang==0.16.0 \
+            --hash=sha256:9fcda73f62b851dd72a54b710ad40a209896db14cfb13649e62191243556342b \
+            --hash=sha256:e27d409812b11e0fb89ed0200cf2e55b6464d43f9461553104e4a4f9a94a1fd5
+          cargo-zigbuild==0.23.4 \
+            --hash=sha256:0a149a2a07b9513d422efa9cc23e1add9741f08abe86845fa418eaeb4cca7931 \
+            --hash=sha256:9f848addf9ca16e8df52b4a86eb41f7555bb4205aea117ad521f501a307129f5
+          EOF
           python3 -m venv "$RUNNER_TEMP/zig"
-          "$RUNNER_TEMP/zig/bin/pip" install ziglang==0.16.0 cargo-zigbuild==0.23.4
+          "$RUNNER_TEMP/zig/bin/pip" install --only-binary :all: --require-hashes -r "$RUNNER_TEMP/zig.txt"
           echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
       - if: matrix.glibc
         run: cargo zigbuild --locked --release --target ${{ matrix.target }}.${{ matrix.glibc }}
-      - if: ${{ !matrix.glibc }}
-        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --locked --release --target ${{ matrix.target }}
+      # cross builds in its image for the target, here by digest rather than by its 0.2.5 tag.
+      - if: matrix.cross
+        env:
+          CROSS_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_IMAGE: ghcr.io/cross-rs/armv7-unknown-linux-musleabihf@sha256:b4f481f30ceca34730a5723f717396d762d94f6eddd7e1cf7c7862d1377ff98c # 0.2.5
+        run: |
+          cross build --locked --release --target ${{ matrix.target }}
+          docker image ls --digests ghcr.io/cross-rs/armv7-unknown-linux-musleabihf
+      - if: ${{ !matrix.glibc && !matrix.cross }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
       - shell: bash
         run: |
           bin=target/${{ matrix.target }}/release/jpm
@@ -78,30 +104,98 @@ jobs:
           readelf -l ${{ matrix.asset }} | grep -q INTERP && { echo "the musl build names a loader"; exit 1; }
           true
       # Run each Linux build on the oldest system it is for: glibc 2.17's CentOS 7, and Alpine.
+      # Both by the digest of their multi-arch index, which serves the x64 and the arm64 runners.
       - if: matrix.run
+        env:
+          IMAGE: ${{ matrix.glibc && 'centos:7@sha256:be65f488b7764ad3638f236b7b515b3678369a5124c47b8d32916d6487418ea4' || 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6' }}
         run: |
           chmod +x ${{ matrix.asset }}
-          image=${{ matrix.glibc && 'centos:7' || 'alpine:3' }}
-          docker run --rm -v "$PWD:/w:ro" $image /w/${{ matrix.asset }} --version
-      - uses: actions/upload-artifact@v4
+          docker run --rm -v "$PWD:/w:ro" "$IMAGE" /w/${{ matrix.asset }} --version
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
-  # Without a tag it only gathers the builds and sums them: the release itself needs a v* tag.
-  publish:
+  # Every run: the builds, the installers and the license files in one place, checked whole and
+  # summed. What a tag publishes is this artifact, unchanged.
+  stage:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: jpm-*
+          path: dist
+          merge-multiple: true
+      - run: |
+          cp install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md dist/
+          cd dist
+          # These files and nothing else.
+          n=0
+          for f in jpm-linux-x64 jpm-linux-arm64 jpm-linux-armv7 jpm-linux-x64-musl jpm-linux-arm64-musl \
+            jpm-linux-armv7-musl jpm-darwin-x64 jpm-darwin-arm64 jpm-windows-x64.exe jpm-windows-arm64.exe \
+            install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md; do
+            [ -f "$f" ] || { echo "missing: $f"; exit 1; }
+            n=$((n + 1))
+          done
+          [ "$(find . -type f | wc -l)" -eq "$n" ] || { echo "unexpected files:"; find . -type f; exit 1; }
+          sha256sum -- * > ../SHA256SUMS
+          mv ../SHA256SUMS .
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  # A pushed tag only: signed build provenance for every file of the release, SHA256SUMS too,
+  # through Sigstore and GitHub's attestation store (`gh attestation verify`; docs/install.md).
+  # Not on a dry run: there is no attestation that is not published, and one for an untagged
+  # build would verify as jpm's like a release's. The only job that can mint an OIDC token.
+  attest:
+    needs: stage
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: dist
+      - run: cd dist && sha256sum -c SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+  publish:
+    needs: attest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: release
           path: dist
-          merge-multiple: true
-      - run: cd dist && sha256sum jpm-* > SHA256SUMS && cat SHA256SUMS
-      - if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # What users will run: each file verifies as built by this workflow from this tag.
+      - run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          for f in *; do
+            gh attestation verify "$f" --repo "$GH_REPO" --deny-self-hosted-runners \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "$GITHUB_REF" >/dev/null
+            echo "attested: $f"
+          done
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
