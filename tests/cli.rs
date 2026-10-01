@@ -2152,6 +2152,24 @@ fn reads_the_bins_of_a_pnpm_alias() {
 }
 
 #[test]
+fn writes_the_state_file_nx_reads_beside_a_pnpm_lockfile() {
+    // nx reads pnpm-lock.yaml only with node_modules/.modules.yaml beside it.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(!env.exists("node_modules/.modules.yaml"), "not for a project pnpm has no lockfile in");
+    env.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+    let _ = std::fs::remove_dir_all(env.path("node_modules"));
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/.modules.yaml"), "hoistedDependencies: {}\n");
+    // One already there, pnpm's own, is kept.
+    env.write("node_modules/.modules.yaml", "layoutVersion: 5\n");
+    env.ok(&["install", "--verify"]);
+    assert_eq!(env.read("node_modules/.modules.yaml"), "layoutVersion: 5\n");
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
