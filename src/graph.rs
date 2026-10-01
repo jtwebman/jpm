@@ -206,6 +206,8 @@ pub struct Root {
     pub workspaces: Option<Vec<String>>,
     /// The overrides the tree was resolved under.
     pub overrides: Vec<crate::rules::Override>,
+    /// The packageExtensions the tree was resolved under.
+    pub extensions: Vec<crate::extensions::Extension>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

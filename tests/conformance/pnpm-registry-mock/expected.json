@@ -419,6 +419,61 @@
    "packages": [],
    "bins": []
   },
+  "packageExtensions: a dependency added": {
+   "root": [
+    "is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "is-positive@1.0.0 @pnpm.e2e/bar=100.1.0"
+   ],
+   "bins": []
+  },
+  "packageExtensions: a peer added to two packages": {
+   "root": [
+    "is-even -> 1.0.0",
+    "is-odd -> 3.0.1"
+   ],
+   "packages": [
+    "is-even@1.0.0 is-number=7.0.0 is-odd=0.1.2",
+    "is-number@7.0.0",
+    "is-odd@0.1.2 is-number=7.0.0",
+    "is-odd@3.0.1 is-number=7.0.0"
+   ],
+   "bins": []
+  },
+  "packageExtensions: a peer made optional": {
+   "root": [
+    "@pnpm.e2e/has-foo100-peer -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/has-foo100-peer@1.0.0 @pnpm.e2e/foo=-"
+   ],
+   "bins": []
+  },
+  "packageExtensions: the project extended": {
+   "root": [
+    "@pnpm.e2e/foo -> 1.0.0",
+    "is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/foo@1.0.0",
+    "is-positive@1.0.0"
+   ],
+   "bins": []
+  },
+  "packageExtensions: two dependencies added": {
+   "root": [
+    "is-positive -> 1.0.0"
+   ],
+   "packages": [
+    "@pnpm.e2e/bar@100.1.0",
+    "@pnpm.e2e/foo@100.1.0",
+    "@pnpm.e2e/foobar@100.0.0 @pnpm.e2e/bar=100.1.0 @pnpm.e2e/foo=100.1.0",
+    "is-positive@1.0.0 @pnpm.e2e/bar=100.1.0 @pnpm.e2e/foobar=100.0.0"
+   ],
+   "bins": []
+  },
   "peer: 2 circular peers": {
    "root": [
     "@pnpm.e2e/circular-peer-a -> 1.0.0",

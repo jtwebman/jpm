@@ -75,6 +75,8 @@ struct Source {
     overrides: Option<Value>,
     /// `patchedDependencies`: pnpm's key -> `{ path, hash }` or hash, bun's key -> path.
     patches: Value,
+    /// pnpm's `packageExtensionsChecksum`; npm and bun apply no packageExtensions.
+    extensions: Option<String>,
     runtimes: Runtimes,
 }
 
@@ -282,6 +284,13 @@ fn hold_to(file: &str, source: &mut Source, manifest: &RootManifest) -> Result<(
     {
         return Err(fail(format!("{file} is out of date with the patches")));
     }
+    // The packageExtensions it was resolved under: pnpm's, by its checksum of them. npm and bun
+    // apply none, and none of the three reads .yarnrc.yml's.
+    let pnpm = file == "pnpm-lock.yaml";
+    let extended = &manifest.extended;
+    if extended.yarn || (pnpm && source.extensions != extended.pnpm) || (!pnpm && !manifest.extensions.is_empty()) {
+        return Err(fail(format!("{file} is out of date with the packageExtensions")));
+    }
     let specs = manifest.specs();
     let declared = flat(specs.as_ref());
     let recorded = flat(Some(&source.specs));
@@ -382,7 +391,15 @@ fn read_npm(file: &str, text: &str) -> Result<Source> {
         }));
     }
     let (specs, root) = root_of(groups_of(listed.get("")), &|name| tree.find(0, name).and_then(|h| npm_edge(name, h)));
-    Ok(Source { nodes, specs, root, overrides: None, patches: Value::Null, runtimes: Runtimes::new() })
+    Ok(Source {
+        nodes,
+        specs,
+        root,
+        overrides: None,
+        patches: Value::Null,
+        extensions: None,
+        runtimes: Runtimes::new(),
+    })
 }
 
 /// Whether the package in folder `at` comes inside a dependency's tarball: bundled, below a
@@ -764,6 +781,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
         root,
         overrides: Some(overrides),
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+        extensions: doc.get("packageExtensionsChecksum").and_then(Value::as_str).map(str::to_string),
         runtimes,
     })
 }
@@ -910,6 +928,7 @@ fn read_bun(text: &str) -> Result<Source> {
         root,
         overrides: Some(overrides),
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
+        extensions: None,
         runtimes: Runtimes::new(),
     })
 }
@@ -1147,6 +1166,7 @@ fn build(
         dependencies: source.root,
         workspaces: None,
         overrides: manifest.overrides.clone(),
+        extensions: manifest.extensions.clone(),
     };
     let lock =
         Lockfile { lockfile_version: lock::TEXT_VERSION, root, workspaces: BTreeMap::new(), packages, hash: None };

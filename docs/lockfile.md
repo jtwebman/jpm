@@ -20,7 +20,8 @@ Each package records the hash of everything it depends on (`subgraph`), which na
 directory under `node_modules/.jpm`. The `hash` line covers the rest of the file: while it
 matches, jpm uses the recorded subgraphs instead of hashing the graph again. A hand edit or a
 merge is fine; the hash no longer matches, so jpm checks everything and writes the file again.
-`jpm lock --json` prints the lockfile as JSON, in upm's format, with `root.overrides` added.
+`jpm lock --json` prints the lockfile as JSON, in upm's format, with `root.overrides` and
+`root.packageExtensions` added.
 
 An `npm:` alias is keyed by the package it installs as well as the name it takes:
 `"typescript": "npm:@typescript/typescript6@^6"` is `package typescript@npm:@typescript/typescript6@6.0.2`,
@@ -34,10 +35,12 @@ A `jsr:` range is jsr's package from its npm registry, as pnpm reads it: `"fs": 
 `@jsr:registry` names another.
 
 The root records the ranges package.json declares (`spec`, a `catalog:` range as the range it
-stands for) and each override the tree was resolved under (`override`: manager, pnpm-style
-selector, value with `$name` and `catalog:` resolved, in the order they apply). Another range,
-catalog entry or override makes the file out of date: `jpm install` resolves again, and
-`--frozen-lockfile` fails.
+stands for), each override the tree was resolved under (`override`: manager, pnpm-style
+selector, value with `$name` and `catalog:` resolved, in the order they apply), and each
+[package extension](overrides.md#package-extensions) (`extension`: selector, field, name, and
+the range, or for `peerDependenciesMeta` its `optional`, in the order they apply). Another range,
+catalog entry, override or extension makes the file out of date: `jpm install` resolves again,
+and `--frozen-lockfile` fails.
 
 With no `jpm.lock` (and no other manager's lockfile to bring over), `jpm install` keeps the
 versions a `node_modules` jpm installed already has, wherever the ranges in package.json allow

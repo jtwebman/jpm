@@ -14,7 +14,13 @@
 //! Left out whole: the .pnp.cjs runtime (pnp.test.js, pnpapi, require.test.js: Node's own
 //! resolution), yarn's hoister and its settings (nmHoistingLimits, nmMode, winLinkType, focus,
 //! self references, `node_modules/.yarn-state.yml`), yarn's @types optional peers, portals
-//! outside the project, packageExtensions, and `enableTransparentWorkspaces`.
+//! outside the project, and `enableTransparentWorkspaces`.
+//!
+//! packageExtensions (features/packageExtensions.test.ts, and the one in commands/install.test.ts)
+//! is held to pnpm's rules where yarn's differ (docs/overrides.md): the scenarios here hold for
+//! both. Left out: the same scenarios under `nodeExperimentalPackageMap` (packageMaps.test.ts),
+//! `config get` (commands/config/get.test.js), dlx's (commands/dlx.test.js) and `logFilters`
+//! (features/logFilter.test.ts).
 
 mod common;
 
@@ -1383,4 +1389,137 @@ fn link_to_the_project_itself_is_refused() {
         let out = fails(&env, &["install"]);
         assert!(out.contains("cannot depend on the project's own directory"), "{out}");
     }
+}
+
+// features/packageExtensions.test.ts, with .yarnrc.yml as yarn writes it
+
+/// A .yarnrc.yml giving packageExtensions, as `yarn.writeConfiguration` writes one: block
+/// YAML, keys quoted where they need it.
+fn yarnrc(env: &Env, extensions: Value) {
+    fn block(v: &Value, depth: usize, out: &mut String) {
+        for (k, v) in v.as_object().unwrap() {
+            let key = if k.contains(['@', '*', '/']) { format!("\"{k}\"") } else { k.clone() };
+            out.push_str(&format!("{}{key}:", "  ".repeat(depth)));
+            match v {
+                Value::Object(_) => {
+                    out.push('\n');
+                    block(v, depth + 1, out);
+                }
+                Value::String(s) => out.push_str(&format!(" \"{s}\"\n")),
+                other => out.push_str(&format!(" {other}\n")),
+            }
+        }
+    }
+    let mut text = String::new();
+    block(&json!({ "packageExtensions": extensions }), 0, &mut text);
+    env.write(".yarnrc.yml", &text);
+}
+
+#[test]
+fn package_extensions_add_regular_dependencies_to_a_package() {
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "various-requires": "1.0.0" } }));
+    yarnrc(&env, json!({ "various-requires@*": { "dependencies": { "no-deps": "1.0.0" } } }));
+    env.ok(&["install"]);
+    assert_eq!(id(&env, "", &["various-requires", "no-deps"]), "no-deps@1.0.0");
+}
+
+#[test]
+fn package_extensions_add_peer_dependencies_to_a_package() {
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "no-deps": "2.0.0", "various-requires": "1.0.0" } }));
+    yarnrc(&env, json!({ "various-requires@*": { "peerDependencies": { "no-deps": "*" } } }));
+    let out = env.ok(&["install"]);
+    // The peer's range as written: what the root has satisfies it, with no warning.
+    assert!(!out.contains("peer"), "{out}");
+    assert_eq!(id(&env, "", &["various-requires", "no-deps"]), "no-deps@2.0.0");
+}
+
+#[test]
+fn package_extensions_leave_the_package_as_it_was_once_taken_out() {
+    // Yarn stores the original packages in its lockfile; jpm.lock records the extensions, so
+    // taking them out resolves again. Either way the dependency is gone.
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "various-requires": "1.0.0" } }));
+    yarnrc(&env, json!({ "various-requires@*": { "dependencies": { "no-deps": "1.0.0" } } }));
+    env.ok(&["install"]);
+    assert_eq!(id(&env, "", &["various-requires", "no-deps"]), "no-deps@1.0.0");
+    std::fs::remove_file(env.path(".yarnrc.yml")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(id(&env, "", &["various-requires", "no-deps"]), "missing");
+}
+
+#[test]
+fn package_extensions_warn_on_an_unused_one() {
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({}));
+    yarnrc(&env, json!({ "various-requires@*": { "dependencies": { "no-deps": "1.0.0" } } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("packageExtensions various-requires@*: no package in the tree matches it"), "{out}");
+}
+
+#[test]
+fn package_extensions_warn_on_an_unneeded_dependency() {
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({}));
+    yarnrc(&env, json!({ "one-fixed-dep@*": { "dependencies": { "no-deps": "1.0.0" } } }));
+    let out = env.ok(&["add", "one-fixed-dep@1.0.0"]);
+    assert!(
+        out.contains("packageExtensions one-fixed-dep@*: every package it matches declares what it adds already"),
+        "{out}"
+    );
+}
+
+#[test]
+fn package_extensions_warn_on_an_unneeded_peer_dependencies_meta() {
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({}));
+    yarnrc(&env, json!({ "optional-peer-deps@*": { "peerDependenciesMeta": { "no-deps": { "optional": true } } } }));
+    let out = env.ok(&["add", "optional-peer-deps"]);
+    assert!(
+        out.contains("packageExtensions optional-peer-deps@*: every package it matches declares what it adds already"),
+        "{out}"
+    );
+}
+
+#[test]
+fn package_extensions_name_a_value_that_is_not_a_range() {
+    // features/configuration.test.ts: yarn refuses the whole file. jpm names the extension and
+    // leaves it out.
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "no-deps": "1.0.0" } }));
+    yarnrc(
+        &env,
+        json!({ "@lezer/html@*": { "dependencies": { "@lezer/common": "*", "@lezer/javascript@*": { "dependencies": { "@lezer/common": "*" } } } } }),
+    );
+    let out = env.ok(&["install"]);
+    assert!(
+        out.contains(".yarnrc.yml: packageExtensions @lezer/html@* has a dependencies that is not a map of ranges"),
+        "{out}"
+    );
+}
+
+// commands/install.test.ts
+
+#[test]
+fn package_extensions_a_self_referencing_build_dependency() {
+    // `no-deps@*` given the project itself, `workspace:*`, a build dependency of its own
+    // postinstall: yarn installs. jpm installs too, without that extension: only the project's
+    // own packages may link a workspace, so an extension may not name one.
+    let r = berry();
+    let env = Env::new(&r);
+    env.manifest(
+        json!({ "name": "foo", "dependencies": { "no-deps": "1.0.0" }, "scripts": { "postinstall": "echo foo" } }),
+    );
+    yarnrc(&env, json!({ "no-deps@*": { "dependencies": { "foo": "workspace:*" } } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("packageExtensions no-deps@* gives foo workspace:*"), "{out}");
+    assert_eq!(id(&env, "", &["no-deps"]), "no-deps@1.0.0");
 }

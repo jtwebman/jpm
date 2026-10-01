@@ -10,16 +10,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::extensions::{self, Extension};
 use crate::json::Value;
 use crate::patch::Patch;
 use crate::project::RootManifest;
 use crate::{semver, spec, ui};
 
 pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
+const YARNRC: &str = ".yarnrc.yml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 15] = [
-    "packageExtensions",
+const UNREAD: [&str; 14] = [
     "publicHoistPattern",
     "shamefullyHoist",
     "hoistPattern",
@@ -164,6 +165,10 @@ pub struct Rules {
     /// `patchedDependencies`: each key, and the file it names.
     /// Key, path, and whether yarn named it (see `Patch::yarn`).
     patches: Vec<(String, String, bool)>,
+    /// `packageExtensions`, in the order they apply (`extensions`).
+    pub extensions: Vec<Extension>,
+    /// What another manager's lockfile records of them (`project::Extended`).
+    extended: crate::project::Extended,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -191,7 +196,9 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     let mut rules = Rules { file: dir.join("package.json"), ..Rules::default() };
     let doc = &root.doc;
     let pnpm = doc.get("pnpm");
+    let mut workspace_extensions = None;
     if let Some(y) = read_yaml(&dir.join(PNPM_WORKSPACE))? {
+        workspace_extensions = y.get("packageExtensions").filter(|v| !v.is_null()).cloned();
         rules.patched(y.get("patchedDependencies"), PNPM_WORKSPACE);
         for key in UNREAD {
             if truthy(y.get(key)) {
@@ -236,7 +243,38 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     rules.pnpm(pnpm.and_then(|p| p.get("overrides")), "package.json pnpm.overrides");
     rules.npm(doc.get("overrides"));
     rules.yarn(doc.get("resolutions"));
+    // Read for its extensions alone: a .yarnrc.yml with none is left unparsed.
+    let yarnrc_file = dir.join(YARNRC);
+    let has = std::fs::read_to_string(&yarnrc_file).is_ok_and(|t| t.contains("packageExtensions"));
+    let yarnrc = if has { read_yaml(&yarnrc_file)? } else { None };
+    let manifest_extensions = pnpm.and_then(|p| p.get("packageExtensions")).filter(|v| !v.is_null());
+    let yarn_extensions = yarnrc.as_ref().and_then(|y| y.get("packageExtensions")).filter(|v| !v.is_null());
+    rules.extensions = read_extensions(workspace_extensions.as_ref(), manifest_extensions, yarn_extensions);
+    rules.extended = crate::project::Extended {
+        pnpm: workspace_extensions.as_ref().or(manifest_extensions).and_then(extensions::pnpm_checksum),
+        yarn: yarn_extensions.and_then(Value::as_object).is_some_and(|o| !o.is_empty()),
+    };
     Ok(rules)
+}
+
+/// The project's `packageExtensions`, in the order they apply, the first to name a dependency
+/// giving its range: pnpm-workspace.yaml's, else package.json's `pnpm.packageExtensions` (pnpm
+/// takes pnpm-workspace.yaml's setting in place of package.json's, not as well), then
+/// `.yarnrc.yml`'s.
+fn read_extensions(workspace: Option<&Value>, manifest: Option<&Value>, yarnrc: Option<&Value>) -> Vec<Extension> {
+    let mut out = match (workspace, manifest) {
+        (Some(w), m) => {
+            if m.is_some() {
+                ui::warn(&format!(
+                    "package.json sets pnpm.packageExtensions and {PNPM_WORKSPACE} sets packageExtensions: {PNPM_WORKSPACE}'s are read, as pnpm reads them"
+                ));
+            }
+            extensions::read(Some(w), extensions::Source::Pnpm, PNPM_WORKSPACE)
+        }
+        (None, m) => extensions::read(m, extensions::Source::Pnpm, "package.json pnpm.packageExtensions"),
+    };
+    out.extend(extensions::read(yarnrc, extensions::Source::Yarn, YARNRC));
+    extensions::merged(out)
 }
 
 /// `rel` from the directory `dir`, both relative to the root, its `.` and `..` taken out; one
@@ -438,6 +476,9 @@ impl Rules {
             let patch = Patch::read(dir, name, range.filter(|r| !r.is_empty()), path)?;
             root.patches.push(Patch { yarn: *yarn, ..patch });
         }
+        root.extensions = self.extensions.clone();
+        root.extended = self.extended.clone();
+        extensions::extend_top(&self.extensions, root);
         Ok(())
     }
 

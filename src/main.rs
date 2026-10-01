@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod copies;
 mod error;
+mod extensions;
 mod foreign;
 mod gc;
 mod git;

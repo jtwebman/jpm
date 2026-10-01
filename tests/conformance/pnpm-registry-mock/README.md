@@ -19,7 +19,10 @@ jpm and compares the result with what pnpm installs.
   `@pnpm.e2e/needs-auth` and `@private/foo`, and `@pnpm.e2e/cli-with-node-engine`, which would
   download Node), each installed alone at `latest`; `scenarios` are projects modelled on pnpm's
   install tests (`pnpm11/installing/deps-installer/test/install/*.ts` and
-  `pnpm/crates/cli/tests/suite`) with the registry's own dist-tags.
+  `pnpm/crates/cli/tests/suite`) with the registry's own dist-tags. A scenario's
+  `packageExtensions` is written to `pnpm-workspace.yaml` (from
+  `installing/deps-installer/test/install/packageExtensions.ts`), and what it adds is read as
+  the extended package's own.
 - `expected.json`: what pnpm 12.8.1 installed for each scenario on linux-x64-glibc, written by
   `diff.mjs --record`.
 - `allowlist.json`: the differences jpm makes on purpose, each scenario's exact lines under a
