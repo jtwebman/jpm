@@ -29,6 +29,11 @@ whether it installs on each platform, the settings it needs, and what its script
 changed for jpm, found by reading them: a script that starts pnpm, yarn or bun, and a preinstall
 that lets only one manager in.
 
+`--fixup` tests those changes: it makes them in each project's `package.json` files (a script's
+pnpm, yarn or bun becomes jpm, `dlx` and `bunx` become jpx, a one-manager preinstall goes), then
+installs with scripts and runs the build script. Its results go to `results/<platform>.fixup.tsv`,
+the table's *after changes* column. jpm and jpx are on `PATH` for every script.
+
 All projects share one store under the work dir. Logs of every step are kept in its `logs/`,
 and the results in `results-<stamp>.json`. A line's `# expect: <reason>` marks a failure by
 design (a published package taking a git or tarball dependency, which `block-exotic-subdeps`

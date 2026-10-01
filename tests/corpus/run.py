@@ -11,6 +11,7 @@ import concurrent.futures as cf
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -60,6 +61,39 @@ def calls(work):
     return "; ".join(([guard] if guard else []) + notes)
 
 
+def fixup(work):
+    """The changes `calls` names, made: each script's pnpm, yarn or bun is jpm (dlx and bunx jpx),
+    and a preinstall that lets one manager in is gone. The number of scripts changed."""
+    changed = 0
+    swap = [(re.compile(r"(^|[;&|(]\s*)(?:pnpm|yarn) dlx(?=\s)"), r"\1jpx"),
+            (re.compile(r"(^|[;&|(]\s*)bunx(?=\s|$)"), r"\1jpx"),
+            (re.compile(r"(^|[;&|(]\s*)(?:pnpm|yarn|bun)(?=\s|$)"), r"\1jpm")]
+    files = subprocess.run(["git", "ls-files", "package.json", "*/package.json"], cwd=work,
+                           capture_output=True, text=True).stdout.split()
+    for f in files:
+        path = os.path.join(work, f)
+        try:
+            doc = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        scripts = doc.get("scripts") if isinstance(doc, dict) else None
+        if not isinstance(scripts, dict):
+            continue
+        before = dict(scripts)
+        pre = scripts.get("preinstall")
+        if isinstance(pre, str) and ("only-allow" in pre or "npm_config_user_agent" in pre or "block-npm" in pre):
+            del scripts["preinstall"]
+        for k, v in list(scripts.items()):
+            if isinstance(v, str):
+                for pat, rep in swap:
+                    v = pat.sub(rep, v)
+                scripts[k] = v
+        if scripts != before:
+            changed += sum(1 for k in before if scripts.get(k) != before[k])
+            json.dump(doc, open(path, "w", encoding="utf-8"), indent=2)
+    return changed
+
+
 def run(cmd, cwd, env, log, timeout):
     t = time.time()
     try:
@@ -93,6 +127,8 @@ def one(name, expect, extra, a, env):
         return r
     r["lock"] = next((k for f, k in LOCKS if os.path.exists(os.path.join(work, f))), "none")
     r["calls"] = calls(work)
+    if a.fixup:
+        r["fixed"] = fixup(work)
     flags = ([] if a.scripts else ["--ignore-scripts"]) + extra
     jpm = [a.jpm, "install", *flags]
     if step("install", jpm)["rc"] != 0:
@@ -125,14 +161,30 @@ def main():
     p.add_argument("-j", "--jobs", type=int, default=4, help="repositories at a time (default 4)")
     p.add_argument("--scripts", action="store_true", help="run install scripts (default --ignore-scripts)")
     p.add_argument("--run", action="store_true", help="also run a build, typecheck, check or lint script")
+    p.add_argument("--fixup", action="store_true",
+                   help="make the script changes the table names, then install with scripts and --run")
     p.add_argument("--report", action="store_true", help="print the table of every platform's results")
     p.add_argument("only", nargs="*", help="just these owner/repo names")
     a = p.parse_args()
+    if a.fixup:
+        a.scripts = a.run = True
     if a.report:
         return report(a.list)
     a.jpm = os.path.abspath(a.jpm)
     os.makedirs(a.work, exist_ok=True)
-    env = dict(os.environ, CI="1", JPM_STORE=os.path.join(a.work, "store"))
+    # Scripts find jpm and jpx by name: jpx is jpm run as jpx.
+    bin_dir = os.path.join(a.work, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    for name in ["jpm", "jpx"]:
+        at = os.path.join(bin_dir, name + (".exe" if os.name == "nt" else ""))
+        if os.path.lexists(at):
+            os.remove(at)
+        if os.name == "nt":
+            shutil.copy(a.jpm, at)
+        else:
+            os.symlink(a.jpm, at)
+    env = dict(os.environ, CI="1", JPM_STORE=os.path.join(a.work, "store"),
+               PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
     todo = repos(a.list, {o.lower() for o in a.only})
     results = []
     with cf.ThreadPoolExecutor(a.jobs) as ex:
@@ -155,13 +207,14 @@ def main():
 
 
 PLATFORMS = [("linux", "Linux"), ("darwin", "macOS"), ("win32", "Windows")]
+FIXUP = "--fixup" in sys.argv
 RESULTS = os.path.join(HERE, "results")
 
 
 def summary(results, todo):
     """results/<platform>.tsv: this platform's line for each project run, the others kept."""
     os.makedirs(RESULTS, exist_ok=True)
-    path = os.path.join(RESULTS, f"{sys.platform}.tsv")
+    path = os.path.join(RESULTS, f"{sys.platform}{'.fixup' if FIXUP else ''}.tsv")
     rows = {}
     if os.path.exists(path):
         for line in open(path, encoding="utf-8").read().splitlines()[1:]:
@@ -186,9 +239,16 @@ def report(listing):
             for line in open(path, encoding="utf-8").read().splitlines()[1:]:
                 repo, lock, status, step, needs, _ = line.split("\t")
                 seen.setdefault(repo.lower(), {})[plat] = (lock, status, step, needs)
+    fixed = {}
+    for plat, name in PLATFORMS:
+        path = os.path.join(RESULTS, f"{plat}.fixup.tsv")
+        if os.path.exists(path):
+            for line in open(path, encoding="utf-8").read().splitlines()[1:]:
+                repo, _, status, step, _, _ = line.split("\t")
+                fixed.setdefault(repo.lower(), []).append(f"{name} " + marks.get(status, "") + (f" {step}" if status in ("fail", "expected") else ""))
     cols = [(p, n) for p, n in PLATFORMS if any(p in v for v in seen.values())]
-    print("| project | lockfile | " + " | ".join(n for _, n in cols) + " | settings | note |")
-    print("| --- | --- | " + " | ".join(":---:" for _ in cols) + " | --- | --- |")
+    print("| project | lockfile | " + " | ".join(n for _, n in cols) + " | settings | note | after changes |")
+    print("| --- | --- | " + " | ".join(":---:" for _ in cols) + " | --- | --- | --- |")
     for name, expect, extra in repos(listing, set()):
         got = seen.get(name.lower(), {})
         lock = next((v[0] for v in got.values()), "")
@@ -198,9 +258,11 @@ def report(listing):
             _, status, step, _ = got.get(p, ("", "", "", ""))
             cells.append(marks.get(status, "") + (f" {step}" if status in ("fail", "expected") else ""))
         print(f"| [{name}](https://github.com/{name}) | {lock} | " + " | ".join(cells)
-              + f" | {' '.join(f'`{w}`' for w in extra)} | {'; '.join(n for n in [expect, needs] if n)} |")
+              + f" | {' '.join(f'`{w}`' for w in extra)} | {'; '.join(n for n in [expect, needs] if n)} | "
+              + (", ".join(fixed.get(name.lower(), [])) if needs else "") + " |")
     print("\n✅ installs · ⚙️ installs with the settings named · ❌ fails (at the step named) · "
-          "➖ fails by design or outside jpm, as noted")
+          "➖ fails by design or outside jpm, as noted. *After changes*: with the note's script changes "
+          "made (`run.py --fixup`), installed with its scripts and its build script run.")
 
 
 if __name__ == "__main__":
