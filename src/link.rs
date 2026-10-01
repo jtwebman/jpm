@@ -39,8 +39,9 @@ use crate::{pool, sys};
 const WIN: bool = cfg!(windows);
 /// Whether an entry in a `node_modules` this install made is built where it stays, not under a
 /// temp name renamed into place (see `materialize`): Windows, where the rename costs every link
-/// after it.
-const IN_PLACE: bool = WIN;
+/// after it, and macOS, where APFS's renames and the temp directory's mkdir took a sixth of a
+/// warm install of nuxt (530 ms, 460 ms without).
+const IN_PLACE: bool = WIN || cfg!(target_os = "macos");
 /// The hidden hoist, under `.jpm`: no entry key is spelled like it.
 pub const HOIST: &str = "node_modules";
 /// Under `.jpm` when entries are in the global store: Node's fallback to the hoist for `import`.
@@ -851,7 +852,7 @@ impl Linker<'_> {
             return self.swap_in(entry, &fin, &self.entries_dir);
         }
         // Nothing in a `node_modules` this install made has a reader to see half an entry, so on
-        // Windows it is built where it stays. A directory renamed there empties the name cache of
+        // Windows and macOS it is built where it stays. A directory renamed on Windows empties the name cache of
         // the file system filters (Windows Defender's among them), and every link made after it
         // has each directory above it read again: renaming each entry into place took a third of
         // a warm install's time. Another install of the project waits its turn (see `Turn`), and
