@@ -2245,6 +2245,24 @@ fn links_undeclared_types_linters_and_formatters_at_the_root() {
 }
 
 #[test]
+fn links_workspaces_at_the_root_as_the_patterns_say() {
+    // jest's packages import its other workspaces undeclared, as yarn links every one at the root.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["p/*"] }));
+    env.write("p/c/package.json", r#"{ "name": "@s/eslint-config", "version": "1.0.0" }"#);
+    env.write("p/b/package.json", r#"{ "name": "b", "version": "1.0.0" }"#);
+    env.ok(&["install"]);
+    let real = |p: &str| std::fs::canonicalize(env.path(p)).ok();
+    assert_eq!(real("node_modules/@s/eslint-config"), real("p/c"), "*eslint* names it");
+    assert!(!env.exists("node_modules/b"));
+    env.write(".npmrc", "shamefully-hoist=true\n");
+    env.ok(&["install"]);
+    assert_eq!(real("node_modules/b"), real("p/b"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();

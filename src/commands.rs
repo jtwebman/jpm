@@ -312,6 +312,8 @@ impl Ctx {
             salt.into(),
             // What the root links of the hidden hoist (`public-hoist-pattern`, `shamefully-hoist`).
             c.public_hoist.as_ref().map_or(Value::Null, |l| l.join(",").into()),
+            // A new jpm may lay the same tree out otherwise: it links once before it trusts a state.
+            env!("CARGO_PKG_VERSION").into(),
         ]))
         .into()
     }
