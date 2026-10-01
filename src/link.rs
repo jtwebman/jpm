@@ -182,6 +182,9 @@ pub struct Outcome {
     /// Optional packages the store did not hold.
     pub dropped: Vec<String>,
     pub up_to_date: bool,
+    /// The project's turn (see `Turn`), for the caller to hold while its install scripts run in
+    /// the entries: another install would otherwise run them again, or change the tree under them.
+    pub turn: Option<Turn>,
 }
 
 #[derive(Default)]
@@ -330,7 +333,8 @@ struct Linker<'a> {
 /// the first until every one is whole. An install killed midway (Ctrl+C) leaves it, and the next
 /// trusts none of the entries: `intact` cannot tell a patched or install-script package's files
 /// half built.
-struct Turn {
+#[derive(Debug)]
+pub struct Turn {
     _file: fs::File,
 }
 
@@ -405,7 +409,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             state::write(opts.dir, &state_of(prev.entries.clone(), prev.shared.clone(), true, root))?;
         }
         let stats = Stats { reused: prev.entries.len() + prev.shared.len(), ..Stats::default() };
-        return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true });
+        return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true, turn });
     }
     state::clear(opts.dir);
 
@@ -583,7 +587,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         out
     };
     state::write(opts.dir, &state_of(names(false), names(true), dropped.is_empty(), links))?;
-    Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false })
+    Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false, turn })
 }
 
 impl Linker<'_> {
