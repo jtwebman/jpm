@@ -39,6 +39,8 @@ cargo-fuzz needs nightly's sanitizer flags. List the targets with `cargo +nightl
 | `packument` | `Packument::parse`, each version, the release cutoff and `pick_manifest`              |
 | `npmrc`     | `config::parse_npmrc` and `to_config`                                                  |
 | `x509`      | crates/tls: certificate DER and chain checks                                           |
+| `patch`     | `patch::apply` on a scratch package; nothing written outside it, no links              |
+| `pgp`       | `pgp::signer` and `pgp::verify`: a detached signature, an armored key, a document      |
 
 The input layout of the multi-part targets is described at the top of each file in
 `fuzz_targets/`. `foreign`, for example, takes a byte that picks the file, then `package.json`,
@@ -47,7 +49,8 @@ a NUL, and the lockfile.
 ## Corpora
 
 `seed.py` writes `fuzz/corpus/<target>/` from the repository's own test data: the conformance
-tables (semver, npm-package-arg, hosted-git-info), the arborist and bun lockfiles, generated
+tables (semver, npm-package-arg, hosted-git-info), the arborist and bun lockfiles, the Node.js
+signatures in tests/fixtures/node, a few patches, generated
 ustar, GNU and pax tarballs (long names, links, `..`, case clashes), and the system's CA
 certificates. Two options add real-world inputs:
 

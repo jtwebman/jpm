@@ -119,3 +119,17 @@ path = "fuzz_targets/x509.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "patch"
+path = "fuzz_targets/patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pgp"
+path = "fuzz_targets/pgp.rs"
+test = false
+doc = false
+bench = false
