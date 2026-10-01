@@ -20,6 +20,15 @@ default (`--work`), or resets the clone already there, then runs:
 4. the install again after the ignored files (`node_modules`) are deleted
 5. `--verify`
 
+A line's `# with: <flags>` names the flags its installs need (`--no-block-exotic-subdeps` where a
+published package takes a git or tarball dependency); the install is run with them.
+
+Each run writes this platform's result for every project it ran to `results/<platform>.tsv`, and
+`run.py --report` prints them all as one table (`docs/compatibility.md`): a project's lockfile,
+whether it installs on each platform, the settings it needs, and what its scripts would need
+changed for jpm, found by reading them: a script that starts pnpm, yarn or bun, and a preinstall
+that lets only one manager in.
+
 All projects share one store under the work dir. Logs of every step are kept in its `logs/`,
 and the results in `results-<stamp>.json`. A line's `# expect: <reason>` marks a failure by
 design (a published package taking a git or tarball dependency, which `block-exotic-subdeps`

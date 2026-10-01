@@ -1,5 +1,6 @@
 # Real projects jpm installs on every platform: one owner/repo a line. `# expect:` marks a
-# failure by design or outside jpm, which a run reports apart from the others. See README.md.
+# failure by design or outside jpm, which a run reports apart from the others; `# with:` names
+# the flags its installs need. See README.md.
 afrokick/muonlinejs
 airbnb/visx
 amaar-mc/wit
@@ -50,8 +51,8 @@ honojs/middleware
 hoppscotch/hoppscotch
 huozhi/html2any
 immich-app/immich
-jaredpalmer/formik  # expect: a published dependency takes a git repository (block-exotic-subdeps)
-jbilcke-hf/clapper  # expect: a published dependency takes a git or tarball url (block-exotic-subdeps)
+jaredpalmer/formik  # with: --no-block-exotic-subdeps; expect: a published dependency takes a git repository (block-exotic-subdeps)
+jbilcke-hf/clapper  # with: --no-block-exotic-subdeps; expect: a published dependency takes a git or tarball url (block-exotic-subdeps)
 jellyfin/jellyfin-web
 jestjs/jest
 jimmywarting/native-file-system-adapter
@@ -69,7 +70,7 @@ lobehub/lobehub  # expect: its own patch targets a file its dependency no longer
 lodash/lodash
 logseq/logseq
 louislam/uptime-kuma
-markedjs/marked  # expect: a published dependency takes a tarball url (block-exotic-subdeps)
+markedjs/marked  # with: --no-block-exotic-subdeps; expect: a published dependency takes a tarball url (block-exotic-subdeps)
 mastodon/mastodon
 mastra-ai/mastra
 mckaywrigley/chatbot-ui
@@ -80,7 +81,7 @@ microsoft/monaco-editor
 microsoft/playwright
 microsoft/TypeScript
 microsoft/vscode
-midday-ai/midday  # expect: a published dependency takes a tarball url (block-exotic-subdeps)
+midday-ai/midday  # with: --no-block-exotic-subdeps; expect: a published dependency takes a tarball url (block-exotic-subdeps)
 mochajs/mocha
 moji2002/1st-pouf
 moment/moment
