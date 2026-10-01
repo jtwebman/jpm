@@ -189,3 +189,81 @@ fn install_scripts_see_no_proxy_credentials_or_client_keys() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(env.read("node_modules/bld/seen.txt"), "|||http://127.0.0.1:9|127.0.0.1:9|127.0.0.1\n");
 }
+
+/// Every file of every package in the store (indexes aside), with what it holds and whether it is
+/// read-only.
+#[cfg(windows)]
+fn store_files(env: &Env) -> Vec<(std::path::PathBuf, Vec<u8>, bool)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, Vec<u8>, bool)>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let meta = std::fs::symlink_metadata(e.path()).unwrap();
+            if meta.is_dir() {
+                walk(&e.path(), out);
+            } else if meta.is_file() && !e.file_name().to_string_lossy().ends_with(".idx") {
+                out.push((e.path(), std::fs::read(e.path()).unwrap(), meta.permissions().readonly()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&env.store().join("v1/pkg"), &mut out);
+    out.sort();
+    out
+}
+
+/// The store's files are read-only on Windows as on unix, and a project's hardlinks with them: a
+/// write through one fails and leaves the store's copy (every project's) as it was. What jpm
+/// itself changes still works: a patch, `jpm patch` and `patch-commit`, and prune deleting what
+/// no project uses.
+#[cfg(windows)]
+#[test]
+fn a_write_through_a_project_link_cannot_change_the_store() {
+    let r = Registry::start(vec![
+        pkg("a", "1.0.0", json!({ "dependencies": { "b": "1.0.0" } })),
+        pkg("b", "1.0.0", json!({})).file("lib/x.js", 0o644, "x\n"),
+        pkg("gone", "1.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    for global in ["false", "true"] {
+        env.write(".npmrc", &format!("global-store={global}\n"));
+        env.manifest(json!({ "name": "app", "dependencies": { "a": "1.0.0", "gone": "1.0.0" } }));
+        env.ok(&["install"]);
+        let before = store_files(&env);
+        assert!(!before.is_empty() && before.iter().all(|(_, _, ro)| *ro), "{global}: every store file read-only");
+        for rel in ["node_modules/a/index.js", "node_modules/a/../b/lib/x.js"] {
+            let at = env.path(rel);
+            assert!(std::fs::metadata(&at).unwrap().permissions().readonly(), "{rel}");
+            assert!(std::fs::write(&at, "changed").is_err(), "{global}: wrote through {rel}");
+            assert!(std::fs::OpenOptions::new().append(true).open(&at).is_err(), "{rel}");
+        }
+        assert_eq!(store_files(&env), before, "{global}: the store is as it was");
+
+        // A package no longer wanted goes from the project and the store, read-only files and all.
+        env.manifest(json!({ "name": "app", "dependencies": { "a": "1.0.0" } }));
+        env.ok(&["install"]);
+        env.ok(&["prune"]);
+        let after = store_files(&env);
+        assert!(!after.iter().any(|(_, data, _)| data == b"module.exports = 'gone@1.0.0'"), "{global}: pruned");
+        assert!(after.iter().any(|(_, data, _)| data == b"x\n"), "{global}: b kept");
+    }
+
+    // `jpm patch` copies b out writable; the patch is installed; the store's b is untouched.
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        return; // patch-commit diffs with git
+    }
+    env.write(".npmrc", "global-store=false\n");
+    env.manifest(json!({ "name": "app", "dependencies": { "b": "1.0.0" } }));
+    env.ok(&["install"]);
+    let before = store_files(&env);
+    env.ok(&["patch", "b"]);
+    let edit = "node_modules/.jpm_patches/b@1.0.0";
+    std::fs::write(env.path(&format!("{edit}/lib/x.js")), "patched\n").unwrap();
+    env.ok(&["patch-commit", &env.path(edit).display().to_string()]);
+    assert_eq!(env.read("node_modules/b/lib/x.js"), "patched\n");
+    assert_eq!(store_files(&env), before, "patching wrote nothing in the store");
+    // Patched again from the patched package: its files replaced, not written through.
+    env.ok(&["patch", "b"]);
+    std::fs::write(env.path(&format!("{edit}/lib/x.js")), "twice\n").unwrap();
+    env.ok(&["patch-commit", &env.path(edit).display().to_string()]);
+    assert_eq!(env.read("node_modules/b/lib/x.js"), "twice\n");
+    assert_eq!(store_files(&env), before);
+}

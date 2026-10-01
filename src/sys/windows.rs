@@ -339,6 +339,7 @@ const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
 const FILE_OPEN_BY_FILE_ID: u32 = 0x2000;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const OBJ_CASE_INSENSITIVE: u32 = 0x40;
 const FILE_LINK_INFORMATION: u32 = 11;
@@ -364,6 +365,18 @@ fn nt_open(
     disposition: u32,
     options: u32,
 ) -> io::Result<std::os::windows::io::OwnedHandle> {
+    nt_create(root, rel, access, disposition, options, FILE_ATTRIBUTE_NORMAL)
+}
+
+/// `nt_open`, with the attributes a file it creates gets.
+fn nt_create(
+    root: &std::os::windows::io::OwnedHandle,
+    rel: &[u16],
+    access: u32,
+    disposition: u32,
+    options: u32,
+    file_attributes: u32,
+) -> io::Result<std::os::windows::io::OwnedHandle> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     let bytes = u16::try_from(rel.len() * 2).map_err(|_| io::Error::from(io::ErrorKind::InvalidFilename))?;
     let name = NtName { len: bytes, max: bytes, buf: rel.as_ptr() };
@@ -384,7 +397,7 @@ fn nt_open(
             &attributes,
             &mut status,
             std::ptr::null(),
-            FILE_ATTRIBUTE_NORMAL,
+            file_attributes,
             SHARE_ALL,
             disposition,
             options | FILE_SYNCHRONOUS_IO_NONALERT,
@@ -496,10 +509,15 @@ impl Dir {
         if st < 0 { Err(nt_error(st)) } else { Ok(()) }
     }
 
-    /// The file `rel`, created (or emptied) for writing. The mode is unix's alone.
-    pub fn create(&self, rel: &str, _mode: u32) -> io::Result<std::fs::File> {
-        let file =
-            nt_open(&self.handle, &nt_rel(rel)?, FILE_GENERIC_WRITE, FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE)?;
+    /// The file `rel`, created (or emptied) for writing. A mode no one may write (the store's
+    /// 0o444 and 0o555) makes it read-only, as `FILE_ATTRIBUTE_READONLY`, in the same call: the
+    /// handle returned still writes, and every hardlink to the file shares the attribute, so a
+    /// write through a project's link fails rather than change the store's copy for every
+    /// project. A read-only file is then not emptied by creating it again, as on unix.
+    pub fn create(&self, rel: &str, mode: u32) -> io::Result<std::fs::File> {
+        let attributes = if mode & 0o222 == 0 { FILE_ATTRIBUTE_READONLY } else { FILE_ATTRIBUTE_NORMAL };
+        let (access, options) = (FILE_GENERIC_WRITE, FILE_NON_DIRECTORY_FILE);
+        let file = nt_create(&self.handle, &nt_rel(rel)?, access, FILE_OVERWRITE_IF, options, attributes)?;
         Ok(std::fs::File::from(file))
     }
 
@@ -560,15 +578,28 @@ mod tests {
         from.mkdir("lib").unwrap();
         assert_eq!(from.mkdir("lib").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert!(from.is_dir("lib") && !from.is_dir("lib/x.js") && !from.is_dir("none"));
-        from.create("lib/x.js", 0o444).unwrap().write_all(b"x").unwrap();
+        from.create("lib/w.js", 0o644).unwrap().write_all(b"x").unwrap();
         // Emptied when created again, as `File::create` does.
+        from.create("lib/w.js", 0o644).unwrap().write_all(b"y").unwrap();
+        assert_eq!(std::fs::read(root.join("from/lib/w.js")).unwrap(), b"y");
+        assert!(!std::fs::metadata(root.join("from/lib/w.js")).unwrap().permissions().readonly());
+        // Read-only with a mode no one may write, and written through the handle that made it;
+        // then neither emptied by creating it again nor opened to write, as on unix.
         from.create("lib/x.js", 0o444).unwrap().write_all(b"y").unwrap();
+        assert!(std::fs::metadata(root.join("from/lib/x.js")).unwrap().permissions().readonly());
+        assert_eq!(from.create("lib/x.js", 0o444).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(std::fs::OpenOptions::new().write(true).open(root.join("from/lib/x.js")).is_err());
         assert_eq!(std::fs::read(root.join("from/lib/x.js")).unwrap(), b"y");
         // Linked under another name in another directory: one file.
         to.mkdir("dist").unwrap();
         to.link(&from, "lib/x.js", "dist/x.js").unwrap();
         assert_eq!(file_info(&root.join("to/dist/x.js")).unwrap().links, 2);
         assert_eq!(std::fs::read(root.join("to/dist/x.js")).unwrap(), b"y");
+        // The link shares the attribute: a write through it fails, and it can still be deleted.
+        assert!(std::fs::write(root.join("to/dist/x.js"), "z").is_err());
+        std::fs::remove_file(root.join("to/dist/x.js")).unwrap();
+        assert_eq!(std::fs::read(root.join("from/lib/x.js")).unwrap(), b"y");
+        to.link(&from, "lib/x.js", "dist/x.js").unwrap();
         assert_eq!(to.link(&from, "lib/x.js", "dist/x.js").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(to.link(&from, "lib/none.js", "dist/none.js").unwrap_err().kind(), io::ErrorKind::NotFound);
         // Names are compared without case, as NTFS compares them through Win32.
