@@ -823,6 +823,25 @@ fn runs_every_script_a_pattern_matches() {
     assert!(fails("/(a)\\1/").contains("backreferences are not read"));
 }
 
+#[test]
+fn lists_workspaces_as_yarn_does() {
+    // jest's build reads `yarn workspaces list --json`: a line a workspace, the root at `.`.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["p/*"] }));
+    env.write("p/a/package.json", r#"{ "name": "@s/a", "version": "1.0.0" }"#);
+    env.write("p/b/package.json", r#"{ "name": "b", "version": "1.0.0" }"#);
+    let out = env.jpm(&["workspaces", "list", "--json"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        text.trim_end(),
+        r#"{"location":".","name":"root"}
+{"location":"p/a","name":"@s/a"}
+{"location":"p/b","name":"b"}"#
+    );
+    assert_eq!(String::from_utf8_lossy(&env.jpm(&["workspaces", "list"]).stdout).trim_end(), ".\np/a\np/b");
+}
+
 #[cfg(unix)]
 #[test]
 fn execs_and_runs_across_workspaces_as_pnpm_and_yarn_do() {

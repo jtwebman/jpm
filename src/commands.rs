@@ -2432,6 +2432,18 @@ fn basename(dir: &Path) -> String {
 
 /// Every workspace after the ones it depends on (by `workspace:` or a fitting range), otherwise
 /// as declared. A cycle comes out together, as declared, and is reported.
+/// The project's workspaces as yarn's `workspaces list` gives them, `(location, name)`: the root
+/// first, at `.`, then each in the order the patterns find them.
+pub fn workspaces_list(opts: Opts) -> Result<Vec<(String, String)>> {
+    let mut ctx = Ctx::open(opts, false)?;
+    let project = ctx.load_project()?;
+    let mut out = vec![(".".to_string(), project.manifest.name.clone().unwrap_or_default())];
+    out.extend(
+        project.workspaces.iter().filter(|w| w.path != project::ROOT_PATH).map(|w| (w.path.clone(), w.name.clone())),
+    );
+    Ok(out)
+}
+
 /// Whether `ws` depends on the workspace `dep` (by `workspace:` or a fitting range).
 fn depends_on(ws: &Workspace, dep: &Workspace) -> bool {
     [&ws.manifest.dependencies, &ws.manifest.dev_dependencies, &ws.manifest.optional_dependencies].iter().any(|g| {
