@@ -8,11 +8,13 @@
 
 The project's `.npmrc` comes with the repository, so it cannot weaken what the others check:
 `ca`, `cafile`, `proxy`, `https-proxy`, `http-proxy`, `strict-ssl=false`,
-`block-exotic-subdeps=false`, `verify-node-signature=false`, and a `min-release-age` or `before` that lets in newer versions
-than the user's setting (or the default) does, are ignored there with a warning naming them.
+`block-exotic-subdeps=false`, `verify-node-signature=false`, a `min-release-age` or `before` that lets in newer versions
+than the user's setting (or the default) does, a `min-release-age-exclude` pattern wider than one
+package or `@scope/*`, and a `registry` or `@scope:registry` over `http://` on a host the user's
+files (or the default registry) reach over https, are ignored there with a warning naming them.
 Set them in `~/.npmrc`, the global npmrc, `npm_config_*` or a flag. A cloned repository could
-otherwise send the user's registry token through a proxy of its choosing. `registry`, scoped
-registries, `noproxy` and `node-mirror:release` still work from the project.
+otherwise send the user's registry token through a proxy of its choosing, or in the clear.
+`registry`, scoped registries, `noproxy` and `node-mirror:release` still work from the project.
 
 jpm has its own TLS and trusts Mozilla's root certificates and the operating system's: the
 Windows certificate store (the current user's `ROOT`, which includes the machine's and group

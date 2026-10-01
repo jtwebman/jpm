@@ -19,7 +19,7 @@ use crate::util::{now_ms, sha256_hex};
 /// The abbreviated ("corgi") document first: the resolver's fields, 10-100x smaller.
 const CORGI: &str = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 const FULL: &str = "application/json";
-const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org";
+pub const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org";
 
 /// When a kept document answers without asking the registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
