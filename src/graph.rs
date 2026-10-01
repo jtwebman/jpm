@@ -264,12 +264,31 @@ pub fn split_peers(key: &str) -> (&str, &str) {
         Some(real) => at + 1 + 4 + real + 1,
         None => at + 1,
     };
-    for (i, _) in key[from..].match_indices('(') {
-        if peer_groups(&key[from + i..]).is_some() {
-            return (&key[..from + i], &key[from + i..]);
+    // Read from the end back, a group at a time: a string splits into balanced groups one way
+    // only, so the suffix starts at the earliest group from which every group to the end holds a
+    // key. Trying each `(` from the front read the rest again for each, which made a key of
+    // many `(` quadratic.
+    let b = key.as_bytes();
+    let (mut start, mut end) = (None, key.len());
+    while end > from && b[end - 1] == b')' {
+        let mut depth = 0usize;
+        let Some(open) = (from..end).rev().find(|&i| {
+            match b[i] {
+                b')' => depth += 1,
+                b'(' => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        }) else {
+            break;
+        };
+        let inner = &key[open + 1..end - 1];
+        if name_end(inner).is_none_or(|at| at + 1 >= inner.len()) {
+            break;
         }
+        (start, end) = (Some(open), open);
     }
-    (key, "")
+    start.map_or((key, ""), |s| key.split_at(s))
 }
 
 /// The keys in a peer suffix, `(a@1)(b@2(c@3))` as `a@1` and `b@2(c@3)`; `None` unless it is
@@ -547,6 +566,63 @@ pub fn unmet_peers(res: &Resolution) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How `split_peers` read a key before: each `(` from the front, the first from which the
+    /// rest reads as groups of keys.
+    fn split_peers_from_the_front(key: &str) -> (&str, &str) {
+        if !key.ends_with(')') {
+            return (key, "");
+        }
+        let Some(at) = name_end(key) else { return (key, "") };
+        let tail = &key[at + 1..];
+        let from = tail.strip_prefix("npm:").and_then(name_end).map_or(at + 1, |real| at + 1 + 4 + real + 1);
+        for (i, _) in key[from..].match_indices('(') {
+            if peer_groups(&key[from + i..]).is_some() {
+                return (&key[..from + i], &key[from + i..]);
+            }
+        }
+        (key, "")
+    }
+
+    #[test]
+    fn splits_peers_as_from_the_front() {
+        let keys = [
+            "a@1.0.0",
+            "a@1.0.0(b@1.0.0)",
+            "a@1.0.0(b@1.0.0)(c@2.0.0(d@3.0.0))",
+            "@s/a@1.0.0(@s/b@1.0.0)",
+            "a@npm:@s/b(x)@1.0.0(c@1.0.0)",
+            "a@npm:b@1.0.0(c@1.0.0)",
+            "a@https://h/x(1).tgz(b@1.0.0)",
+            "a@https://h/x(1).tgz",
+            "a@file:x(y@1)(z)",
+            "a@file:x(y@1)z(w@2)",
+            "a@1.0.0()",
+            "a@1.0.0(b@)",
+            "a@1.0.0(b@1)(@)",
+            "a@1.0.0((b@1))",
+            "a@1.0.0(b@1))",
+            "a@1.0.0((b@1)",
+            "a@1.0.0)(b@1)",
+            "a@1.0.0(é@1)(ü@2(ö@3))",
+            "(a@1)",
+            "@(a@1)",
+            "a@(b@1)",
+            "a@x(b@1(c@1)(d@1))(e@1)",
+            ")",
+            "",
+        ];
+        for key in keys {
+            assert_eq!(split_peers(key), split_peers_from_the_front(key), "{key}");
+        }
+        // Found while fuzzing jpm.lock: a key of 50,000 nested `(` (97 KB) took 40 seconds.
+        for n in [50_000, 1_000_000] {
+            let nested = format!("a@1.0.0{}{}", "(".repeat(n), ")".repeat(n));
+            assert_eq!(split_peers(&nested), (nested.as_str(), ""));
+            let open = format!("a@1.0.0{})", "(x".repeat(n));
+            assert_eq!(split_peers(&open), (open.as_str(), ""));
+        }
+    }
 
     fn platform() -> Platform {
         Platform { os: "linux".into(), cpu: "x64".into(), libc: Some("glibc".into()) }
