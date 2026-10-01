@@ -669,7 +669,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
     for (key, snap) in snapshots {
         let id = strip_peers(key);
         // A copy per set of peers, keyed as pnpm keys it.
-        let suffix = peer_suffix(key);
+        let suffix = peer_suffix(key)?;
         let Some(pkg) = package_index.get(id).copied().filter(|p| !p.is_null()) else { continue };
         let resolution = pkg.get("resolution");
         let field = |f: &str| resolution.and_then(|r| r.get(f)).and_then(Value::as_str).filter(|s| !s.is_empty());
@@ -769,7 +769,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
 /// from a registry; an alias's `npm:<real>@<version>`, noted for a node of its own.
 fn pnpm_edge(aliases: &mut BTreeSet<(String, String, String)>, dep: &str, r: &str) -> Result<String> {
     let Some((real, version)) = pnpm_target(dep, r) else { return Ok(String::new()) };
-    let suffix = peer_suffix(r);
+    let suffix = peer_suffix(r)?;
     if real == dep {
         return Ok(format!("{version}{suffix}"));
     }
@@ -778,19 +778,28 @@ fn pnpm_edge(aliases: &mut BTreeSet<(String, String, String)>, dep: &str, r: &st
 }
 
 /// The peer groups after a pnpm key or version, each peer's own nested, without the
-/// `(patch_hash=...)` pnpm writes among them: jpm marks a patch on the entry.
-fn peer_suffix(key: &str) -> String {
+/// `(patch_hash=...)` pnpm writes among them: jpm marks a patch on the entry. Nested past
+/// `MAX_DEPTH`, an error: each level reads the rest again, and the recursion is as deep as the
+/// nesting, so a key of 100,000 nested groups took minutes and could overflow the stack.
+fn peer_suffix(key: &str) -> Result<String> {
+    peer_suffix_at(key, 0)
+}
+
+fn peer_suffix_at(key: &str, depth: usize) -> Result<String> {
+    if depth > MAX_DEPTH {
+        return Err(too_deep());
+    }
     let mut out = String::new();
     let mut rest = &key[strip_peers(key).len()..];
     while rest.starts_with('(') {
-        let mut depth = 0usize;
+        let mut open = 0usize;
         let Some(end) = rest.bytes().position(|b| {
-            depth = match b {
-                b'(' => depth + 1,
-                b')' => depth - 1,
-                _ => depth,
+            open = match b {
+                b'(' => open + 1,
+                b')' => open - 1,
+                _ => open,
             };
-            depth == 0
+            open == 0
         }) else {
             break;
         };
@@ -798,12 +807,12 @@ fn peer_suffix(key: &str) -> String {
         if crate::graph::name_end(inner).is_some() && !inner.starts_with("patch_hash=") {
             out.push('(');
             out.push_str(strip_peers(inner));
-            out.push_str(&peer_suffix(inner));
+            out.push_str(&peer_suffix_at(inner, depth + 1)?);
             out.push(')');
         }
         rest = &rest[end + 1..];
     }
-    out
+    Ok(out)
 }
 
 /// `1.2.3`, `1.2.3(peer@1)`, `real@1.2.3(peer@1)` for an alias; nothing for `link:`, `file:`.
@@ -2522,6 +2531,26 @@ snapshots:
         assert_eq!(packages.len(), 10_000);
         // A key given twice keeps its first place and its last value.
         assert_eq!(packages.iter().next().map(|(k, v)| (k.as_str(), v.to_string())), Some(("p0@1.0.0", "{}".into())));
+    }
+
+    /// Found while fuzzing the importers: a peer suffix was read a level of nesting at a time,
+    /// each level reading the rest again, so a key of 100,000 nested groups (1.7 MB) took minutes
+    /// and recursed as deep as it nested.
+    #[test]
+    fn refuses_a_peer_suffix_nested_past_any_real_one() {
+        let nested = |n: usize| format!("{}{}", "(b@1.0.0".repeat(n), ")".repeat(n));
+        assert_eq!(peer_suffix(&format!("a@1.0.0{}(c@2.0.0)", nested(3))).unwrap(), format!("{}(c@2.0.0)", nested(3)));
+        assert_eq!(peer_suffix(&nested(MAX_DEPTH)).unwrap(), nested(MAX_DEPTH));
+        for n in [MAX_DEPTH + 1, 100_000] {
+            let key = format!("a@1.0.0{}", nested(n));
+            let text = format!(
+                "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        \
+                 version: 1.0.0\npackages:\n  a@1.0.0:\n    resolution: {{integrity: sha512-x}}\nsnapshots:\n  {key}: {{}}\n"
+            );
+            assert!(
+                err("pnpm-lock.yaml", &text, json!({ "dependencies": { "a": "^1" } })).contains("nested too deeply")
+            );
+        }
     }
 }
 
