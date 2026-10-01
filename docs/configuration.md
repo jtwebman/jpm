@@ -80,7 +80,9 @@ and tools that npm's and yarn's flat layout let find anything, look. By default 
 takes the default's place, an empty `public-hoist-pattern[]=` links none, and
 `shamefully-hoist=true` links every one, close to npm's and yarn's layout.
 `publicHoistPattern` and `shamefullyHoist` in `pnpm-workspace.yaml` are read the same way when
-`.npmrc` says nothing. A package the root declares is always its own, never the hoist's.
+`.npmrc` says nothing. Workspaces are linked at the root the same way, as npm and yarn link every
+one: a workspace a pattern names (all of them under `shamefully-hoist`), in place of a registry
+package of its name. A package the root declares is always its own, never the hoist's.
 
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects

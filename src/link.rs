@@ -113,6 +113,13 @@ pub struct Options<'a> {
 /// See `Options::fetch`.
 pub type Fetch<'a> = dyn Fn(&Package) -> Result<()> + Sync + 'a;
 
+/// Whether `public-hoist-pattern` names `name`: a pattern matches it and no `!` one does.
+fn publicly(patterns: &[String], name: &str) -> bool {
+    let named = |p: &str| crate::glob::name_matches(p, name);
+    patterns.iter().any(|p| !p.starts_with('!') && named(p))
+        && !patterns.iter().any(|p| p.strip_prefix('!').is_some_and(named))
+}
+
 /// A package of the hidden hoist linked at the root too: its name, its entry's package directory,
 /// and whether that is in the global store (linked to as it is, not relative).
 type Public = (String, PathBuf, bool);
@@ -575,7 +582,20 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     if let Some(e) = failures.into_iter().next() {
         return Err(e);
     }
-    let public = hoisted?;
+    let mut public = hoisted?;
+    // Workspaces too, as npm and yarn link every one at the root: one a pattern names, unless the
+    // root declares its name, in place of a registry package of that name in the hoist; of two
+    // with one name, the first.
+    let declared: HashSet<&String> = res.root.dependencies.keys().collect();
+    let mut seen = HashSet::new();
+    for top in tops.iter().filter(|t| !t.path.is_empty() && t.path != crate::project::ROOT_PATH) {
+        let Some(p) = res.packages.values().find(|p| p.local.as_deref() == Some(top.path.as_str())) else { continue };
+        if declared.contains(&p.name) || !publicly(opts.public_hoist, &p.name) || !seen.insert(p.name.clone()) {
+            continue;
+        }
+        public.retain(|(n, ..)| *n != p.name);
+        public.push((p.name.clone(), opts.dir.join(&top.path), false));
+    }
     // Downloads no entry took whole, into the store as they are.
     opts.store.flush()?;
     let hook = entries_dir.join(HOOK);
@@ -1314,14 +1334,9 @@ impl Linker<'_> {
                 .map_err(|e| Error::io(&e, format!("cannot create {}", dir.display())).with_code("ELINK"))?,
         };
         let keep: HashSet<String> = pick.keys().map(|n| n.to_string()).collect();
-        let patterns = self.opts.public_hoist;
-        let named = |p: &str, n: &str| crate::glob::name_matches(p, n);
         let public: Vec<Public> = pick
             .iter()
-            .filter(|(n, _)| {
-                patterns.iter().any(|p| !p.starts_with('!') && named(p, n))
-                    && !patterns.iter().any(|p| p.strip_prefix('!').is_some_and(|p| named(p, n)))
-            })
+            .filter(|(n, _)| publicly(self.opts.public_hoist, n))
             .map(|(n, e)| (n.to_string(), self.root_of(e).join(&e.home), e.shared))
             .collect();
         // Each scope directory once, before the links that go in it.
