@@ -1929,6 +1929,21 @@ fn a_package_pinning_a_version_waits_out_the_release_age() {
     assert_eq!(hits, ["/d"]);
 }
 
+/// A publish date jpm cannot read is not one before the release cutoff.
+#[test]
+fn holds_back_a_version_published_at_a_date_it_cannot_read() {
+    let r = Registry::start(vec![
+        pkg("b", "1.0.0", json!({})),
+        pkg("b", "1.1.0", json!({ "_published": "2999-13-01T00:00:00.000Z" })),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "b": "^1.0.0" } }));
+    let out = env.command(&["lock"]).env_remove("npm_config_min_release_age").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let packages = &env.lock()["packages"];
+    assert!(packages.get("b@1.0.0").is_some() && packages.get("b@1.1.0").is_none(), "{packages}");
+}
+
 #[test]
 fn reads_the_release_age_in_pnpm_workspace_yaml() {
     let at = |date: &str| json!({ "_published": date });
