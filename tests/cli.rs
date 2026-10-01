@@ -172,6 +172,25 @@ fn links_bins_and_runs_scripts() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("missing script"));
 }
 
+/// Scripts run in the system's shell: a dependency's bin named `sh` is on the PATH the script
+/// gets, and is never what runs the script.
+#[cfg(unix)]
+#[test]
+fn a_bin_named_sh_never_runs_the_scripts() {
+    let r = Registry::start(vec![pkg("shell", "1.0.0", json!({ "bin": { "sh": "sh.js" } })).file(
+        "sh.js",
+        0o755,
+        "#!/bin/sh\necho hijacked > hijacked.txt\n",
+    )]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "scripts": { "s": "echo ran > ran.txt" }, "dependencies": { "shell": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.exists("node_modules/.bin/sh"));
+    env.ok(&["run", "s"]);
+    assert!(!env.exists("hijacked.txt"), "the dependency's sh ran the script");
+    assert_eq!(env.read("ran.txt"), "ran\n");
+}
+
 #[test]
 fn frozen_installs_need_a_current_lockfile() {
     let r = registry();
