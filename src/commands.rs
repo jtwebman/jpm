@@ -582,12 +582,15 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         HashSet::new()
     };
     // Only the package the registry serves under that name and version, or a tarball package.json
-    // names: a lockfile edit pointing an approved package at another tarball, or an alias
-    // wearing a trusted name, runs nothing.
+    // names: a lockfile edit pointing an approved package at another tarball, an alias wearing a
+    // trusted name, or a dependency's own directory or repository by that name, runs nothing.
     let base = ctx.base_for();
     chosen.retain(|id| {
         let p = &resolution.packages[id];
-        let own = p.source.is_some() || p.resolved == crate::registry::tarball_url(&base(&p.name), &p.name, &p.version);
+        let own = match p.source {
+            Some(_) => build::named_by_project(&resolution, id),
+            None => p.resolved == crate::registry::tarball_url(&base(&p.name), &p.name, &p.version),
+        };
         if !own {
             warn(&format!("{id} is approved, but its tarball is not the registry's; its install scripts do not run"));
         }
@@ -703,6 +706,9 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
         return Ok(Approved { approved: Vec::new(), pending, install: None });
     }
     let mut approved = Vec::new();
+    // What names each package's source: a git, tarball or directory package is approved by name
+    // only where the project itself names it.
+    let tree = lock::from_lockfile(&lock, &Ctx::open(opts.clone(), false)?.base_for());
     for name in names {
         let mut found = false;
         for (key, e) in &mut lock.packages {
@@ -713,6 +719,15 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
                     return Err(fail(
                         "ENOSCRIPTS",
                         format!("{key} comes from {from}, not the registry; jpm will not approve it"),
+                    ));
+                }
+                // Nor is a dependency's own git, tarball or directory package that takes the name.
+                if e.version.is_some() && !build::named_by_project(&tree, key) {
+                    return Err(fail(
+                        "ENOSCRIPTS",
+                        format!(
+                            "{key} is a dependency's own package, not the registry's, and the project does not name it; jpm will not approve it"
+                        ),
                     ));
                 }
                 found = true;
