@@ -39,6 +39,8 @@ pub struct Opts {
     pub production: bool,
     pub verify: bool,
     pub frozen: bool,
+    /// `jpm ci`: frozen, and every `node_modules` removed before linking, as `npm ci` does.
+    pub clean: bool,
     pub group: Option<&'static str>,
     pub exact: bool,
     pub workspaces: Option<Select>,
@@ -392,7 +394,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     ctx.framework = framework_of(&project);
     let dir = project.dir.clone();
-    let previous = if ctx.opts.verify { None } else { state::read(&dir) };
+    // `jpm ci` trusts no tree it finds: it is removed (see `link::clear_tops`).
+    let previous = if ctx.opts.verify || ctx.opts.clean { None } else { state::read(&dir) };
     // The same inputs, with the tree still standing: a no-op that never reads the graph.
     // Only from jpm.lock itself (or frozen): any other lockfile is to be brought over first.
     let source = ctx.lock_source(&dir)?.0;
@@ -613,6 +616,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         tarballs: Some(tarballs.clone()),
         patches: &project.manifest.patches,
         fetch: if overlap { Some(&fetch) } else { None },
+        clean: ctx.opts.clean,
     };
     let mut outcome = match link::link(&resolution, &options) {
         Err(e) if e.code == "ELINK" && e.message.contains("is not in the store") => {

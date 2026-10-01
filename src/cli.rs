@@ -21,7 +21,8 @@ fn usage_text() -> String {
         "jpm — a fast, small package manager for the npm registry
 
 Usage
-  jpm [install] [--production] [--frozen-lockfile] [--verify]    (also i; ci is frozen)
+  jpm [install] [--production] [--frozen-lockfile] [--verify]    (also i)
+  jpm ci [--production]    frozen, after removing node_modules    (also clean-install)
   jpm add <spec>... [--dev | --optional] [--exact] [-w <workspace>]
   jpm remove <name>... [-w <workspace>]    (also uninstall, rm, r, un)
   jpm dedupe
@@ -158,6 +159,7 @@ struct Cli {
     production: bool,
     lock: bool,
     frozen: bool,
+    clean: bool,
     verify: bool,
     dev: bool,
     optional: bool,
@@ -348,6 +350,7 @@ fn positional(cli: &mut Cli, arg: &str) {
         cli.command = Some(cmd.into());
         if arg == "ci" || arg == "clean-install" {
             cli.frozen = true;
+            cli.clean = true;
         }
     } else if arg == "t" || arg == "tst" {
         cli.command = Some("run".into());
@@ -518,6 +521,7 @@ fn opts(cli: &Cli) -> Opts {
         production: cli.production,
         verify: cli.verify,
         frozen: cli.frozen,
+        clean: cli.clean,
         group: if cli.dev {
             Some("devDependencies")
         } else if cli.optional {
@@ -871,7 +875,9 @@ mod tests {
         assert_eq!(c.command.as_deref(), Some("install"));
         assert!(c.dev && !c.production);
         let c = p(&["ci"]);
-        assert!(c.frozen);
+        assert!(c.frozen && c.clean);
+        let c = p(&["install", "--frozen-lockfile"]);
+        assert!(c.frozen && !c.clean);
         let c = p(&["test", "--watch"]);
         assert_eq!(
             (c.command.as_deref(), c.implied, c.specs.as_slice()),

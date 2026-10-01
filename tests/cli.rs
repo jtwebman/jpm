@@ -90,8 +90,159 @@ fn a_shipped_install_state_does_not_vouch_for_node_modules() {
     assert!(!text.contains("up to date"), "{text}");
     let now = std::fs::read_to_string(clone.join("node_modules/b/index.js")).unwrap();
     assert!(now.contains("b@1.0.0") && !now.contains("payload"), "{now}");
-    // The state written against this store stands from then on.
-    assert!(ci().contains("up to date"));
+    // The state written against this store stands from then on (for install: ci removes any tree).
+    let again = env.command_in(&clone, &["install", "--frozen-lockfile"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&again.stdout).contains("up to date"));
+}
+
+type StoreFile = (std::path::PathBuf, Vec<u8>, bool);
+
+/// Every file of the store: where, what it holds, and whether it is read-only.
+fn store_files(env: &Env) -> Vec<StoreFile> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<StoreFile>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let meta = std::fs::symlink_metadata(e.path()).unwrap();
+            if meta.is_dir() {
+                walk(&e.path(), out);
+            } else if meta.is_file() {
+                out.push((e.path(), std::fs::read(e.path()).unwrap(), meta.permissions().readonly()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&env.store().join("v1/pkg"), &mut out);
+    out.sort();
+    out
+}
+
+/// A link to a directory: a symlink on unix, a junction on Windows (as jpm makes them).
+fn link_dir(target: &std::path::Path, at: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, at).unwrap();
+    #[cfg(windows)]
+    {
+        let win = |p: &std::path::Path| p.to_string_lossy().replace('/', "\\");
+        let made = std::process::Command::new("cmd").args(["/c", "mklink", "/J", &win(at), &win(target)]).output();
+        assert!(made.unwrap().status.success(), "mklink /J {}", at.display());
+    }
+}
+
+/// A checkout that commits `node_modules`, with an entry under `.jpm` whose file was changed
+/// but kept its size (which is all a reused entry is checked for), and its state file: `jpm ci`
+/// removes all of it and links the store's files, as `npm ci` removes `node_modules`. Links in
+/// it are removed, never followed, and the store's files stay as they were, read-only.
+#[test]
+fn ci_removes_a_committed_node_modules() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "global-store=false\n");
+    env.manifest(json!({ "name": "app", "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    let entries = env.project().join("node_modules/.jpm");
+    let entry = std::fs::read_dir(&entries)
+        .unwrap()
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("b@"))
+        .unwrap()
+        .path();
+    let file = entry.join("node_modules/b/index.js");
+    let good = std::fs::read_to_string(&file).unwrap();
+    // As a checkout writes it: a file of its own, not the store's.
+    let bad = good.replace("b@", "X@");
+    assert_eq!((bad.len(), bad != good), (good.len(), true));
+    std::fs::remove_file(&file).unwrap();
+    std::fs::write(&file, &bad).unwrap();
+    // Store files read-only on every OS, so a delete that made them writable would show.
+    let mut before = store_files(&env);
+    for (path, _, readonly) in before.iter_mut() {
+        let mut perm = std::fs::metadata(&*path).unwrap().permissions();
+        perm.set_readonly(true);
+        std::fs::set_permissions(&*path, perm).unwrap();
+        *readonly = true;
+    }
+    // A link out of the project at the top of node_modules and inside an entry.
+    let outside = env.root.join("outside");
+    std::fs::create_dir_all(outside.join("deep")).unwrap();
+    std::fs::write(outside.join("deep/keep.txt"), "keep").unwrap();
+    link_dir(&outside, &env.project().join("node_modules/evil"));
+    link_dir(&outside, &entry.join("node_modules/evil"));
+    // What a stopped `jpm ci` left, its process long gone.
+    let left = env.project().join("node_modules.jpm-old-999999999-x-0");
+    std::fs::create_dir_all(left.join("deep")).unwrap();
+    std::fs::write(left.join("deep/f"), "x").unwrap();
+
+    let out = env.ok(&["ci"]);
+    assert!(!out.contains("up to date"), "{out}");
+    assert_eq!(env.read("node_modules/a/../b/index.js"), good, "the store's b, not the committed one");
+    assert!(!env.exists("node_modules/evil"));
+    assert_eq!(std::fs::read_to_string(outside.join("deep/keep.txt")).unwrap(), "keep");
+    assert_eq!(store_files(&env), before, "the store's files are as they were");
+    assert!(!left.exists());
+    let names: Vec<String> =
+        std::fs::read_dir(env.project()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
+    assert!(!names.iter().any(|n| n.starts_with("node_modules.")), "{names:?}");
+    // Run again on the tree it made: removed and made again, nothing reused.
+    let out = env.ok(&["ci"]);
+    assert!(!out.contains("up to date"), "{out}");
+    assert_eq!(env.read("node_modules/a/../b/index.js"), good);
+    assert_eq!(store_files(&env), before);
+}
+
+/// With the global store, the project's links to its entries go as links, the entries stay;
+/// a `node_modules` that is itself a link out of the project goes as a link too.
+#[test]
+fn ci_removes_links_as_links() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "global-store=true\n");
+    env.manifest(json!({ "name": "app", "dependencies": { "a": "1.1.0" } }));
+    env.ok(&["install"]);
+    let links = env.store().join("v1/links");
+    let shared = |links: &std::path::Path| {
+        let mut v: Vec<_> = std::fs::read_dir(links).unwrap().flatten().map(|e| e.file_name()).collect();
+        v.sort();
+        v
+    };
+    let before = shared(&links);
+    assert!(!before.is_empty());
+    let a = std::fs::read_to_string(env.path("node_modules/a/index.js")).unwrap();
+    env.ok(&["ci"]);
+    assert_eq!(shared(&links), before);
+    assert_eq!(env.read("node_modules/a/index.js"), a);
+
+    let outside = env.root.join("outside-nm");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let nm = env.project().join("node_modules");
+    std::fs::remove_dir_all(&nm).unwrap();
+    link_dir(&outside, &nm);
+    env.ok(&["ci"]);
+    assert!(!std::fs::symlink_metadata(&nm).unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
+    assert_eq!(env.read("node_modules/a/index.js"), a);
+}
+
+/// Each workspace's `node_modules` goes too, with whatever was put there.
+#[test]
+fn ci_removes_each_workspaces_node_modules() {
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["packages/*"], "dependencies": { "a": "1.1.0" } }));
+    env.write("packages/w/package.json", r#"{ "name": "w", "dependencies": { "b": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    env.write("node_modules/stray.txt", "x");
+    env.write("packages/w/node_modules/stray.txt", "x");
+    env.write("packages/w/node_modules/b2/index.js", "planted");
+    env.ok(&["ci"]);
+    assert!(!env.exists("node_modules/stray.txt"));
+    assert!(!env.exists("packages/w/node_modules/stray.txt"));
+    assert!(!env.exists("packages/w/node_modules/b2"));
+    assert!(env.read("packages/w/node_modules/b/index.js").contains("b@1.0.0"));
+    assert!(env.read("node_modules/a/index.js").contains("a@1.1.0"));
+    // `--frozen-lockfile` checks the lockfile as ci does, and keeps the tree, as pnpm and yarn do.
+    env.write("node_modules/stray.txt", "x");
+    env.ok(&["install", "--frozen-lockfile"]);
+    assert!(env.exists("node_modules/stray.txt"));
 }
 
 #[test]

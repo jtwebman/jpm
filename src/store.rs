@@ -852,29 +852,55 @@ pub fn links_dir_of(store_dir: &Path) -> PathBuf {
     store_dir.join("v1").join("links")
 }
 
-/// Remove a store tree, lifting the read-only bits first where the OS needs that.
+/// Remove a tree, whatever is left of it left be (see `remove_all`).
 pub fn remove_tree(dir: &Path) {
-    if fs::remove_dir_all(dir).is_ok() || !dir.exists() {
-        return;
-    }
-    writable(dir);
-    let _ = fs::remove_dir_all(dir);
+    let _ = remove_all(dir);
 }
 
-/// Windows will not delete a read-only file; unix needs write access to each directory. A
-/// symlink is left alone: setting its permissions would set its target's.
-fn writable(p: &Path) {
-    if let Ok(meta) = fs::symlink_metadata(p)
-        && !meta.file_type().is_symlink()
-    {
+/// Delete a tree; `Err` when any of it is still there. No link in it is followed: std's
+/// `remove_dir_all` removes a symlink or a junction as itself. No file's permissions change: a
+/// file under `node_modules` is most often a hardlink to the store's, and making it writable
+/// would make the store's copy writable for every project. Windows deletes a read-only file as
+/// it is; unix needs only the directories writable, which is all a retry changes.
+pub fn remove_all(dir: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(dir) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) if fs::symlink_metadata(dir).is_ok() => {
+            open_up(dir);
+            fs::remove_dir_all(dir).or_else(|e| if e.kind() == io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+        }
+        other => other.or(Ok(())),
+    }
+}
+
+/// What a second try at deleting `p` needs: on unix every directory writable by its owner (a
+/// sealed global entry is not); on Windows, where only a file system without POSIX deletes
+/// (FAT, some shares) refuses a read-only file, such a file made writable when it is no
+/// hardlink, so no other copy of it changes. A symlink is left alone: changing its permissions
+/// would change its target's.
+fn open_up(p: &Path) {
+    let Ok(meta) = fs::symlink_metadata(p) else { return };
+    if meta.file_type().is_symlink() {
+        return;
+    }
+    #[cfg(unix)]
+    if meta.is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            let _ = fs::set_permissions(p, fs::Permissions::from_mode(mode | 0o700));
+        }
+    }
+    #[cfg(windows)]
+    if meta.is_file() && meta.permissions().readonly() && sys::file_info(p).is_some_and(|i| i.links <= 1) {
         let mut perm = meta.permissions();
         #[allow(clippy::permissions_set_readonly_false)]
         perm.set_readonly(false);
         let _ = fs::set_permissions(p, perm);
-        if meta.is_dir() {
-            for e in fs::read_dir(p).into_iter().flatten().flatten() {
-                writable(&e.path());
-            }
+    }
+    if meta.is_dir() {
+        for e in fs::read_dir(p).into_iter().flatten().flatten() {
+            open_up(&e.path());
         }
     }
 }
@@ -1299,8 +1325,70 @@ pub mod tests {
         let tree = root.join("tree");
         fs::create_dir_all(&tree).unwrap();
         std::os::unix::fs::symlink(&outside, tree.join("link")).unwrap();
-        super::writable(&tree);
+        super::open_up(&tree);
         assert_eq!(fs::metadata(&outside).unwrap().permissions().mode() & 0o777, 0o600);
+        super::remove_tree(&root);
+    }
+
+    /// Past Windows' 260-character paths, read-only files (one a hardlink to a read-only file
+    /// elsewhere) and a junction out: all of the tree goes, nothing outside it changes.
+    #[cfg(windows)]
+    #[test]
+    fn remove_all_takes_long_paths_read_only_files_and_junctions() {
+        let root = scratch("rt-win");
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let stored = outside.join("stored");
+        fs::write(&stored, "x").unwrap();
+        let read_only = |p: &Path| {
+            let mut perm = fs::metadata(p).unwrap().permissions();
+            perm.set_readonly(true);
+            fs::set_permissions(p, perm).unwrap();
+        };
+        read_only(&stored);
+        let tree = root.join("tree");
+        let mut deep = tree.clone();
+        for i in 0..20 {
+            deep = deep.join(format!("directory-{i:02}-of-a-long-path"));
+        }
+        assert!(deep.as_os_str().len() > 300);
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("own"), "y").unwrap();
+        read_only(&deep.join("own"));
+        fs::hard_link(&stored, deep.join("linked")).unwrap();
+        let junction = tree.join("out");
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(made.status.success());
+        super::remove_all(&tree).unwrap();
+        assert!(!tree.exists());
+        assert_eq!(fs::read(&stored).unwrap(), b"x");
+        assert!(fs::metadata(&stored).unwrap().permissions().readonly());
+        super::remove_tree(&root);
+    }
+
+    /// A sealed directory holding a hardlink to a read-only store file goes, and the store's file
+    /// stays as it was: only directories are opened up.
+    #[cfg(unix)]
+    #[test]
+    fn remove_all_never_makes_a_linked_file_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("rt-hardlink");
+        let stored = root.join("stored");
+        fs::write(&stored, "x").unwrap();
+        fs::set_permissions(&stored, fs::Permissions::from_mode(0o444)).unwrap();
+        let tree = root.join("tree");
+        fs::create_dir_all(tree.join("sealed")).unwrap();
+        fs::hard_link(&stored, tree.join("sealed/file")).unwrap();
+        fs::set_permissions(tree.join("sealed"), fs::Permissions::from_mode(0o555)).unwrap();
+        super::remove_all(&tree).unwrap();
+        assert!(!tree.exists());
+        assert_eq!(fs::metadata(&stored).unwrap().permissions().mode() & 0o777, 0o444);
+        assert_eq!(fs::read(&stored).unwrap(), b"x");
         super::remove_tree(&root);
     }
 

@@ -50,6 +50,8 @@ pub const HOOK: &str = "hoist.cjs";
 const TURN: &str = ".lock";
 /// Under `.jpm` while entries are built in place: an install killed midway leaves it (see `Turn`).
 const BUILDING: &str = ".building";
+/// What `jpm ci` renames a `node_modules` to, beside it, before deleting it: `<this><temp_suffix>`.
+const OLD_NM: &str = "node_modules.jpm-old-";
 /// How long an abandoned `.tmp-*` must sit untouched before it is believed abandoned.
 const TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
 /// A global entry's file holding the whole digest of the subgraph it was built for: its name
@@ -102,6 +104,8 @@ pub struct Options<'a> {
     /// which entries may be shared; in the project layout each is settled as it is first needed,
     /// and one that fails is dropped as before. Without it, every package must be in the store.
     pub fetch: Option<&'a Fetch<'a>>,
+    /// `jpm ci`: every top's `node_modules` removed first (see `clear_tops`).
+    pub clean: bool,
 }
 
 /// See `Options::fetch`.
@@ -369,6 +373,10 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     let real_root =
         fs::canonicalize(opts.dir).map_err(|e| Error::io(&e, format!("cannot read {}", opts.dir.display())))?;
     let nm = opts.dir.join("node_modules");
+    if opts.clean {
+        clear_tops(&tops, &real_root, &entries_dir)?;
+    }
+    sweep_old(&tops, &real_root);
     inside(&nm, &real_root)?;
     inside(&entries_dir, &real_root)?;
     let made_nm = fs::create_dir(&nm).is_ok();
@@ -1302,6 +1310,92 @@ impl Linker<'_> {
             if old {
                 remove_tree(&e.path());
                 Counts::add(&self.counts.removed, 1);
+            }
+        }
+    }
+}
+
+/// `jpm ci` deletes `node_modules` first, as `npm ci` does: a checkout can commit entries under
+/// `node_modules/.jpm` whose files differ from the store's in content alone, which `intact`
+/// (sizes only) would take as built, and a state file vouching for them. Each top's is renamed
+/// aside, so a delete cut short leaves no half of one where an install would look (`sweep_old`
+/// finishes it), then deleted on every disk thread before linking starts: on Windows that took
+/// nuxt's from 2.3 s to 1.5 s, and deleting it on a thread while linking cost more than either,
+/// in wall time and twice the CPU. One that cannot be renamed (on Windows, a file in it open
+/// elsewhere) is deleted where it is, its state first, so an install after a failed delete
+/// trusts none of what is left. Nothing is followed: a `node_modules` that is a symlink or a
+/// junction is removed as one, and so is any link inside (see `remove_all`), its target
+/// untouched; a top whose own directory leads outside the project is left alone, for `inside`
+/// to refuse.
+fn clear_tops(tops: &[Top], real_root: &Path, entries_dir: &Path) -> Result<()> {
+    let mut aside = Vec::new();
+    for top in tops {
+        let Some(top_dir) = top.nm.parent() else { continue };
+        if !fs::canonicalize(top_dir).is_ok_and(|real| real.starts_with(real_root)) {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&top.nm) else { continue };
+        let cannot = |e: io::Error| Error::io(&e, format!("cannot remove {}", top.nm.display()));
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            remove_link(&top.nm).map_err(cannot)?;
+            continue;
+        }
+        // Another install of the project finishes first (see `Turn`); none starts on the old
+        // tree after the rename, which leaves it no `.jpm/.lock` to wait on.
+        if top.path.is_empty() && fs::symlink_metadata(entries_dir).is_ok_and(|m| m.is_dir()) {
+            drop(Turn::take(entries_dir));
+        }
+        let old = top_dir.join(format!("{OLD_NM}{}", temp_suffix()));
+        if fs::rename(&top.nm, &old).is_ok() {
+            aside.push(old);
+            continue;
+        }
+        let _ = fs::remove_file(top.nm.join(state::STATE_FILE));
+        crate::store::remove_all(&top.nm).map_err(cannot)?;
+    }
+    remove_aside(&aside);
+    Ok(())
+}
+
+/// Trees renamed aside, deleted on every disk thread: each thing in one, and each entry of its
+/// `.jpm`, a job. What cannot be deleted stays for `sweep_old` to try again.
+fn remove_aside(aside: &[PathBuf]) {
+    let mut jobs = Vec::new();
+    for old in aside {
+        for e in fs::read_dir(old).into_iter().flatten().flatten() {
+            let real_dir = e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink());
+            if real_dir && e.file_name() == ".jpm" {
+                jobs.extend(fs::read_dir(e.path()).into_iter().flatten().flatten().map(|e| e.path()));
+            } else {
+                jobs.push(e.path());
+            }
+        }
+    }
+    pool::run(pool::disk_threads(), jobs, |p, _| {
+        let _ = match fs::symlink_metadata(&p) {
+            Ok(m) if m.is_dir() && !m.file_type().is_symlink() => crate::store::remove_all(&p),
+            Ok(_) => remove_link(&p),
+            Err(_) => Ok(()),
+        };
+    });
+    for old in aside {
+        let _ = crate::store::remove_all(old);
+    }
+}
+
+/// What a `jpm ci` that was stopped before its delete finished left beside a top's
+/// `node_modules`, deleted when the process that made it is gone.
+fn sweep_old(tops: &[Top], real_root: &Path) {
+    for top_dir in tops.iter().filter_map(|t| t.nm.parent()) {
+        if !fs::canonicalize(top_dir).is_ok_and(|real| real.starts_with(real_root)) {
+            continue;
+        }
+        for e in fs::read_dir(top_dir).into_iter().flatten().flatten() {
+            let name = e.file_name();
+            let Some(rest) = name.to_str().and_then(|n| n.strip_prefix(OLD_NM)) else { continue };
+            let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<u32>().ok()) else { continue };
+            if pid != std::process::id() && !sys::alive(pid) {
+                let _ = crate::store::remove_all(&e.path());
             }
         }
     }
