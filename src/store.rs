@@ -1,5 +1,5 @@
 //! The content store: one directory per tarball, named by its integrity, holding the unpacked
-//! files read-only, plus an index of them. A tarball seen before is never fetched or unpacked
+//! files, plus an index of them. A tarball seen before is never fetched or unpacked
 //! again, and the linker hardlinks (or clones) out of here into every project.
 //!
 //! Layout under the store root:
@@ -879,8 +879,8 @@ fn writable(p: &Path) {
     }
 }
 
-/// Gunzip (when gzipped) and write every regular file under `dest`, read-only, the
-/// executables and declared bins executable. One copy of this for every kind of source.
+/// Gunzip (when gzipped) and write every regular file under `dest`, the executables and
+/// declared bins executable. One copy of this for every kind of source.
 /// With `suffix`, each file is written as `<path>.jpm` (see `Index::stored`).
 pub fn extract(source: &mut dyn Read, dest: &Path, suffix: bool) -> Result<Index> {
     let cannot_create = |e: io::Error| Error::io(&e, format!("cannot create {}", dest.display()));
@@ -1233,17 +1233,18 @@ fn write_queued(root: &sys::Dir, recv: &Mutex<mpsc::Receiver<Queued>>, failed: &
     }
 }
 
-/// Created read-only: content is hardlinked into every project, so a write through one link
-/// would change all of them. The fd that creates it may still write.
+/// Created writable, as npm's, pnpm's and bun's are: husky copies its template out of its
+/// package, and a copy of a read-only file could not be written again. A write through one
+/// hardlink changes every project's copy; `jpm patch` writes a package's own copy instead.
 fn create(root: &sys::Dir, rel: &str, exec: bool) -> io::Result<fs::File> {
-    root.create(rel, if exec { 0o555 } else { 0o444 })
+    root.create(rel, if exec { 0o755 } else { 0o644 })
 }
 
 fn set_mode(file: &Path, exec: bool) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(file, fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }));
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 }));
     }
     #[cfg(not(unix))]
     let _ = (file, exec);

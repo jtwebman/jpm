@@ -143,7 +143,8 @@ pub fn unhome(links: &Path, keep: &HashSet<String>, used: &HashSet<PathBuf>) {
         if !files.is_dir() {
             continue;
         }
-        // Moving a directory takes write access to it and to where it is: the entry was sealed.
+        // Moving a directory takes write access to it and to where it is: an older jpm sealed
+        // shared entries.
         open_up(&files);
         if let Some(parent) = files.parent() {
             open_up(parent);
@@ -156,7 +157,7 @@ pub fn unhome(links: &Path, keep: &HashSet<String>, used: &HashSet<PathBuf>) {
     }
 }
 
-/// A directory `seal` made read-only, writable by its owner again.
+/// A directory an older jpm sealed read-only, writable by its owner again.
 fn open_up(dir: &Path) {
     #[cfg(unix)]
     {

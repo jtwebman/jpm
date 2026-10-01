@@ -49,5 +49,6 @@ patch-commit <dir>` writes the difference from the published package with `git d
 it, names it in `patchedDependencies` (in `pnpm-workspace.yaml` when that file lists patches,
 else in package.json), and installs. git must be installed.
 
-A script that edits `node_modules/<name>` in place, as patch-package does, fails: those files
-are read-only links into the store.
+A script that edits `node_modules/<name>` in place, as patch-package does, edits a hardlink
+into the store (a clone on macOS is a copy of its own): every project linked to that file sees
+the change. Use `jpm patch`, whose patched package is a copy of its own.

@@ -1969,7 +1969,7 @@ pub fn patch(spec: &str, edit_dir: Option<&Path>, opts: Opts) -> Result<PathBuf>
     let store = ctx.store(false);
     pristine(&store, &dir, &p, &at)?;
     if let Some(patch) = patch_of(&project, &p)
-        && let Err(why) = crate::patch::apply(&at, &patch.text, false)
+        && let Err(why) = crate::patch::apply(&at, &patch.text)
     {
         warn(&format!("{} does not apply ({why}): this is {}@{} as published", patch.path, p.name, p.version));
         crate::store::remove_tree(&at);

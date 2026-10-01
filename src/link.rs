@@ -621,7 +621,6 @@ impl Linker<'_> {
                             fs::write(temp.join(DIGEST_FILE), digest)
                                 .map_err(|e| Error::io(&e, format!("cannot write {}", temp.display())))?;
                         }
-                        seal(&temp);
                         fs::rename(&temp, &fin)
                             .map_err(|e| Error::io(&e, format!("cannot place {}", fin.display())).with_code("ELINK"))
                     });
@@ -693,7 +692,8 @@ impl Linker<'_> {
     /// Files `move_in` took for an entry that was not placed, back to the store.
     fn give_back(&self, entry: &Entry, moved: Option<PathBuf>) -> Result<()> {
         let Some(dir) = moved else { return Ok(()) };
-        // `seal` may have run: moving a directory out takes write access to it and its parent.
+        // An older jpm sealed shared entries: moving a directory out takes write access to it and
+        // its parent.
         unseal(&dir);
         if let Some(parent) = dir.parent() {
             unseal(parent);
@@ -708,14 +708,12 @@ impl Linker<'_> {
             remove_tree(&temp);
             return Err(e);
         }
-        if entry.shared {
-            if let Some(digest) = &entry.digest
-                && let Err(e) = fs::write(temp.join(DIGEST_FILE), digest)
-            {
-                remove_tree(&temp);
-                return Err(Error::io(&e, format!("cannot write {}", temp.display())));
-            }
-            seal(&temp);
+        if entry.shared
+            && let Some(digest) = &entry.digest
+            && let Err(e) = fs::write(temp.join(DIGEST_FILE), digest)
+        {
+            remove_tree(&temp);
+            return Err(Error::io(&e, format!("cannot write {}", temp.display())));
         }
         let retired = root.join(format!(".tmp-{}", temp_suffix()));
         let moved = fs::rename(fin, &retired).is_ok();
@@ -956,7 +954,7 @@ impl Linker<'_> {
                     format!("{}@{} is patched, and no patch of the project has its hash", pkg.name, pkg.version),
                 )
             })?;
-            crate::patch::apply(&pkg_dir, &patch.text, entry.shared && !entry.build).map_err(|why| {
+            crate::patch::apply(&pkg_dir, &patch.text).map_err(|why| {
                 Error::new("EPATCH", format!("{} does not apply to {}@{}: {why}", patch.path, pkg.name, pkg.version))
             })?;
         }
@@ -1352,24 +1350,7 @@ fn bin_link(name: &str, target: &str) -> String {
     sep(&format!("../{name}/{}", target.trim_end_matches('/')))
 }
 
-/// A shared entry is read-only all the way down, its directories as its files already are: no
-/// script in one project can add, remove or rename what another project links to.
-fn seal(dir: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
-            if e.file_type().is_ok_and(|t| t.is_dir()) {
-                seal(&e.path());
-            }
-        }
-        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o555));
-    }
-    #[cfg(not(unix))]
-    let _ = dir;
-}
-
-/// One directory `seal` made read-only, writable by its owner again.
+/// One directory an older jpm sealed read-only, writable by its owner again.
 fn unseal(dir: &Path) {
     #[cfg(unix)]
     {
@@ -1397,7 +1378,7 @@ fn executable(file: &Path) {
     let _ = file;
 }
 
-/// A copy the owner may write: the store's files are read-only.
+/// A copy the owner may write, whatever mode the store's file has.
 fn writable(file: &Path, exec: bool) -> io::Result<()> {
     let mut perm = fs::metadata(file)?.permissions();
     #[cfg(unix)]

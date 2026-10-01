@@ -873,8 +873,7 @@ fn repairs_a_damaged_tree_under_verify() {
     env.manifest(json!({ "dependencies": { "b": "1.0.0" } }));
     env.ok(&["install"]);
     let b = std::fs::canonicalize(env.project().join("node_modules/b")).unwrap();
-    // A shared entry is sealed; damaging it takes lifting that first, as a user could.
-    let _ = std::process::Command::new("chmod").arg("u+w").arg(&b).output();
+    // Damaged as a user could: a file removed from a shared entry.
     std::fs::remove_file(b.join("index.js")).unwrap();
     let out = env.ok(&["install", "--verify"]);
     assert!(out.contains("repaired"), "{out}");
@@ -1744,6 +1743,22 @@ fn stops_on_a_failing_install_script() {
 
 #[cfg(unix)]
 #[test]
+fn a_script_copies_a_file_out_of_node_modules_again() {
+    // husky copies its template out of node_modules on every prepare: a copy of a read-only
+    // store file was read-only, and the next install could not write it again (EACCES).
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(
+        json!({ "dependencies": { "b": "1.0.0" }, "scripts": { "prepare": "cp node_modules/b/index.js hook.js" } }),
+    );
+    env.ok(&["install"]);
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["install"]);
+    assert!(env.read("hook.js").contains("b@1.0.0"));
+}
+
+#[cfg(unix)]
+#[test]
 fn runs_the_projects_own_lifecycle_scripts() {
     let r = scripted();
     let env = Env::new(&r);
@@ -1977,22 +1992,16 @@ fn a_lockfiles_bins_never_reach_another_projects_shared_entry() {
 
 #[cfg(unix)]
 #[test]
-fn seals_shared_entries() {
+fn a_package_writes_into_its_shared_entry() {
+    // prisma copies its engine into its own package: a shared entry is writable, as pnpm's are.
     let r = registry();
     let env = Env::new(&r);
     env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
     env.ok(&["install"]);
-    // Nothing one project runs may change what another links to: not a file, and not the
-    // directories that hold them.
     let a = std::fs::canonicalize(env.project().join("node_modules/a")).unwrap();
     assert!(a.starts_with(std::fs::canonicalize(env.store()).unwrap()), "{a:?}");
-    let root = unsafe { libc_geteuid() } == 0;
-    if !root {
-        assert!(std::fs::write(a.join("planted.js"), "x").is_err(), "a file was added to a shared entry");
-        assert!(std::fs::remove_file(a.join("index.js")).is_err(), "a file was removed from a shared entry");
-        assert!(std::fs::write(a.join("index.js"), "x").is_err());
-    }
-    // Pruning still removes a sealed entry.
+    std::fs::write(a.join("engine"), "x").unwrap();
+    // Pruning still removes the entry.
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
     let out = env.ok(&["prune", "--json"]);
     assert!(out.contains("\"shared\""), "{out}");
@@ -2004,12 +2013,6 @@ fn seals_shared_entries() {
             .count(),
         0
     );
-}
-
-#[cfg(unix)]
-unsafe extern "C" {
-    #[link_name = "geteuid"]
-    fn libc_geteuid() -> u32;
 }
 
 #[test]
