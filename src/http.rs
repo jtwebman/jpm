@@ -29,6 +29,11 @@ const MAX_REDIRECTS: usize = 5;
 /// peak from a lockfile, for no speed.
 const CONN_BUF: usize = 32 * 1024;
 const MAX_HEAD: usize = 64 * 1024;
+/// What is read of a body jpm has no use for (a redirect's, what follows a gzip stream) before
+/// the connection is dropped instead: a server could send it without end.
+const MAX_DRAIN: u64 = 64 * 1024;
+/// Trailer lines after a chunked body's last chunk, at most.
+const MAX_TRAILERS: usize = 64;
 /// A registry document read whole into memory, after gunzip. Far above the largest packument.
 pub const MAX_DOCUMENT: u64 = 512 * 1024 * 1024;
 
@@ -477,9 +482,10 @@ impl Client {
             if matches!(r.status, 301 | 302 | 303 | 307 | 308)
                 && let Some(location) = r.header("location")
             {
-                // Read to its end, so the connection goes back to the pool.
+                // Read to its end, so the connection goes back to the pool; one that goes on past
+                // what a redirect says is dropped.
                 let mut r = r;
-                let _ = io::copy(&mut r.body, &mut io::sink());
+                let _ = io::copy(&mut (&mut r.body).take(MAX_DRAIN), &mut io::sink());
                 url = target.join(&location);
                 continue;
             }
@@ -694,7 +700,11 @@ impl<R: Read> Read for Gunzip<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.0.read(buf)?;
         if n == 0 && !buf.is_empty() {
-            io::copy(self.0.get_mut(), &mut io::sink())?;
+            // Nothing but framing is left: bytes past the gzip stream, without end, are not.
+            let left = io::copy(&mut self.0.get_mut().take(MAX_DRAIN + 1), &mut io::sink())?;
+            if left > MAX_DRAIN {
+                return Err(io::Error::other("data after the end of the gzip stream"));
+            }
         }
         Ok(n)
     }
@@ -751,10 +761,15 @@ impl Read for Body {
                 let size = u64::from_str_radix(hex, 16).map_err(|_| io::Error::other("bad chunk size"))?;
                 if size == 0 {
                     // Trailers, then the blank line that ends the body.
+                    let mut trailers = 0;
                     loop {
                         line.clear();
                         if bounded_line(conn, &mut line)? <= 2 {
                             break;
+                        }
+                        trailers += 1;
+                        if trailers > MAX_TRAILERS {
+                            return Err(io::Error::other("too many trailers"));
                         }
                     }
                     self.finish();
@@ -999,6 +1014,52 @@ mod tests {
         assert_eq!(get(&format!("{base}/a"), &[], &auth).unwrap().body, b"hello");
         assert_eq!(get(&format!("{base}/b"), &[], &auth).unwrap().body, b"abcde");
         assert_eq!(get(&format!("{base}/c"), &[], &auth).unwrap().status, 404);
+    }
+
+    /// A server that answers one request with `head`, then sends `filler` until the client goes.
+    fn serve_endless(head: &[u8], filler: &'static [u8]) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let head = head.to_vec();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(s.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                line.clear();
+            }
+            let mut writer = s;
+            if writer.write_all(&head).is_ok() {
+                while writer.write_all(filler).is_ok() {}
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn reads_only_so_much_of_what_it_has_no_use_for() {
+        // A redirect whose body never ends.
+        let next = serve(vec![b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok".to_vec()]);
+        let head = format!("HTTP/1.1 302 Found\r\nlocation: {next}/x\r\nconnection: close\r\n\r\n");
+        let start = serve_endless(head.as_bytes(), &[b'x'; 4096]);
+        assert_eq!(get(&format!("{start}/a"), &[], &BTreeMap::new()).unwrap().body, b"ok");
+        // Trailers without end.
+        let chunked = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n";
+        let base = serve_endless(chunked, b"x-t: y\r\n");
+        let (mut r, _) = open(&format!("{base}/b"), &BTreeMap::new()).unwrap();
+        let e = r.read_to_end(&mut Vec::new()).unwrap_err();
+        assert!(e.to_string().contains("too many trailers"), "{e}");
+        // Bytes without end after a gzip stream.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(b"tarball bytes").unwrap();
+        let mut head = b"HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\nconnection: close\r\n\r\n".to_vec();
+        head.extend(gz.finish().unwrap());
+        let base = serve_endless(&head, &[0; 4096]);
+        let (mut r, _) = open(&format!("{base}/c"), &BTreeMap::new()).unwrap();
+        let mut got = Vec::new();
+        let e = r.read_to_end(&mut got).unwrap_err();
+        assert!(e.to_string().contains("after the end of the gzip stream"), "{e}");
+        assert_eq!(got, b"tarball bytes");
     }
 
     #[test]
