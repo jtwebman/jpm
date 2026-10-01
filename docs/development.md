@@ -14,7 +14,14 @@ two switches meant for tests only: `JPM_GIT_ALLOW_FILE=1` lets git fetch `file:/
 `JPM_CODELOAD_URL` replaces `https://codeload.github.com`. The runtime tests serve real Node
 release signatures and keys (`tests/fixtures/node`) from a local server, which
 `JPM_NODE_KEYS_URL` points jpm at in place of nodejs/release-keys; a key is still used only when
-its fingerprint is one jpm carries.
+its fingerprint is one jpm carries. `JPM_NODE_VERSION` stands in for `node --version` (the
+end-to-end tests pin 22.0.0), and `JPM_DIGEST_SHOWN` sets how much of a digest the global
+store's entry names show. These five are read only by a debug build, which is what
+`cargo test` runs: a release build ignores them.
+
+Two switches print what an install does, in any build, on stderr: `JPM_PHASES=1` the
+milliseconds since start as each phase ends, and `JPM_HTTP_LOG=1` each request with its status
+and time.
 
 jpm has its own TLS and cryptography, in three crates:
 

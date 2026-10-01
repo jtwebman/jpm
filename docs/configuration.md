@@ -6,6 +6,11 @@
 `prefer-offline`, `min-release-age`, `before`, `min-release-age-exclude`,
 `block-exotic-subdeps` (see [Git dependencies](git-dependencies.md)) and the network settings below.
 
+jpm's own environment variables: `JPM_STORE` (where the store is, `~/.jpm/store` by default),
+`JPM_GLOBAL_STORE` (`0`, `false` or `off` turns the global virtual store off, see below),
+`JPM_REGISTRY` (the registry, where `npm_config_registry` is not set) and `JPM_CONCURRENCY`
+(threads for network work, 32 by default).
+
 The project's `.npmrc` comes with the repository, so it cannot weaken what the others check:
 `ca`, `cafile`, `proxy`, `https-proxy`, `http-proxy`, `strict-ssl=false`,
 `block-exotic-subdeps=false`, `verify-node-signature=false`, a `min-release-age` or `before` that lets in newer versions

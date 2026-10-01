@@ -141,7 +141,8 @@ fn archive_url(url: &str, commit: &str) -> Option<String> {
     let (host, path) = url.strip_prefix("git+https://")?.split_once('/')?;
     match (host, path.strip_suffix(".git")) {
         ("github.com" | "gist.github.com", Some(path)) => {
-            let base = std::env::var("JPM_CODELOAD_URL").unwrap_or_else(|_| "https://codeload.github.com".into());
+            let base =
+                crate::util::test_hook("JPM_CODELOAD_URL").unwrap_or_else(|| "https://codeload.github.com".into());
             let path = if host == "github.com" { path.to_string() } else { format!("gist/{path}") };
             Some(format!("{base}/{path}/tar.gz/{commit}"))
         }
@@ -162,7 +163,7 @@ fn archive_url(url: &str, commit: &str) -> Option<String> {
 /// Never a transport helper (`<name>::<address>`) or a drive (`c:path`), whatever a lockfile says.
 fn remote(url: &str) -> Result<String> {
     let url = url.strip_prefix("git+").unwrap_or(url);
-    if url.starts_with("file://") && std::env::var_os(ALLOW_FILE).is_none() {
+    if url.starts_with("file://") && crate::util::test_hook(ALLOW_FILE).is_none() {
         return Err(Error::new("EGIT", format!("{url}: jpm does not fetch file:// repositories")));
     }
     let mut out = url;
@@ -220,7 +221,7 @@ fn own_ssh(cwd: &Path) -> bool {
 /// read, and `core.sshCommand` and the like run commands.
 fn plain(cwd: &Path) -> Command {
     let mut c = Command::new("git");
-    let protocols = if std::env::var_os(ALLOW_FILE).is_some() { "https:ssh:git:file" } else { "https:ssh:git" };
+    let protocols = if crate::util::test_hook(ALLOW_FILE).is_some() { "https:ssh:git:file" } else { "https:ssh:git" };
     c.env("GIT_ALLOW_PROTOCOL", protocols).stdin(Stdio::null()).current_dir(cwd);
     let above = cwd.parent().and_then(|p| std::path::absolute(p).ok()).unwrap_or_default();
     c.env("GIT_CEILING_DIRECTORIES", above);
@@ -347,7 +348,7 @@ mod tests {
             assert!(remote(bad).is_err(), "{bad}");
         }
         assert_eq!(remote("git+ssh://git@[::1]:r.git").unwrap(), "git@[::1]:r.git");
-        if std::env::var_os(ALLOW_FILE).is_none() {
+        if crate::util::test_hook(ALLOW_FILE).is_none() {
             assert!(remote("git+file:///tmp/x").is_err());
         }
         let c = "0123456789012345678901234567890123456789";

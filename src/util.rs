@@ -30,6 +30,13 @@ fn encode(bytes: &[u8], table: &[u8; 64], pad: bool) -> String {
     out
 }
 
+/// An environment switch meant for jpm's own tests: a local server in place of GitHub or the
+/// Node.js release keys, git over `file://`, a stand-in node version. Read only in a debug
+/// build, which is what `cargo test` runs; a release build acts as though it were unset.
+pub fn test_hook(name: &str) -> Option<String> {
+    if cfg!(debug_assertions) { std::env::var(name).ok() } else { None }
+}
+
 pub fn to_base64(bytes: &[u8]) -> String {
     encode(bytes, STD, true)
 }

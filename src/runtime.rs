@@ -198,7 +198,7 @@ fn check_signature(registry: &Registry, version: &str, url: &str, text: &str) ->
     {
         return Ok(());
     }
-    let base = std::env::var("JPM_NODE_KEYS_URL").unwrap_or_else(|_| RELEASE_KEYS.to_string());
+    let base = crate::util::test_hook("JPM_NODE_KEYS_URL").unwrap_or_else(|| RELEASE_KEYS.to_string());
     let armored = fetch(registry, &format!("{base}/{name}.asc"), MAX_KEY)
         .map_err(|e| e.context(format_args!("Node.js {version}: cannot read release key {name}")))?;
     crate::pgp::verify(text.as_bytes(), &sig, &key, &armored).map_err(refused)?;
@@ -394,7 +394,7 @@ pub fn check_builds(p: &Package, builds: &[(String, String)], file: &str) -> Res
 }
 
 /// The version a system binary reports, for a `devEngines.runtime` that is only checked. Node's
-/// is the one `engines.node` is checked against (`JPM_NODE_VERSION` can stand in for it).
+/// is the one `engines.node` is checked against (see `registry::node_version`).
 fn system_version(name: &str) -> Option<String> {
     if name == "node" {
         return crate::registry::node_version().map(|v| v.text.clone());
