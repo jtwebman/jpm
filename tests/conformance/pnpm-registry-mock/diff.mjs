@@ -119,12 +119,17 @@ const enclosing = (dir) => {
   return d
 }
 
-// Every name a manifest asks for, as the kinds pnpm and jpm install or link it.
-const asked = (manifest, root) => {
+// Every name a manifest asks for, as the kinds pnpm and jpm install or link it, with what the
+// scenario's packageExtensions add to it (their selectors name no range here: a name matches).
+const asked = (manifest, root, extensions = {}) => {
   const kinds = root
     ? ['dependencies', 'devDependencies', 'optionalDependencies']
     : ['dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta']
-  return [...new Set(kinds.flatMap((k) => Object.keys(manifest[k] ?? {})))].sort()
+  const extended = Object.entries(extensions)
+    .filter(([selector]) => selector.replace(/(.)@.*$/, '$1') === manifest.name)
+    .map(([, extension]) => extension)
+  const names = [manifest, ...extended].flatMap((m) => kinds.flatMap((k) => Object.keys(m[k] ?? {})))
+  return [...new Set(names)].sort()
 }
 
 const bundled = (manifest) => {
@@ -138,7 +143,7 @@ const idOf = (dir) => {
 }
 
 // Reads what was installed under project `dir` into sorted lines.
-const snapshot = (dir) => {
+const snapshot = (dir, extensions) => {
   const rootManifest = readJson(join(dir, 'package.json'))
   const seen = new Map()
   const queue = []
@@ -156,13 +161,13 @@ const snapshot = (dir) => {
     }
     return idOf(real)
   }
-  const root = asked(rootManifest, true).map((name) =>
+  const root = asked(rootManifest, true, extensions).map((name) =>
     `${name} -> ${short(name, locate(join(dir, 'node_modules'), name)) ?? '(missing)'}`)
   while (queue.length) {
     const real = queue.shift()
     const manifest = readJson(join(real, 'package.json')) ?? {}
     const own = new Set(bundled(manifest))
-    const links = asked(manifest, false).map((name) => {
+    const links = asked(manifest, false, extensions).map((name) => {
       const from = own.has(name) ? join(real, 'node_modules') : enclosing(real)
       return `${name}=${short(name, locate(from, name)) ?? '-'}`
     })
@@ -188,12 +193,17 @@ const install = async (manager, s) => {
     }
   }
   writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest, null, 2))
+  // JSON is YAML: pnpm-workspace.yaml as both managers read it.
+  if (s.packageExtensions) {
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), `packageExtensions: ${JSON.stringify(s.packageExtensions)}
+`)
+  }
   const { code, out } = await managers[manager](dir, home)
   if (code !== 0) {
     const line = out.split(/\r?\n/).find((l) => /ERR|error/i.test(l)) ?? out.trim().split(/\r?\n/).pop()
     return { failed: (line ?? `exit ${code}`).trim().slice(0, 200) }
   }
-  return snapshot(dir)
+  return snapshot(dir, s.packageExtensions)
 }
 
 // The lines one result has and the other lacks: `-` pnpm only, `+` jpm only.

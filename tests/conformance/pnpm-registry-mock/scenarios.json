@@ -313,6 +313,11 @@
     {"id":"bins: bin t from two packages","dependencies":{"@pnpm.e2e/touch-file-one-bin":"1.0.0","@pnpm.e2e/touch-file-many-bins":"1.0.0"}},
     {"id":"bins: broken bin and a sh bin","dependencies":{"@pnpm.e2e/broken-bin":"1.0.0","@pnpm.e2e/sh-hello-world":"1.0.1"}},
     {"id":"bins: directories.bin","dependencies":{"@pnpm.e2e/pkg-with-directories-bin":"1.0.0"}},
-    {"id":"bins: bundled dependencies","dependencies":{"@pnpm.e2e/pkg-with-bundle-dependencies":"1.0.0","@pnpm.e2e/pkg-with-bundled-dependencies":"1.0.0","@pnpm.e2e/pkg-with-bundle-dependencies-true":"1.0.0"}}
+    {"id":"bins: bundled dependencies","dependencies":{"@pnpm.e2e/pkg-with-bundle-dependencies":"1.0.0","@pnpm.e2e/pkg-with-bundled-dependencies":"1.0.0","@pnpm.e2e/pkg-with-bundle-dependencies-true":"1.0.0"}},
+    {"id":"packageExtensions: a dependency added","dependencies":{"is-positive":"1.0.0"},"packageExtensions":{"is-positive":{"dependencies":{"@pnpm.e2e/bar":"100.1.0"}}}},
+    {"id":"packageExtensions: two dependencies added","dependencies":{"is-positive":"1.0.0"},"packageExtensions":{"is-positive":{"dependencies":{"@pnpm.e2e/bar":"100.1.0","@pnpm.e2e/foobar":"100.0.0"}}}},
+    {"id":"packageExtensions: a peer added to two packages","dependencies":{"is-even":"*","is-odd":"*"},"packageExtensions":{"is-odd":{"peerDependencies":{"is-number":"*"}},"is-even":{"peerDependencies":{"is-number":"*"}}}},
+    {"id":"packageExtensions: the project extended","dependencies":{"is-positive":"1.0.0"},"packageExtensions":{"scenario@*":{"dependencies":{"@pnpm.e2e/foo":"1.0.0"}}}},
+    {"id":"packageExtensions: a peer made optional","dependencies":{"@pnpm.e2e/has-foo100-peer":"latest"},"packageExtensions":{"@pnpm.e2e/has-foo100-peer":{"peerDependenciesMeta":{"@pnpm.e2e/foo":{"optional":true}}}}}
   ]
 }

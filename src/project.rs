@@ -13,6 +13,16 @@ use crate::{glob, semver, spec};
 
 pub const GROUPS: [&str; 3] = ["dependencies", "devDependencies", "optionalDependencies"];
 
+/// The project's `packageExtensions` as the files that hold them have them: what tells whether
+/// another manager's lockfile was resolved under them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Extended {
+    /// pnpm's `packageExtensionsChecksum` of the ones pnpm reads (`extensions::pnpm_checksum`).
+    pub pnpm: Option<String>,
+    /// `.yarnrc.yml` gives some, which no lockfile jpm brings over records.
+    pub yarn: bool,
+}
+
 /// A package.json as the resolver reads it, with the parsed document kept for edits and scripts.
 #[derive(Debug, Clone, Default)]
 pub struct RootManifest {
@@ -28,6 +38,11 @@ pub struct RootManifest {
     pub overrides: Vec<crate::rules::Override>,
     /// The root's patches, each file read for its hash (`rules::Rules::apply`).
     pub patches: Vec<crate::patch::Patch>,
+    /// The root's `packageExtensions`, in the order they apply (`rules::Rules::apply`); empty
+    /// for a workspace.
+    pub extensions: Vec<crate::extensions::Extension>,
+    /// Where they were written, as another manager's lockfile records them.
+    pub extended: Extended,
     /// `devEngines.runtime` and `engines.runtime` entries that only check the system's runtime
     /// (`onFail` other than `download` and `ignore`), as `(field, name, range)`.
     pub runtime_checks: Vec<(&'static str, String, String)>,
@@ -133,6 +148,8 @@ impl RootManifest {
             workspaces,
             overrides: Vec::new(),
             patches: Vec::new(),
+            extensions: Vec::new(),
+            extended: Extended::default(),
             runtime_checks,
             doc,
         })

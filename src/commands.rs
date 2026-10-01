@@ -205,6 +205,7 @@ impl Ctx {
         let mut rules = rules::read(&dir, &manifest)?;
         for w in &mut workspaces {
             rules.workspace_patches(&w.path, &mut w.manifest);
+            crate::extensions::extend_top(&rules.extensions, &mut w.manifest);
         }
         rules.apply(&mut manifest)?;
         manifest.install_own_peers();
@@ -1204,14 +1205,21 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         if sourced.is_empty() {
             continue;
         }
-        // A source one of the project's overrides names is the project's own choice.
+        // A source one of the project's overrides or extensions names is the project's own choice.
+        let real = p.alias.as_deref().unwrap_or(&p.name);
+        let named = |name: &str, v: &str, version: &str| {
+            spec::parse_dep(name, v).is_ok_and(|s| spec::names_source(&s, "", version))
+        };
         let overridden = |name: &str, version: &str| {
-            res.root.overrides.iter().any(|o| {
-                o.name == name
-                    && o.value
-                        .as_deref()
-                        .is_some_and(|v| spec::parse_dep(name, v).is_ok_and(|s| spec::names_source(&s, "", version)))
-            })
+            res.root
+                .overrides
+                .iter()
+                .any(|o| o.name == name && o.value.as_deref().is_some_and(|v| named(name, v, version)))
+                || res.root.extensions.iter().filter(|e| e.matches(real, Some(&p.version))).any(|e| {
+                    [&e.dependencies, &e.optional_dependencies]
+                        .iter()
+                        .any(|m| m.get(name).is_some_and(|v| named(name, v, version)))
+                })
         };
         if block && let Some((name, version)) = sourced.iter().find(|(n, v)| !overridden(n, v)) {
             return Err(resolve::exotic(id, &format!("{name}@{version}")));
@@ -1220,10 +1228,19 @@ fn check_sourced(store: &Store, registry: &Registry, dir: &Path, res: &Resolutio
         store.ensure(&tarball_of(dir, &p.resolved, p.source.as_deref()), &p.integrity)?;
         let file = p.within().map_or_else(|| "package.json".into(), |(_, at)| format!("{at}/package.json"));
         let text = std::fs::read_to_string(store.file(&p.integrity, &file)?).unwrap_or_default();
-        let shipped = Manifest::from_json(&text).ok();
+        // As the walk read it: the project's extensions applied.
+        let extend = |m: Manifest| {
+            let name = if p.source.is_some() && !m.name.is_empty() { m.name.as_str() } else { real };
+            crate::extensions::extend(&res.root.extensions, name, &m).unwrap_or(m)
+        };
+        let shipped = Manifest::from_json(&text).ok().map(extend);
         let listed = || {
             let name = shipped.as_ref().map_or(p.name.as_str(), |m| m.name.as_str());
-            if p.source.is_some() { None } else { registry.manifest(name, &p.version).ok() }
+            if p.source.is_some() {
+                None
+            } else {
+                registry.manifest(name, &p.version).ok().map(|m| extend((*m).clone()))
+            }
         };
         let names = |m: &Manifest, name: &str, version: &str| {
             let ranges = [&m.dependencies, &m.optional_dependencies, &m.peer_dependencies];
@@ -1482,8 +1499,11 @@ fn resolve_lock(
     }
     let workspaces: Vec<(String, RootManifest)> =
         project.workspaces.iter().map(|w| (w.path.clone(), w.manifest.clone())).collect();
-    // Locked subtrees were resolved under the old overrides: walked afresh, locked versions preferred.
-    let overridden = existing.as_ref().is_some_and(|l| l.root.overrides != project.manifest.overrides);
+    // Locked subtrees were resolved under the old overrides or extensions: walked afresh, locked
+    // versions preferred.
+    let overridden = existing.as_ref().is_some_and(|l| {
+        l.root.overrides != project.manifest.overrides || l.root.extensions != project.manifest.extensions
+    });
     let dirs = find_dirs(project)?;
     let options = |locked| resolve::Options {
         registry,
@@ -1584,7 +1604,10 @@ fn find_dirs(project: &Project) -> Result<Vec<resolve::Dir>> {
             }
             let file = project.dir.join(&path).join("package.json");
             let manifest = match project::read_manifest(&file) {
-                Ok(m) => Some(m),
+                Ok(mut m) => {
+                    crate::extensions::extend_top(&project.manifest.extensions, &mut m);
+                    Some(m)
+                }
                 Err(e) if top => return Err(e.context(format!("{name}@{range}"))),
                 Err(_) => None,
             };

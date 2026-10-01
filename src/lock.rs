@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::bin;
 use crate::error::{Error, Result};
+use crate::extensions::Extension;
 use crate::graph::{
     Deps, Package, PeerKind, Peers, Resolution, Root, Specs, WITHIN, same_specs, split_key, split_peers, split_within,
 };
@@ -77,6 +78,8 @@ pub struct LockRoot {
     pub workspaces: Option<Vec<String>>,
     /// The overrides the tree was resolved under, resolved and in the order they apply.
     pub overrides: Vec<Override>,
+    /// The packageExtensions the tree was resolved under, in the order they apply.
+    pub extensions: Vec<Extension>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -187,6 +190,10 @@ impl Lockfile {
                 |o: &Override| Value::from(vec![o.by.as_str().to_string(), o.selector(), o.value_text().to_string()]);
             root.insert("overrides", Value::Array(self.root.overrides.iter().map(rule).collect()));
         }
+        if !self.root.extensions.is_empty() {
+            let ext = |e: &Extension| (e.selector(), e.to_value());
+            root.insert("packageExtensions", Value::Object(self.root.extensions.iter().map(ext).collect()));
+        }
         let mut o = Object::new();
         // The JSON view is upm's format, whatever format the lockfile was read from.
         o.insert("lockfileVersion", u64::from(VERSION).into());
@@ -214,6 +221,7 @@ fn root_of(root: &Root) -> LockRoot {
         dependencies: root.dependencies.clone(),
         workspaces: root.workspaces.clone().filter(|w| !w.is_empty()),
         overrides: root.overrides.clone(),
+        extensions: root.extensions.clone(),
     }
 }
 
@@ -388,6 +396,7 @@ pub fn into_resolution(lock: Lockfile, base_for: &dyn Fn(&str) -> String) -> Res
         dependencies: lock.root.dependencies,
         workspaces: lock.root.workspaces,
         overrides: lock.root.overrides,
+        extensions: lock.root.extensions,
     };
     Resolution { root, packages, warnings: Vec::new() }
 }
@@ -546,6 +555,12 @@ fn text_body(lock: &Lockfile) -> String {
     }
     for o in &lock.root.overrides {
         line(&mut out, true, "override", &[o.by.as_str(), &o.selector(), o.value_text()]);
+    }
+    for e in &lock.root.extensions {
+        let selector = e.selector();
+        for (field, name, value) in e.entries() {
+            line(&mut out, true, "extension", &[&selector, field, name, value]);
+        }
     }
     text_specs(&mut out, lock.root.specs.as_ref());
     for (n, v) in &lock.root.dependencies {
@@ -714,6 +729,16 @@ fn parse_text(text: &str) -> Result<Lockfile> {
                     "override" => {
                         let o = Override::parse(&arg(1)?, &arg(2)?, &arg(3)?);
                         r.overrides.push(o.ok_or_else(|| bad(n, "override is not manager, selector and value"))?);
+                    }
+                    // One entry of an extension; the entries of one are written together.
+                    "extension" => {
+                        let selector = arg(1)?;
+                        let what = || bad(n, "extension is not selector, field, name and value");
+                        if r.extensions.last().is_none_or(|e| e.selector() != selector) {
+                            r.extensions.push(Extension::parse_selector(&selector).ok_or_else(what)?);
+                        }
+                        let e = r.extensions.last_mut().ok_or_else(what)?;
+                        e.add_entry(&arg(2)?, &arg(3)?, &arg(4)?).ok_or_else(what)?;
                     }
                     "spec" => add_spec(&mut r.specs, &arg(1)?, arg(2)?, arg(3)?).map_err(|e| bad(n, &e))?,
                     "dep" => {
@@ -920,7 +945,10 @@ pub fn same_tree(lock: &Lockfile, manifest: &RootManifest, workspaces: &[Workspa
     if patterns != lock.root.workspaces.clone().unwrap_or_default() {
         return false;
     }
-    if !same_specs(manifest.specs().as_ref(), lock.root.specs.as_ref()) || manifest.overrides != lock.root.overrides {
+    if !same_specs(manifest.specs().as_ref(), lock.root.specs.as_ref())
+        || manifest.overrides != lock.root.overrides
+        || manifest.extensions != lock.root.extensions
+    {
         return false;
     }
     // The root listed as a workspace, there while something links to it: its specs say that.

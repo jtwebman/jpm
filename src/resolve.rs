@@ -7,6 +7,7 @@
 //! walk, round by round until nothing new is fetched.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
@@ -139,6 +140,12 @@ struct Walk<'a> {
     runtimes: Memo<Package>,
     /// The tops' own registry edges, overrides applied, by the package they fetch.
     direct: HashMap<String, Vec<Spec>>,
+    /// The project's packageExtensions (the root's).
+    exts: Vec<crate::extensions::Extension>,
+    /// Each of them: 1 once it matches a package, 2 once it changes one.
+    extended: Vec<AtomicU8>,
+    /// A locked package was taken whole, its manifest unread.
+    replayed: AtomicBool,
 }
 
 /// Values computed once however many threads ask.
@@ -250,6 +257,9 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
         libcs: Mutex::default(),
         runtimes: Mutex::default(),
         direct,
+        exts: manifest.extensions.clone(),
+        extended: manifest.extensions.iter().map(|_| AtomicU8::new(0)).collect(),
+        replayed: AtomicBool::new(false),
     };
     let res = walk.run()?;
     // Peers only linked to what the tree has, as yarn 1 and npm's legacy mode link them, are
@@ -278,7 +288,33 @@ impl Walk<'_> {
         self.settle_peers()?;
         self.prune()?;
         self.wire_soft_peers();
+        self.unneeded_extensions();
         Ok(self.finish())
+    }
+
+    /// yarn's warnings on an extension that matched no package (YN0068), or that only matched
+    /// packages declaring all it adds already (YN0069). Only when the walk read every package's
+    /// manifest: a locked package taken whole was not.
+    fn unneeded_extensions(&self) {
+        let exts = &self.exts;
+        if exts.is_empty() || self.replayed.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut s = lock(&self.state);
+        for (ext, mark) in exts.iter().zip(&self.extended) {
+            // A top extended is one it changes: what it added is in its specs now.
+            let top = self.tops.values().any(|t| {
+                let m = &t.manifest;
+                m.name.as_deref().is_some_and(|n| ext.matches(n, m.version.as_deref().filter(|v| !v.is_empty())))
+            });
+            let why = match mark.load(Ordering::Relaxed) {
+                _ if top => continue,
+                0 => "no package in the tree matches it",
+                1 => "every package it matches declares what it adds already",
+                _ => continue,
+            };
+            s.warnings.insert(format!("packageExtensions {}: {why}; it may not be needed any more", ext.selector()));
+        }
     }
 
     fn drain(&self, jobs: Vec<Job>) -> Result<()> {
@@ -343,11 +379,13 @@ impl Walk<'_> {
                 format!("only the root and workspaces link to workspaces, so not {from}"),
             ));
         }
-        // A git or tarball source the project's overrides chose is not the package's own.
+        // A git or tarball source the project's overrides or extensions chose is not the
+        // package's own.
         if matches!(spec.kind, Kind::Git | Kind::Tarball)
             && self.opts.block_exotic
             && !self.tops.contains_key(from)
             && over.is_none()
+            && !self.extended(from, name, range)
         {
             return Err(exotic(from, &spec.raw));
         }
@@ -449,6 +487,18 @@ impl Walk<'_> {
 
     fn overrides(&self) -> &[Override] {
         &self.tops[ROOT].manifest.overrides
+    }
+
+    /// Whether one of the project's extensions gives the package `from` its edge `name@range`.
+    fn extended(&self, from: &str, name: &str, range: &str) -> bool {
+        let exts = &self.exts;
+        if exts.is_empty() {
+            return false;
+        }
+        let s = lock(&self.state);
+        let Some(p) = s.records.get(from) else { return false };
+        let real = p.alias.as_deref().unwrap_or(&p.name);
+        crate::extensions::gives(exts, real, &p.version, name, range)
     }
 
     /// What the root's overrides make of an edge: `None` leaves it, `Some(None)` takes it out.
@@ -817,6 +867,19 @@ impl Walk<'_> {
         alias: Option<&str>,
         queue: &Queue<Job>,
     ) -> Result<bool> {
+        // The project's packageExtensions, applied before anything reads the manifest: the
+        // package that was fetched is matched, an alias's or not.
+        let extended = match self.exts.as_slice() {
+            [] => None,
+            exts => {
+                let real = if source.is_none() || m.name.is_empty() { alias.unwrap_or(name) } else { &m.name };
+                let seen = |i: usize, changed: bool| {
+                    self.extended[i].fetch_max(if changed { 2 } else { 1 }, Ordering::Relaxed);
+                };
+                crate::extensions::extend_with(exts, real, m, &seen)
+            }
+        };
+        let m = extended.as_ref().unwrap_or(m);
         let mut found = record(name, m, source);
         found.alias = alias.map(str::to_string);
         let key = found.key();
@@ -893,6 +956,9 @@ impl Walk<'_> {
             let Some(pkg) = locked.packages.get(&key) else { continue };
             if !s.started.insert(key.clone()) {
                 continue;
+            }
+            if pkg.local.is_none() {
+                self.replayed.store(true, Ordering::Relaxed);
             }
             let peers = pkg.peers.clone().unwrap_or_default();
             let mut found = pkg.clone();
@@ -1399,6 +1465,7 @@ impl Walk<'_> {
                 dependencies,
                 workspaces: root_manifest.workspaces.clone(),
                 overrides: root_manifest.overrides.clone(),
+                extensions: root_manifest.extensions.clone(),
             },
             packages,
             warnings: s.warnings.iter().cloned().collect(),

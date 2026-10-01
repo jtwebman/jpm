@@ -155,7 +155,7 @@ jpm is secure by default:
 More: [install](docs/install.md), [usage](docs/usage.md),
 [migrating](docs/migrating.md), [configuration](docs/configuration.md),
 [install scripts](docs/install-scripts.md), [the lockfile](docs/lockfile.md),
-[overrides](docs/overrides.md), [patches](docs/patches.md),
+[overrides and package extensions](docs/overrides.md), [patches](docs/patches.md),
 [directory](docs/directory-dependencies.md) and [git](docs/git-dependencies.md) dependencies,
 [runtimes](docs/runtimes.md), [how it works](docs/how-it-works.md),
 [development](docs/development.md).

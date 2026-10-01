@@ -29,6 +29,9 @@ pub struct Manifest {
     pub peer_dependencies: Map,
     /// Peers `peerDependenciesMeta` marks optional.
     pub peer_optional: Vec<String>,
+    /// Every name `peerDependenciesMeta` has an entry for, optional or not: an extension's entry
+    /// for one of them changes nothing (`extensions::extend`).
+    pub peer_meta: Vec<String>,
     pub bin: Option<Value>,
     pub engines: Map,
     pub os: Option<Vec<String>>,
@@ -86,13 +89,11 @@ impl Manifest {
                 "engines" => m.engines = string_map(s)?,
                 "peerDependenciesMeta" => {
                     let meta = s.value()?;
-                    m.peer_optional = meta
-                        .as_object()
-                        .map(|o| {
-                            let optional = |v: &Value| v.get("optional").and_then(Value::as_bool) == Some(true);
-                            o.iter().filter(|(_, v)| optional(v)).map(|(k, _)| k.clone()).collect()
-                        })
-                        .unwrap_or_default();
+                    if let Some(o) = meta.as_object() {
+                        let optional = |v: &Value| v.get("optional").and_then(Value::as_bool) == Some(true);
+                        m.peer_optional = o.iter().filter(|(_, v)| optional(v)).map(|(k, _)| k.clone()).collect();
+                        m.peer_meta = o.iter().map(|(k, _)| k.clone()).collect();
+                    }
                 }
                 "bin" => m.bin = Some(s.value()?),
                 "bundleDependencies" | "bundledDependencies" => bundle = s.value()?,
