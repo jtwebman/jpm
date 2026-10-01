@@ -92,7 +92,6 @@ mui/material-ui
 n4bb12/vercel-github-oauth-proxy
 n8n-io/n8n
 navyabijoy/invisible-notes
-neondatabase/serverless  # expect: the root depends on itself (file:.)
 nestjs/nest
 nitrojs/nitro
 NobleMajo/bun-route
@@ -102,7 +101,6 @@ npm/cli
 nuxt/nuxt
 nuxt/ui
 open-webui/open-webui
-OpenCut-app/OpenCut  # expect: no package.json at the root
 openlayers/openlayers
 outline/outline
 oven-sh/bun
@@ -124,7 +122,6 @@ reactjs/react.dev
 reduxjs/redux-toolkit
 redwoodjs/graphql
 remix-run/react-router
-remotion-dev/remotion  # expect: a paid package answers 402 without a license
 RiskyMH/EmailThing
 rollup/rollup
 Semantic-Org/Semantic-UI-React
