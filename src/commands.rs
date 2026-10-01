@@ -797,15 +797,16 @@ fn short_keys(keys: HashMap<String, String>, res: &Resolution, built: &HashSet<S
             .or_insert(name);
     }
     // A name is taken once by the key it names; a second holder, or a key spelled like it, and
-    // it names neither.
-    let mut holders: HashMap<String, usize> = keys.values().map(|k| (k.clone(), 1)).collect();
+    // it names neither. Without case: where the disk folds it, `JSONStream@1.0.0` and
+    // `jsonstream@1.0.0` would be one directory.
+    let mut holders: HashMap<String, usize> = keys.values().map(|k| (k.to_lowercase(), 1)).collect();
     for name in named.values().flatten() {
-        *holders.entry(name.clone()).or_default() += 1;
+        *holders.entry(name.to_lowercase()).or_default() += 1;
     }
     let renamed: HashMap<String, String> = named
         .into_iter()
         .filter_map(|(key, name)| Some((key.to_string(), name?)))
-        .filter(|(_, name)| holders.get(name) == Some(&1))
+        .filter(|(_, name)| holders.get(&name.to_lowercase()) == Some(&1))
         .collect();
     keys.into_iter().map(|(id, key)| (id, renamed.get(&key).cloned().unwrap_or(key))).collect()
 }
