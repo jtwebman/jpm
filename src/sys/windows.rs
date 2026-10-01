@@ -121,7 +121,12 @@ struct BasicInfo {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetFileInformationByHandle(file: *mut std::ffi::c_void, info: *mut ByHandleInfo) -> i32;
-    fn GetFileInformationByHandleEx(file: *mut std::ffi::c_void, class: i32, info: *mut BasicInfo, size: u32) -> i32;
+    fn GetFileInformationByHandleEx(
+        file: *mut std::ffi::c_void,
+        class: i32,
+        info: *mut std::ffi::c_void,
+        size: u32,
+    ) -> i32;
 }
 
 /// What `stat` gives unix and std does not give Windows: the change time (moved by any write,
@@ -141,7 +146,12 @@ pub fn file_info(path: &Path) -> Option<FileInfo> {
     // SAFETY: the handle is live for both calls and each writes only the struct it is given.
     let ok = unsafe {
         GetFileInformationByHandle(file.as_raw_handle(), &mut by) != 0
-            && GetFileInformationByHandleEx(file.as_raw_handle(), 0, &mut basic, size_of::<BasicInfo>() as u32) != 0
+            && GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                0,
+                (&raw mut basic).cast(),
+                size_of::<BasicInfo>() as u32,
+            ) != 0
     };
     ok.then(|| FileInfo {
         changed: basic.changed,
@@ -245,34 +255,258 @@ pub fn on_interrupt(undo: Option<&'static str>) {
     unsafe { SetConsoleCtrlHandler(Some(undo_then_exit), i32::from(undo.is_some())) };
 }
 
-/// A directory that what is made, created or linked is named relative to (see the unix `Dir`,
-/// which holds it open). Here each call joins the path whole: Windows has no `*at` calls.
+/// `UNICODE_STRING`.
+#[repr(C)]
+struct NtName {
+    len: u16,
+    max: u16,
+    buf: *const u16,
+}
+
+/// `OBJECT_ATTRIBUTES`.
+#[repr(C)]
+struct ObjectAttributes {
+    len: u32,
+    root: *mut std::ffi::c_void,
+    name: *const NtName,
+    attributes: u32,
+    security: *mut std::ffi::c_void,
+    qos: *mut std::ffi::c_void,
+}
+
+/// `IO_STATUS_BLOCK`.
+#[repr(C)]
+struct IoStatus {
+    status: usize,
+    info: usize,
+}
+
+/// `FILE_LINK_INFORMATION` up to its name, which follows `name_len`.
+#[repr(C)]
+struct LinkInfo {
+    replace: u8,
+    root: *mut std::ffi::c_void,
+    name_len: u32,
+}
+
+/// `FILE_ID_INFO`: the volume and the file's 128-bit id, which name a file on any file system.
+#[repr(C)]
+#[derive(Default, PartialEq, Eq)]
+struct IdInfo {
+    volume: u64,
+    id: [u8; 16],
+}
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtCreateFile(
+        handle: *mut *mut std::ffi::c_void,
+        access: u32,
+        attributes: *const ObjectAttributes,
+        status: *mut IoStatus,
+        size: *const i64,
+        file_attributes: u32,
+        share: u32,
+        disposition: u32,
+        options: u32,
+        ea: *const std::ffi::c_void,
+        ea_len: u32,
+    ) -> i32;
+    fn NtSetInformationFile(
+        handle: *mut std::ffi::c_void,
+        status: *mut IoStatus,
+        info: *const std::ffi::c_void,
+        len: u32,
+        class: u32,
+    ) -> i32;
+    fn RtlNtStatusToDosError(status: i32) -> u32;
+}
+
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const FILE_LIST_DIRECTORY: u32 = 0x1;
+const FILE_ADD_FILE: u32 = 0x2;
+const FILE_ADD_SUBDIRECTORY: u32 = 0x4;
+const FILE_TRAVERSE: u32 = 0x20;
+const FILE_READ_ATTRIBUTES: u32 = 0x80;
+const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
+const SHARE_ALL: u32 = 0x7;
+const FILE_OPEN: u32 = 1;
+const FILE_CREATE: u32 = 2;
+const FILE_OVERWRITE_IF: u32 = 5;
+const FILE_DIRECTORY_FILE: u32 = 0x1;
+const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
+const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
+const FILE_OPEN_BY_FILE_ID: u32 = 0x2000;
+const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+const FILE_LINK_INFORMATION: u32 = 11;
+const FILE_ID_INFO: i32 = 18;
+
+/// The access a `Dir` holds its directory with: enough to make, create and link in it.
+const DIR_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE | SYNCHRONIZE;
+/// Enough to open and link what is in it.
+const DIR_READ: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | SYNCHRONIZE;
+
+/// An NTSTATUS as the Win32 error the same call through kernel32 would set, so `ErrorKind`s match.
+fn nt_error(status: i32) -> io::Error {
+    // SAFETY: a pure mapping from one code to another.
+    io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32)
+}
+
+/// `rel` under `root`, as `NtCreateFile` takes a name relative to a directory handle: `\`
+/// between parts, never leaving it. Not case-sensitive, as Win32 opens are.
+fn nt_open(
+    root: &std::os::windows::io::OwnedHandle,
+    rel: &[u16],
+    access: u32,
+    disposition: u32,
+    options: u32,
+) -> io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    let bytes = u16::try_from(rel.len() * 2).map_err(|_| io::Error::from(io::ErrorKind::InvalidFilename))?;
+    let name = NtName { len: bytes, max: bytes, buf: rel.as_ptr() };
+    let attributes = ObjectAttributes {
+        len: size_of::<ObjectAttributes>() as u32,
+        root: root.as_raw_handle(),
+        name: &name,
+        attributes: OBJ_CASE_INSENSITIVE,
+        security: std::ptr::null_mut(),
+        qos: std::ptr::null_mut(),
+    };
+    let (mut handle, mut status) = (std::ptr::null_mut(), IoStatus { status: 0, info: 0 });
+    // SAFETY: every pointer is to a live local; on success the handle is new and ours alone.
+    let st = unsafe {
+        NtCreateFile(
+            &mut handle,
+            access,
+            &attributes,
+            &mut status,
+            std::ptr::null(),
+            FILE_ATTRIBUTE_NORMAL,
+            SHARE_ALL,
+            disposition,
+            options | FILE_SYNCHRONOUS_IO_NONALERT,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if st < 0 {
+        return Err(nt_error(st));
+    }
+    // SAFETY: `NtCreateFile` succeeded, so `handle` is an open handle nothing else owns.
+    Ok(unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) })
+}
+
+/// A relative path in NT's form; an absolute one, a drive or a stream would leave the directory.
+fn nt_rel(rel: &str) -> io::Result<Vec<u16>> {
+    if rel.is_empty() || rel.starts_with(['/', '\\']) || rel.contains(':') {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{rel} is not a relative path")));
+    }
+    Ok(rel.encode_utf16().map(|c| if c == u16::from(b'/') { u16::from(b'\\') } else { c }).collect())
+}
+
+fn id_of(handle: &std::os::windows::io::OwnedHandle) -> Option<IdInfo> {
+    use std::os::windows::io::AsRawHandle;
+    let mut info = IdInfo::default();
+    // SAFETY: a live handle, and a buffer the size the call is told.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle.as_raw_handle(),
+            FILE_ID_INFO,
+            (&raw mut info).cast(),
+            size_of::<IdInfo>() as u32,
+        )
+    };
+    (ok != 0).then_some(info)
+}
+
+/// The directory `path` names, open, by its file id where the file system allows: what is named
+/// relative to a handle opened by path is checked by the file system filters (Windows Defender
+/// among them) from the whole path, one parent directory read at a time for every link, where
+/// one opened by id has its name from the file system. A link took half the CPU. The id is
+/// checked against the directory's own: a 64-bit index can name another file on ReFS.
+fn open_dir(path: &Path) -> io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000; // directories open too
+    let open = |access| {
+        std::fs::OpenOptions::new().access_mode(access).share_mode(SHARE_ALL).custom_flags(BACKUP_SEMANTICS).open(path)
+    };
+    // One that may only be read (a store on a read-only share) is still one to link out of.
+    let (by_path, access) = match open(DIR_ACCESS) {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => (open(DIR_READ)?, DIR_READ),
+        other => (other?, DIR_ACCESS),
+    };
+    let by_path = std::os::windows::io::OwnedHandle::from(by_path);
+    let mut by = ByHandleInfo::default();
+    // SAFETY: a live handle, and the struct the call fills.
+    let indexed =
+        unsafe { GetFileInformationByHandle(std::os::windows::io::AsRawHandle::as_raw_handle(&by_path), &mut by) } != 0;
+    let (Some(id), true) = (id_of(&by_path), indexed) else { return Ok(by_path) };
+    let index = (u64::from(by.index_high) << 32) | u64::from(by.index_low);
+    let index: Vec<u16> = index.to_ne_bytes().chunks(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect();
+    match nt_open(&by_path, &index, access, FILE_OPEN, FILE_DIRECTORY_FILE | FILE_OPEN_BY_FILE_ID) {
+        Ok(by_id) if id_of(&by_id).is_some_and(|other| other == id) => Ok(by_id),
+        _ => Ok(by_path),
+    }
+}
+
+/// A directory that what is made, created or linked is named relative to, held open, as the unix
+/// `Dir` holds its fd: each call names only the path under it (see `open_dir`).
 pub struct Dir {
-    path: PathBuf,
+    handle: std::os::windows::io::OwnedHandle,
 }
 
 impl Dir {
     pub fn open(path: &Path) -> io::Result<Self> {
-        if !path.is_dir() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, format!("{} is not a directory", path.display())));
-        }
-        Ok(Self { path: path.to_path_buf() })
+        let handle = open_dir(path)?;
+        Ok(Self { handle })
     }
 
+    /// The directory `rel`, whose parent is there.
     pub fn mkdir(&self, rel: &str) -> io::Result<()> {
-        std::fs::create_dir(self.path.join(rel))
+        let access = FILE_LIST_DIRECTORY | SYNCHRONIZE;
+        nt_open(&self.handle, &nt_rel(rel)?, access, FILE_CREATE, FILE_DIRECTORY_FILE).map(drop)
     }
 
+    /// `rel` as a hard link to `from`'s file `from_rel`, as `CreateHardLinkW` makes one: the file
+    /// opened as itself (a reparse point too), its new name given relative to this directory.
     pub fn link(&self, from: &Dir, from_rel: &str, rel: &str) -> io::Result<()> {
-        std::fs::hard_link(from.path.join(from_rel), self.path.join(rel))
+        use std::os::windows::io::AsRawHandle;
+        let access = FILE_WRITE_ATTRIBUTES | SYNCHRONIZE;
+        let options = FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT;
+        let file = nt_open(&from.handle, &nt_rel(from_rel)?, access, FILE_OPEN, options)?;
+        let name = nt_rel(rel)?;
+        let at = std::mem::offset_of!(LinkInfo, name_len) + size_of::<u32>();
+        let mut info = vec![0u8; (at + name.len() * 2).max(size_of::<LinkInfo>())];
+        let head = LinkInfo { replace: 0, root: self.handle.as_raw_handle(), name_len: (name.len() * 2) as u32 };
+        // SAFETY: `info` is at least a `LinkInfo` long, written unaligned; the name follows its
+        // length field, as `FILE_LINK_INFORMATION` lays it out.
+        unsafe { std::ptr::write_unaligned(info.as_mut_ptr().cast::<LinkInfo>(), head) };
+        for (i, c) in name.iter().enumerate() {
+            info[at + i * 2..at + i * 2 + 2].copy_from_slice(&c.to_ne_bytes());
+        }
+        let mut status = IoStatus { status: 0, info: 0 };
+        let len = u32::try_from(info.len()).map_err(|_| io::Error::from(io::ErrorKind::InvalidFilename))?;
+        // SAFETY: a live handle, and a buffer of the length given that the call only reads.
+        let st = unsafe {
+            NtSetInformationFile(file.as_raw_handle(), &mut status, info.as_ptr().cast(), len, FILE_LINK_INFORMATION)
+        };
+        if st < 0 { Err(nt_error(st)) } else { Ok(()) }
     }
 
+    /// The file `rel`, created (or emptied) for writing. The mode is unix's alone.
     pub fn create(&self, rel: &str, _mode: u32) -> io::Result<std::fs::File> {
-        std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(self.path.join(rel))
+        let file =
+            nt_open(&self.handle, &nt_rel(rel)?, FILE_GENERIC_WRITE, FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE)?;
+        Ok(std::fs::File::from(file))
     }
 
+    /// Whether `rel` is a directory, through a link as `Path::is_dir` goes.
     pub fn is_dir(&self, rel: &str) -> bool {
-        self.path.join(rel).is_dir()
+        let access = FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+        nt_rel(rel).is_ok_and(|rel| nt_open(&self.handle, &rel, access, FILE_OPEN, FILE_DIRECTORY_FILE).is_ok())
     }
 }
 
@@ -307,5 +541,44 @@ mod tests {
         std::fs::write(dir.join("c"), "x").unwrap();
         assert_ne!(file_info(&dir.join("c")).unwrap().index, a.index);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn makes_creates_and_links_relative_to_a_held_directory() {
+        use std::io::Write;
+        assert_eq!(size_of::<IdInfo>(), 24);
+        assert_eq!(
+            std::mem::offset_of!(LinkInfo, name_len) + 4,
+            if cfg!(target_pointer_width = "64") { 20 } else { 12 }
+        );
+        let root = std::env::temp_dir().join(format!("jpm-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("from")).unwrap();
+        std::fs::create_dir_all(root.join("to")).unwrap();
+        let (from, to) = (Dir::open(&root.join("from")).unwrap(), Dir::open(&root.join("to")).unwrap());
+        // Made and created by the path under the directory, `/` between its parts.
+        from.mkdir("lib").unwrap();
+        assert_eq!(from.mkdir("lib").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert!(from.is_dir("lib") && !from.is_dir("lib/x.js") && !from.is_dir("none"));
+        from.create("lib/x.js", 0o444).unwrap().write_all(b"x").unwrap();
+        // Emptied when created again, as `File::create` does.
+        from.create("lib/x.js", 0o444).unwrap().write_all(b"y").unwrap();
+        assert_eq!(std::fs::read(root.join("from/lib/x.js")).unwrap(), b"y");
+        // Linked under another name in another directory: one file.
+        to.mkdir("dist").unwrap();
+        to.link(&from, "lib/x.js", "dist/x.js").unwrap();
+        assert_eq!(file_info(&root.join("to/dist/x.js")).unwrap().links, 2);
+        assert_eq!(std::fs::read(root.join("to/dist/x.js")).unwrap(), b"y");
+        assert_eq!(to.link(&from, "lib/x.js", "dist/x.js").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(to.link(&from, "lib/none.js", "dist/none.js").unwrap_err().kind(), io::ErrorKind::NotFound);
+        // Names are compared without case, as NTFS compares them through Win32.
+        assert!(to.is_dir("DIST"));
+        // Nothing outside the directory is named through it.
+        for bad in ["", "/abs", "\\abs", "C:x", "C:\\x", "a:stream", "../x"] {
+            assert!(to.create(bad, 0o644).is_err(), "{bad:?}");
+        }
+        assert!(!root.join("x").exists());
+        assert!(Dir::open(&root.join("none")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
