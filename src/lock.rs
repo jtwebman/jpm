@@ -2002,7 +2002,7 @@ mod bench {
                 false,
                 std::path::Path::new("/s"),
                 "salt",
-                true,
+                "global",
                 &platform,
                 &[],
             );

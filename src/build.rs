@@ -109,7 +109,7 @@ pub fn ships_install_scripts(p: &crate::graph::Package, dir: &Path, index: &crat
 pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>) -> Result<usize> {
     let entries = dir.join("node_modules").join(".jpm");
     let mut ran = 0;
-    'packages: for id in order(res, keys) {
+    for id in order(res, keys) {
         let (p, root) = (&res.packages[id], entries.join(&keys[id]));
         let marker = root.join(".built");
         // Not installed (an optional package the store lacked), or built already.
@@ -117,49 +117,75 @@ pub fn run_packages(dir: &Path, res: &Resolution, keys: &HashMap<String, String>
             continue;
         }
         let pkg_dir = root.join("node_modules").join(p.dir_name());
-        let file = pkg_dir.join("package.json");
-        let scripts = read_scripts(&file);
-        let mut events: Vec<(&str, String)> =
-            INSTALL.iter().filter_map(|e| scripts.get(*e).map(|line| (*e, line.clone()))).collect();
-        // npm's default for a native addon with no script of its own.
-        if !events.iter().any(|(e, _)| *e != "postinstall") && pkg_dir.join("binding.gyp").is_file() {
-            let at = events.iter().position(|(e, _)| *e == "postinstall").unwrap_or(events.len());
-            events.insert(at, ("install", "node-gyp rebuild".into()));
+        if run_scripts(dir, p, &pkg_dir, &root.join(".build.log"))? {
+            fresh(&marker).map_err(|e| Error::io(&e, format!("cannot write {}", marker.display())))?;
+            ui::info(&format!("built {}@{}", p.name, p.version));
+            ran += 1;
         }
-        // A git package's `prepare` builds what a registry tarball would ship built, so it runs
-        // first. Its devDependencies are not installed for it.
-        if let Some(line) = scripts.get("prepare").filter(|_| p.source.as_deref().is_some_and(spec::is_git)) {
-            events.insert(0, ("prepare", line.clone()));
-        }
-        for (event, line) in &events {
-            let mut command = run::shell(line, &pkg_dir, &run::bin_dirs(&pkg_dir), dir);
-            run::script_env(&mut command, &file, event, line, &p.name, &p.version);
-            without_credentials(&mut command);
-            // Output goes to a log beside the package: shown only when the script fails.
-            let log = root.join(".build.log");
-            let file = fresh(&log).map_err(|e| Error::io(&e, format!("cannot write {}", log.display())))?;
-            let err = file.try_clone().map_err(|e| Error::io(&e, "cannot share the build log"))?;
-            command.stdin(std::process::Stdio::null()).stdout(file).stderr(err);
-            let status = command.status().map_err(|e| Error::io(&e, "cannot start the shell"))?;
-            if status.success() {
-                continue;
-            }
-            let text = fs::read_to_string(&log).unwrap_or_default();
-            let cut = (text.len().saturating_sub(2000)..text.len()).find(|&i| text.is_char_boundary(i));
-            let tail = &text[cut.unwrap_or(text.len())..];
-            let why =
-                format!("{}@{} {event} failed ({status}); the end of {}:\n{tail}", p.name, p.version, log.display());
-            if p.optional {
-                ui::warn(&format!("skipped optional {why}"));
-                continue 'packages;
-            }
-            return Err(Error::new("EBUILD", why));
-        }
-        fresh(&marker).map_err(|e| Error::io(&e, format!("cannot write {}", marker.display())))?;
-        ui::info(&format!("built {}@{}", p.name, p.version));
-        ran += 1;
     }
     Ok(ran)
+}
+
+/// The hoisted layout's: each chosen package's scripts in each place it was put anew (`placed`),
+/// dependencies first, as npm runs them in every copy. The number of packages built.
+pub fn run_placed(dir: &Path, res: &Resolution, placed: &[(String, std::path::PathBuf)]) -> Result<usize> {
+    let ids: HashMap<String, String> = placed.iter().map(|(id, _)| (id.clone(), String::new())).collect();
+    let log = dir.join("node_modules").join(".jpm-build.log");
+    let mut ran = 0;
+    for id in order(res, &ids) {
+        let p = &res.packages[id];
+        let mut built = false;
+        for (_, at) in placed.iter().filter(|(i, _)| i == id) {
+            built |= run_scripts(dir, p, at, &log)?;
+        }
+        if built {
+            ui::info(&format!("built {}@{}", p.name, p.version));
+            ran += 1;
+        }
+    }
+    let _ = fs::remove_file(&log);
+    Ok(ran)
+}
+
+/// One package's install scripts in `pkg_dir`, their output to `log`, shown only when one
+/// fails. Whether they ran: an optional package's that fail are skipped with a warning.
+fn run_scripts(dir: &Path, p: &crate::graph::Package, pkg_dir: &Path, log: &Path) -> Result<bool> {
+    let file = pkg_dir.join("package.json");
+    let scripts = read_scripts(&file);
+    let mut events: Vec<(&str, String)> =
+        INSTALL.iter().filter_map(|e| scripts.get(*e).map(|line| (*e, line.clone()))).collect();
+    // npm's default for a native addon with no script of its own.
+    if !events.iter().any(|(e, _)| *e != "postinstall") && pkg_dir.join("binding.gyp").is_file() {
+        let at = events.iter().position(|(e, _)| *e == "postinstall").unwrap_or(events.len());
+        events.insert(at, ("install", "node-gyp rebuild".into()));
+    }
+    // A git package's `prepare` builds what a registry tarball would ship built, so it runs
+    // first. Its devDependencies are not installed for it.
+    if let Some(line) = scripts.get("prepare").filter(|_| p.source.as_deref().is_some_and(spec::is_git)) {
+        events.insert(0, ("prepare", line.clone()));
+    }
+    for (event, line) in &events {
+        let mut command = run::shell(line, pkg_dir, &run::bin_dirs(pkg_dir), dir);
+        run::script_env(&mut command, &file, event, line, &p.name, &p.version);
+        without_credentials(&mut command);
+        let out = fresh(log).map_err(|e| Error::io(&e, format!("cannot write {}", log.display())))?;
+        let err = out.try_clone().map_err(|e| Error::io(&e, "cannot share the build log"))?;
+        command.stdin(std::process::Stdio::null()).stdout(out).stderr(err);
+        let status = command.status().map_err(|e| Error::io(&e, "cannot start the shell"))?;
+        if status.success() {
+            continue;
+        }
+        let text = fs::read_to_string(log).unwrap_or_default();
+        let cut = (text.len().saturating_sub(2000)..text.len()).find(|&i| text.is_char_boundary(i));
+        let tail = &text[cut.unwrap_or(text.len())..];
+        let why = format!("{}@{} {event} failed ({status}); the end of {}:\n{tail}", p.name, p.version, log.display());
+        if p.optional {
+            ui::warn(&format!("skipped optional {why}"));
+            return Ok(false);
+        }
+        return Err(Error::new("EBUILD", why));
+    }
+    Ok(true)
 }
 
 /// A new empty file at `path`, never written through a link a checkout left there.

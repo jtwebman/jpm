@@ -60,6 +60,12 @@ pub struct State {
     /// Each workspace's links and bins, by the workspace's path, as `root` has the root's.
     pub workspaces: Vec<(String, RootLinks)>,
     pub stamps: Option<Stamps>,
+    /// Laid out by `node-linker=hoisted`: `placed` holds where each package went.
+    pub hoisted: bool,
+    /// Each package's place, a path from the project, and its id (see `link::hoisted`).
+    pub placed: BTreeMap<String, String>,
+    /// The places whose install scripts have run (hoisted).
+    pub built: Vec<String>,
 }
 
 fn stamp_value(s: &Stamp) -> Value {
@@ -133,6 +139,13 @@ impl State {
                 Value::Object(self.workspaces.iter().map(|(k, r)| (k.clone(), links_value(r))).collect()),
             );
         }
+        if self.hoisted {
+            o.insert("hoisted", true.into());
+            o.insert("placed", json::str_map(&self.placed));
+            if !self.built.is_empty() {
+                o.insert("built", Value::from(self.built.clone()));
+            }
+        }
         if let Some(s) = &self.stamps {
             let mut stamps = Object::new();
             stamps.insert("lock", stamp_value(&s.lock));
@@ -204,6 +217,15 @@ impl State {
             root,
             workspaces: by_path(o.get("workspaces"), links_of_value)?,
             stamps,
+            hoisted: o.get("hoisted").and_then(Value::as_bool).unwrap_or(false),
+            placed: match o.get("placed") {
+                None => BTreeMap::new(),
+                Some(v) => json::string_map(v)?,
+            },
+            built: match o.get("built") {
+                None => Vec::new(),
+                v => strings(v)?,
+            },
         })
     }
 }
@@ -263,22 +285,22 @@ pub fn stamp_of(file: &Path) -> Option<Stamp> {
 }
 
 /// The one value a warm install compares: the lockfile's content (which decides the graph, its
-/// bins and every store entry), and what this install links out of it, from which store. The
+/// bins and every store entry), and what this install links out of it, how (`layout`: `global`,
+/// `isolated` or `hoisted`) and from which store. The
 /// store's salt (`store::salt`) keeps a state written elsewhere from passing for this store's.
 pub fn state_hash(
     lock_hash: &str,
     production: bool,
     store: &Path,
     salt: &str,
-    global: bool,
+    layout: &str,
     platform: &crate::sys::Platform,
     public_hoist: &[String],
 ) -> String {
     short_hash(&format!(
-        "jpm-state-3\n{lock_hash}\nproduction:{}\nstore:{}\nsalt:{salt}\nglobal:{}\n{}\npublic:{}",
+        "jpm-state-4\n{lock_hash}\nproduction:{}\nstore:{}\nsalt:{salt}\nlayout:{layout}\n{}\npublic:{}",
         u8::from(production),
         store.display(),
-        u8::from(global),
         json::to_string(&platform.to_value()),
         public_hoist.join(",")
     ))
