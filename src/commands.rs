@@ -455,6 +455,47 @@ fn npm_project(dir: &Path, manifest: &RootManifest) -> bool {
     pm.starts_with("npm@") || dir.join("package-lock.json").exists() || dir.join("npm-shrinkwrap.json").exists()
 }
 
+/// Under the global store, a package that takes a peer gets the project's types for it beside
+/// it: tsc resolves a library's `import 'react'` from the library's own folder, and from the
+/// store the project's `@types/react` is out of reach, so react-router's `NavLink` had no props
+/// (`implicitly has an 'any' type`). In the project layout tsc walks up to the project's own.
+/// An entry's key comes from its edges, so one with the types is never shared with one without.
+fn types_beside_peers(mut res: Resolution) -> Resolution {
+    let mut types: HashMap<String, String> = HashMap::new();
+    let tops = std::iter::once(&res.root.dependencies).chain(
+        res.packages.values().filter(|p| p.local.is_some()).flat_map(|p| [&p.dependencies, &p.optional_dependencies]),
+    );
+    for deps in tops {
+        for (n, v) in deps.iter().filter(|(n, _)| n.starts_with("@types/")) {
+            types.entry(n.clone()).or_insert_with(|| v.clone());
+        }
+    }
+    if types.is_empty() {
+        return res;
+    }
+    let of = |peer: &str| match peer.strip_prefix('@').and_then(|p| p.split_once('/')) {
+        Some((scope, name)) => format!("@types/{scope}__{name}"),
+        None => format!("@types/{peer}"),
+    };
+    for p in res.packages.values_mut().filter(|p| p.local.is_none()) {
+        let Some(peers) = &p.peers else { continue };
+        let add: Vec<(String, String)> = peers
+            .keys()
+            .filter(|x| {
+                !x.starts_with("@types/")
+                    && (p.dependencies.contains_key(*x) || p.optional_dependencies.contains_key(*x))
+            })
+            .filter_map(|x| {
+                let t = of(x);
+                let have = p.dependencies.contains_key(&t) || p.optional_dependencies.contains_key(&t);
+                (!have && t != p.name).then(|| types.get(&t).map(|v| (t, v.clone()))).flatten()
+            })
+            .collect();
+        p.optional_dependencies.extend(add);
+    }
+    res
+}
+
 /// Whether yarn made the project: its yarn.lock or .yarnrc.yml, or packageManager naming yarn.
 fn yarn_project(dir: &Path, manifest: &RootManifest) -> bool {
     let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
@@ -621,6 +662,9 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
                  imports without declaring, set global-store=false (see https://github.com/jtwebman/jpm/blob/main/docs/global-store.md)"
             ));
         }
+    }
+    if global.is_some() {
+        resolution = types_beside_peers(resolution);
     }
     let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
     // A runtime package.json only asks for, checked against the system's: a warning, never a stop.

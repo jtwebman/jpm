@@ -3467,6 +3467,30 @@ Module.register('data:text/javascript,export async function resolve(s,c,n){const
 }
 
 #[test]
+fn a_package_in_the_global_store_sees_the_types_of_its_peers() {
+    // react-router's types import react; from the store tsc found react's JavaScript and not the
+    // project's @types/react, so NavLink had no props. Each project's types make its own entry.
+    let r = Registry::start(vec![
+        pkg("x", "1.0.0", json!({})),
+        pkg("@types/x", "1.0.0", json!({})),
+        pkg("@types/x", "2.0.0", json!({})),
+        pkg("lib", "1.0.0", json!({ "peerDependencies": { "x": "*" } })),
+    ]);
+    let mut seen = Vec::new();
+    for types in ["1.0.0", "2.0.0"] {
+        let env = Env::new(&r);
+        env.manifest(
+            json!({ "dependencies": { "lib": "1.0.0", "x": "1.0.0" }, "devDependencies": { "@types/x": types } }),
+        );
+        env.ok(&["install", "--global-store"]);
+        assert!(env.read("node_modules/lib/../@types/x/index.js").contains(&format!("@types/x@{types}")));
+        seen.push(std::fs::canonicalize(env.path("node_modules/lib")).unwrap());
+        assert!(!env.lock()["packages"]["lib@1.0.0"].to_string().contains("@types"), "jpm.lock is as it was");
+    }
+    assert_ne!(seen[0], seen[1], "one entry per set of types");
+}
+
+#[test]
 fn hoists_what_npm_put_at_the_root() {
     // echarts: package-lock.json has @types/node 12 at the root and 16 below, where a walk from
     // the root finds 16 first (a before b). npm's placement turns on the order packages came in.
