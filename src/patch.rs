@@ -514,7 +514,15 @@ pub fn apply(dir: &Path, text: &[u8]) -> std::result::Result<(), String> {
         let Some(new) = &d.new else {
             // git may write a deletion with no lines at all (bluesky's react-native-svg patch):
             // then the blob id it names says the file is the one it meant, as `git apply` checks.
-            let named = d.hunks.is_empty() && d.old_blob.as_deref().is_some_and(|b| git_blob(&data).starts_with(b));
+            // A CRLF file by its LF content too, as git stores one it normalizes (zulip's
+            // autosize patch deletes such a changelog.md).
+            let lf = || {
+                let mut out = data.clone();
+                out.retain(|&b| b != b'\r');
+                git_blob(&out)
+            };
+            let named = d.hunks.is_empty()
+                && d.old_blob.as_deref().is_some_and(|b| git_blob(&data).starts_with(b) || lf().starts_with(b));
             if !patched.is_empty() && !named {
                 return Err(format!("{name}: the file to delete holds more than the patch removes"));
             }
@@ -688,12 +696,15 @@ mod tests {
     #[test]
     fn deletes_a_file_git_names_by_its_blob() {
         // No lines, only the blob id, as git may write a deletion: `hello\n` is ce01362.
-        let dir = tree(&[("gone.txt", "hello\n"), ("kept.txt", "hello\n")]);
+        let dir = tree(&[("gone.txt", "hello\n"), ("kept.txt", "hello\n"), ("crlf.txt", "hello\r\n")]);
         let delete = |file: &str, id: &str| {
             format!("diff --git a/{file} b/{file}\ndeleted file mode 100644\nindex {id}..0000000\n")
         };
         apply(&dir, delete("gone.txt", "ce01362").as_bytes()).unwrap();
         assert!(!dir.join("gone.txt").exists());
+        // A CRLF file named by its LF content, as git stores it (zulip's autosize patch).
+        apply(&dir, delete("crlf.txt", "ce01362").as_bytes()).unwrap();
+        assert!(!dir.join("crlf.txt").exists());
         let err = apply(&dir, delete("kept.txt", "e69de29").as_bytes()).unwrap_err();
         assert!(err.contains("holds more than the patch removes"), "{err}");
         assert!(dir.join("kept.txt").exists());
