@@ -17,7 +17,7 @@ use crate::semver;
 /// The most a patch file may hold.
 const MAX_PATCH: u64 = 16 << 20;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Patch {
     pub name: String,
     /// An exact version or a range; `None` for every version.
@@ -31,6 +31,9 @@ pub struct Patch {
     /// Named by yarn (`patch:`, `resolutions`), which leaves one nothing takes alone: cal.com's
     /// and eui's resolutions patch versions their trees no longer have. pnpm's is an error.
     pub yarn: bool,
+    /// Why a yarn patch's file could not be read (joplin's resolution names one that is gone):
+    /// an error only if a package in the tree takes it, as yarn reads it only then.
+    pub missing: Option<String>,
 }
 
 impl Patch {
@@ -57,7 +60,8 @@ impl Patch {
         if text.len() as u64 > MAX_PATCH {
             return Err(fail(format!("larger than {} MiB", MAX_PATCH >> 20)));
         }
-        Ok(Self { name, range, path: path.to_string(), hash: crate::util::sha256_hex(&text), text, yarn: false })
+        let hash = crate::util::sha256_hex(&text);
+        Ok(Self { name, range, path: path.to_string(), hash, text, yarn: false, missing: None })
     }
 }
 
@@ -137,6 +141,9 @@ pub fn select<'a>(
             return Err(Error::new("EPATCH", format!("{key} is patched by both {a} and {b}")));
         }
         used[picked[0]] = true;
+        if let Some(why) = &patches[picked[0]].missing {
+            return Err(Error::new("EPATCH", why.clone()));
+        }
         out.insert(key.to_string(), patches[picked[0]].hash.clone());
     }
     let unused = |yarn: bool| -> Vec<String> {
@@ -753,6 +760,7 @@ mod tests {
                 hash: sel.into(),
                 text: Vec::new(),
                 yarn: false,
+                missing: None,
             }
         };
         let tree = [
