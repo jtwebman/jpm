@@ -3300,6 +3300,38 @@ Module.register('data:text/javascript,export async function resolve(s,c,n){const
 }
 
 #[test]
+fn hoists_what_npm_put_at_the_root() {
+    // echarts: package-lock.json has @types/node 12 at the root and 16 below, where a walk from
+    // the root finds 16 first (a before b). npm's placement turns on the order packages came in.
+    let x = |v: &str| pkg("x", v, json!({}));
+    let a = pkg("a", "1.0.0", json!({ "dependencies": { "x": "2.0.0" } }));
+    let b = pkg("b", "1.0.0", json!({ "dependencies": { "x": "1.0.0" } }));
+    let sri = |p: &common::Pkg| common::sha512(&p.tarball());
+    let entry = |p: &common::Pkg, name: &str, v: &str| json!({ "version": v, "resolved": format!("{{url}}/{name}/-/{name}-{v}.tgz"), "integrity": sri(p) });
+    let mut packages = serde_json::Map::new();
+    packages.insert("".into(), json!({ "dependencies": { "a": "1.0.0", "b": "1.0.0" } }));
+    let mut put = |path: &str, p: &common::Pkg, name: &str, v: &str, deps: serde_json::Value| {
+        let mut e = entry(p, name, v);
+        if deps.as_object().is_some_and(|d| !d.is_empty()) {
+            e["dependencies"] = deps;
+        }
+        packages.insert(path.to_string(), e);
+    };
+    put("node_modules/a", &a, "a", "1.0.0", json!({ "x": "2.0.0" }));
+    put("node_modules/a/node_modules/x", &x("2.0.0"), "x", "2.0.0", json!({}));
+    put("node_modules/b", &b, "b", "1.0.0", json!({ "x": "1.0.0" }));
+    put("node_modules/x", &x("1.0.0"), "x", "1.0.0", json!({}));
+    let r = Registry::start(vec![a.clone(), b.clone(), x("1.0.0"), x("2.0.0")]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.0.0", "b": "1.0.0" } }));
+    let text = json!({ "lockfileVersion": 3, "packages": packages }).to_string().replace("{url}", &r.url);
+    env.write("package-lock.json", &text);
+    let out = env.ok(&["install"]);
+    assert!(out.contains("from package-lock.json"), "{out}");
+    assert!(env.read("node_modules/.jpm/node_modules/x/index.js").contains("x@1.0.0"), "{out}");
+}
+
+#[test]
 fn hoists_the_copy_nearest_the_root() {
     // tldraw's tree: a package deep below pins a newer copy than the one near the root, which
     // npm's flat layout and pnpm's hoist give an undeclared import.

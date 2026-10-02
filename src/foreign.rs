@@ -607,6 +607,42 @@ fn npm_version(entry: &Value) -> Option<&str> {
     (web && !truthy(entry.get("link"))).then_some(version)
 }
 
+/// The version another manager put in the root's `node_modules` for each name, where its
+/// lockfile beside the project says: package-lock.json's `node_modules/<name>`, bun.lock's keys
+/// that are a name alone. npm's placement turns on the order packages were added in, so no walk
+/// of the tree finds it again (echarts' @types/node 12, where a walk finds 16 first).
+pub fn root_placement(dir: &std::path::Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for file in ["package-lock.json", "npm-shrinkwrap.json"] {
+        let Ok(text) = std::fs::read_to_string(dir.join(file)) else { continue };
+        let Ok(doc) = json::parse(&text) else { continue };
+        for (path, entry) in doc.get("packages").and_then(Value::as_object).into_iter().flatten() {
+            // An alias (`string-width-cjs`, `npm:string-width@4`) is in its folder's name only.
+            let Some(rest) = path.strip_prefix(NM).filter(|r| !r.contains(NM)) else { continue };
+            let real = entry.get("name").and_then(Value::as_str).is_none_or(|n| n == rest);
+            if let Some(v) = npm_version(entry).filter(|_| real) {
+                out.insert(rest.to_string(), v.to_string());
+            }
+        }
+        return out;
+    }
+    if let Ok(text) = std::fs::read_to_string(dir.join("bun.lock"))
+        && let Ok(doc) = json::parse(&strip_trailing_commas(&text))
+    {
+        for (path, tuple) in doc.get("packages").and_then(Value::as_object).into_iter().flatten() {
+            if names(path).len() == 1
+                && let Some(t) = bun_tuple(tuple).filter(|t| !t.bundled)
+            {
+                let (real, version) = split_id(t.id);
+                if real == *path {
+                    out.insert(real, version);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The edges a package declares, as npm and bun record them.
 #[derive(Default)]
 struct Declared {
