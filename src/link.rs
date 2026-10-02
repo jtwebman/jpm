@@ -100,6 +100,9 @@ pub struct Options<'a> {
     pub patches: &'a [crate::patch::Patch],
     /// Names of the hidden hoist linked at the root too (`public-hoist-pattern`); `!` leaves out.
     pub public_hoist: &'a [String],
+    /// Every workspace linked at the root as well, as npm and yarn's node-modules layouts have
+    /// them (`commands::flat_workspaces`); a pnpm project's and a new one's are not.
+    pub workspaces_at_root: bool,
     /// Puts a package in the store, waiting for its download if one is under way. With it,
     /// entries are built as their packages arrive rather than after the last one. With the
     /// global store, optional packages must be settled before, as whether they arrived decides
@@ -583,14 +586,16 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         return Err(e);
     }
     let mut public = hoisted?;
-    // Workspaces too, as npm and yarn link every one at the root: one a pattern names, unless the
-    // root declares its name, in place of a registry package of that name in the hoist; of two
+    // Workspaces too: every one where the project was laid out by npm or yarn, which link them all
+    // at the root (react imports packages/react by name), else those a pattern names. Not one the
+    // root declares the name of; in place of a registry package of that name in the hoist; of two
     // with one name, the first.
     let declared: HashSet<&String> = res.root.dependencies.keys().collect();
     let mut seen = HashSet::new();
     for top in tops.iter().filter(|t| !t.path.is_empty() && t.path != crate::project::ROOT_PATH) {
         let Some(p) = res.packages.values().find(|p| p.local.as_deref() == Some(top.path.as_str())) else { continue };
-        if declared.contains(&p.name) || !publicly(opts.public_hoist, &p.name) || !seen.insert(p.name.clone()) {
+        let wanted = opts.workspaces_at_root || publicly(opts.public_hoist, &p.name);
+        if declared.contains(&p.name) || !wanted || !seen.insert(p.name.clone()) {
             continue;
         }
         public.retain(|(n, ..)| *n != p.name);

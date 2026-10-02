@@ -20,9 +20,8 @@ pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 const YARNRC: &str = ".yarnrc.yml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 12] = [
+const UNREAD: [&str; 11] = [
     "hoistPattern",
-    "nodeLinker",
     "hoistWorkspacePackages",
     "supportedArchitectures",
     "ignoredOptionalDependencies",
@@ -211,7 +210,9 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             ui::warn(&format!("{PNPM_WORKSPACE} sets autoInstallPeers to false; jpm installs missing peers"));
         }
         rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
-        rules.public_hoist = if y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
+        // `nodeLinker: hoisted` is npm's flat layout: every package at the root is jpm's nearest.
+        let hoisted = y.get("nodeLinker").and_then(Value::as_str) == Some("hoisted");
+        rules.public_hoist = if hoisted || y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
             Some(vec!["*".to_string()])
         } else {
             y.get("publicHoistPattern")

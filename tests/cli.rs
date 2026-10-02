@@ -2263,6 +2263,35 @@ fn links_workspaces_at_the_root_as_the_patterns_say() {
 }
 
 #[test]
+fn links_every_workspace_at_the_root_where_npm_or_yarn_laid_the_project_out() {
+    // react imports packages/react by name, declared nowhere: yarn and npm link every workspace
+    // at the root. pnpm and yarn's Plug'n'Play do not, nor a project with no other manager's files.
+    let r = registry();
+    let at_root = |files: &[(&str, &str)], pm: Option<&str>| {
+        let env = Env::new(&r);
+        let mut m = json!({ "name": "root", "workspaces": ["p/*"] });
+        if let Some(pm) = pm {
+            m["packageManager"] = json!(pm);
+        }
+        env.manifest(m);
+        env.write("p/a/package.json", r#"{ "name": "a", "version": "1.0.0" }"#);
+        for (f, text) in files {
+            env.write(f, text);
+        }
+        env.ok(&["install"]);
+        env.exists("node_modules/a")
+    };
+    assert!(at_root(&[("yarn.lock", "# yarn lockfile v1\n")], None), "yarn 1");
+    assert!(at_root(&[], Some("npm@10.0.0")), "npm");
+    assert!(at_root(&[(".yarnrc.yml", "nodeLinker: node-modules\n")], Some("yarn@4.18.0")), "berry, node-modules");
+    assert!(!at_root(&[(".yarnrc.yml", "nodeLinker: pnp\n")], Some("yarn@4.18.0")), "berry, Plug'n'Play");
+    assert!(!at_root(&[], Some("pnpm@10.0.0")), "pnpm");
+    assert!(!at_root(&[], None), "jpm's own");
+    // pnpm's nodeLinker: hoisted is npm's flat layout: everything at the root.
+    assert!(at_root(&[("pnpm-workspace.yaml", "packages: ['p/*']\nnodeLinker: hoisted\n")], Some("pnpm@10.0.0")));
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();

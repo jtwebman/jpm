@@ -263,7 +263,10 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         offline: merged.get("offline").is_some_and(|v| v == "true"),
         prefer_offline: merged.get("prefer-offline").is_some_and(|v| v == "true"),
         global_store: merged.get("global-store").map(|v| v == "true"),
-        public_hoist: if merged.get("shamefully-hoist").is_some_and(|v| v == "true") {
+        // node-linker=hoisted is npm's flat layout: every package at the root is jpm's nearest.
+        public_hoist: if merged.get("shamefully-hoist").is_some_and(|v| v == "true")
+            || merged.get("node-linker").is_some_and(|v| v == "hoisted")
+        {
             Some(vec!["*".to_string()])
         } else {
             merged
