@@ -57,7 +57,9 @@ The global virtual store is on by default. Turn it off with `global-store=false`
 `/run/.containerenv`), where a mounted project would not see the store, and when the store
 cannot be written. It is also off, with a note, for a project that depends on `next` or `nuxt`:
 Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
-declare. `global-store=true` overrides that.
+declare. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
+project still needs a bundler: [global-store.md](global-store.md). An install warns when the
+project declares a bundler under it.
 
 Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: the highest version
 of every package the root does not link itself, which Node reaches when a package imports

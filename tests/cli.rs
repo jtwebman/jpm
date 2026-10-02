@@ -2298,6 +2298,25 @@ fn links_every_workspace_at_the_root_where_npm_or_yarn_laid_the_project_out() {
 }
 
 #[test]
+fn warns_of_a_bundler_under_the_global_store() {
+    // A bundler resolves from a package's real path, in the store: the install says so, once.
+    let r = registry();
+    r.publish(pkg("vite", "1.0.0", json!({})));
+    let env = Env::new(&r);
+    env.manifest(json!({ "devDependencies": { "vite": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(
+        out.contains("vite bundles from each package's real path") && out.contains("docs/global-store.md"),
+        "{out}"
+    );
+    // Not where the project chose: off, or on by name.
+    for npmrc in ["global-store=false\n", "global-store=true\n"] {
+        env.write(".npmrc", npmrc);
+        assert!(!env.ok(&["install"]).contains("bundles from"), "{npmrc}");
+    }
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
