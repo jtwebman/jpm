@@ -754,6 +754,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         patches: &project.manifest.patches,
         public_hoist: &public_hoist,
         workspaces_at_root: Layout::of(&dir, &project.manifest) == Layout::Flat,
+        placed: &foreign::root_placement(&dir),
         fetch: if overlap { Some(&fetch) } else { None },
         clean: ctx.opts.clean,
     };
