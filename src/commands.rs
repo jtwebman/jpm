@@ -1749,6 +1749,8 @@ fn current_lock(dir: &Path) -> Option<Lockfile> {
 /// outside the project is only linked, as `link:` is: jpm writes nothing outside the project.
 fn find_dirs(project: &Project) -> Result<Vec<resolve::Dir>> {
     let workspaces: HashSet<&str> = project.workspaces.iter().map(|w| w.path.as_str()).collect();
+    // pnpm reads a bare path (`"../../dist"`) as `link:`, npm as `file:`.
+    let pnpm = project.dir.join("pnpm-lock.yaml").exists() || pnpm_9(&project.dir, &project.manifest);
     let mut tops: Vec<(String, RootManifest)> = vec![(String::new(), project.manifest.clone())];
     tops.extend(project.workspaces.iter().map(|w| (w.path.clone(), w.manifest.clone())));
     let mut out: Vec<resolve::Dir> = Vec::new();
@@ -1763,8 +1765,12 @@ fn find_dirs(project: &Project) -> Result<Vec<resolve::Dir>> {
             let outside = path == ".." || path.starts_with("../");
             let file = project.dir.join(&path).join("package.json");
             // One with no package.json (chakra's `../compositions/src`, a source folder) has no
-            // dependencies to walk: only linked, as pnpm links it. One not there is an error.
+            // dependencies to walk: only linked, as pnpm links it. One not there is an error,
+            // but for pnpm's bare path, a link to what a build makes (vite-plugin-react's
+            // playgrounds on `../../dist`).
+            let bare = !range.starts_with("file:");
             let top = source.starts_with("file:")
+                && !(pnpm && bare)
                 && !outside
                 && !path.is_empty()
                 && !workspaces.contains(&*path)

@@ -483,3 +483,19 @@ fn links_a_directory_with_no_package_json() {
     env.ok(&["ci"]);
     leads(&env.project().join("www"), "src", &env.project().join("lib/src"));
 }
+
+#[test]
+fn links_a_pnpm_bare_path_a_build_has_yet_to_make() {
+    // pnpm reads `"../../dist"` as `link:`, made or not: vite-plugin-react's playgrounds link the
+    // plugin's build output before there is one. npm's `file:` would be an error.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root" }));
+    env.write("pnpm-workspace.yaml", "packages:\n  - play\n");
+    env.write("play/package.json", r#"{ "name": "play", "dependencies": { "plugin": "../dist", "a": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    let link = std::fs::read_link(env.project().join("play/node_modules/plugin")).unwrap();
+    assert_eq!(clean(&env.project().join("play/node_modules").join(link)), clean(&env.project().join("dist")));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
+}
