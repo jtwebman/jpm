@@ -1504,7 +1504,7 @@ fn yaml(text: &str) -> Result<Value> {
     // Written out as JSON for its parser, which indexes a big map's keys: inserting them one by
     // one would scan the map for each, and pnpm's `packages` can hold a hundred thousand.
     let mut out = String::new();
-    let mut y = Yaml { lines, i: 0 };
+    let mut y = Yaml { lines, i: 0, anchors: HashMap::new() };
     y.block(indent, 0, &mut out)?;
     if let Some((_, line)) = y.lines.get(y.i) {
         return Err(fail(format!("YAML cannot be read: `{line}` is indented where nothing can start")));
@@ -1540,6 +1540,19 @@ struct Yaml<'a> {
     /// Each line's indent and its text, trimmed.
     lines: Vec<(usize, &'a str)>,
     i: usize,
+    /// `&name`'s value, as the JSON it was written as, for `*name` (nuxt/devtools' catalog).
+    anchors: HashMap<String, String>,
+}
+
+/// `&name value`: the anchor's name, and the value after it.
+fn anchored(rest: &str) -> (Option<&str>, &str) {
+    match rest.strip_prefix('&') {
+        Some(r) => {
+            let (name, tail) = r.split_once(' ').unwrap_or((r, ""));
+            (Some(name), tail.trim())
+        }
+        None => (None, rest),
+    }
 }
 
 impl Yaml<'_> {
@@ -1567,7 +1580,7 @@ impl Yaml<'_> {
                     self.block(col, depth + 1, out)?;
                 } else {
                     self.i += 1;
-                    scalar(body, depth + 1, out)?;
+                    self.value(body, depth + 1, out)?;
                 }
                 continue;
             }
@@ -1603,11 +1616,12 @@ impl Yaml<'_> {
             let colon = key_end(line);
             json::quote(out, &unquote(&line[..colon]));
             out.push(':');
-            let rest = line.get(colon + 1..).unwrap_or_default().trim();
+            let (anchor, rest) = anchored(line.get(colon + 1..).unwrap_or_default().trim());
+            let start = out.len();
             if let Some(fold) = block_text(rest) {
                 self.text(indent, fold, out);
             } else if !rest.is_empty() {
-                scalar(rest, depth + 1, out)?;
+                self.value(rest, depth + 1, out)?;
             } else {
                 match self.lines.get(self.i) {
                     Some(&(next, _)) if next > indent => self.block(next, depth + 1, out)?,
@@ -1616,6 +1630,10 @@ impl Yaml<'_> {
                     _ => out.push_str("{}"),
                 }
             }
+            if let Some(name) = anchor {
+                let value = out[start..].to_string();
+                self.anchors.insert(name.to_string(), value);
+            }
         }
         out.push(if list { ']' } else { '}' });
         Ok(())
@@ -1623,6 +1641,24 @@ impl Yaml<'_> {
 }
 
 impl Yaml<'_> {
+    /// A scalar, `*name` for an anchor's value, or `&name scalar` naming one.
+    fn value(&mut self, text: &str, depth: usize, out: &mut String) -> Result<()> {
+        if let Some(name) = text.strip_prefix('*') {
+            let value =
+                self.anchors.get(name).ok_or_else(|| fail(format!("YAML cannot be read: no anchor &{name}")))?;
+            out.push_str(value);
+            return Ok(());
+        }
+        let (anchor, text) = anchored(text);
+        let start = out.len();
+        scalar(text, depth, out)?;
+        if let Some(name) = anchor {
+            let value = out[start..].to_string();
+            self.anchors.insert(name.to_string(), value);
+        }
+        Ok(())
+    }
+
     /// The lines of a `|` or `>` block under a key at `indent`, as one string.
     // ponytail: blank lines, `#` lines and relative indents inside the block are lost; no file
     // jpm reads keeps anything it uses in one. Keep raw lines if that changes.
@@ -2577,6 +2613,18 @@ snapshots:
             "catalog": { "a": "^1" },
         });
         assert_eq!(serde_json::from_str::<Value>(&crate::json::to_string(&doc)).unwrap(), expect);
+        // Anchors and aliases, as nuxt/devtools' catalog has them: a scalar's, and a map's.
+        let text =
+            "catalog:\n  a: &v ^1.2.0\n  b: *v\n  c: &kit npm:@n/kit-nightly@5.0.0\nl:\n- *kit\nm: &m\n  x: 1\nn: *m\n";
+        let doc = read_yaml(text).unwrap();
+        let expect = serde_json::json!({
+            "catalog": { "a": "^1.2.0", "b": "^1.2.0", "c": "npm:@n/kit-nightly@5.0.0" },
+            "l": ["npm:@n/kit-nightly@5.0.0"],
+            "m": { "x": "1" },
+            "n": { "x": "1" },
+        });
+        assert_eq!(serde_json::from_str::<Value>(&crate::json::to_string(&doc)).unwrap(), expect);
+        assert!(read_yaml("a: *nope\n").is_err());
         // A scalar with a colon in it is no map.
         let doc = read_yaml("l:\n- 'a: b'\n- npm:x@1\n- https://x\n").unwrap();
         assert_eq!(doc.get("l").and_then(crate::json::Value::as_array).map(Vec::len), Some(3));
