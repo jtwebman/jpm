@@ -61,8 +61,8 @@ declare. `global-store=true` overrides that. Why it is on, what it cannot do, an
 project still needs a bundler: [global-store.md](global-store.md). An install warns when the
 project declares a bundler under it.
 
-Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: the highest version
-of every package the root does not link itself, which Node reaches when a package imports
+Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: one version
+of every package the root does not link itself (the copy nearest the root, then the highest), which Node reaches when a package imports
 something it did not declare, as pnpm does with `.pnpm/node_modules`. Packages in the global
 store resolve from the store and cannot reach it on their own, so under the global store
 `jpm run`, `jpm exec` and install scripts point Node at it: `NODE_PATH` gets the hoist and the
