@@ -370,6 +370,34 @@ pub fn install(opts: Opts) -> Result<InstallResult> {
     install_tree(&mut ctx, None, None)
 }
 
+/// Whether the project was laid out by npm or yarn's node-modules linker, which link every
+/// workspace at the root: its package-lock.json or yarn.lock, or packageManager naming npm or
+/// yarn. Not pnpm's, nor yarn's Plug'n'Play (nodeLinker other than node-modules), nor one with
+/// none of these: jpm's own layout links what a package declares.
+fn flat_workspaces(dir: &Path, manifest: &RootManifest) -> bool {
+    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
+    let (name, version) = pm.split_once('@').unwrap_or((pm, ""));
+    if dir.join("pnpm-lock.yaml").exists() || name == "pnpm" || name == "bun" {
+        return false;
+    }
+    if dir.join("package-lock.json").exists() || dir.join("npm-shrinkwrap.json").exists() || name == "npm" {
+        return true;
+    }
+    let yarnrc = std::fs::read_to_string(dir.join(".yarnrc.yml")).ok();
+    let berry = yarnrc.is_some() || (name == "yarn" && !version.starts_with('1'));
+    if berry {
+        // yarn 2 and later lay out node_modules only with nodeLinker: node-modules.
+        return yarnrc.is_some_and(|t| {
+            t.lines().any(|l| {
+                l.split_once(':').is_some_and(|(k, v)| {
+                    k.trim() == "nodeLinker" && v.trim().trim_matches(['"', '\'']) == "node-modules"
+                })
+            })
+        });
+    }
+    dir.join("yarn.lock").exists() || name == "yarn"
+}
+
 /// The first of `PROJECT_LAYOUT` that the root or a workspace depends on.
 fn framework_of(project: &Project) -> Option<&'static str> {
     let manifests = std::iter::once(&project.manifest).chain(project.workspaces.iter().map(|w| &w.manifest));
@@ -658,6 +686,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         tarballs: Some(tarballs.clone()),
         patches: &project.manifest.patches,
         public_hoist: &public_hoist,
+        workspaces_at_root: flat_workspaces(&dir, &project.manifest),
         fetch: if overlap { Some(&fetch) } else { None },
         clean: ctx.opts.clean,
     };
