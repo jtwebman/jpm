@@ -3369,6 +3369,13 @@ fn installs_a_workspace_with_no_name() {
     env.ok(&["install"]);
     assert!(env.read(".github/node_modules/b/index.js").contains("b@1.0.0"));
     assert!(env.ok(&["install"]).contains("up to date"));
+    // One named as no package can be (nhost's `guides/codegen-nhost`): named by its directory.
+    env.write("pnpm-workspace.yaml", "packages:\n  - .github\n  - guides/*\n");
+    env.write("guides/codegen/package.json", r#"{ "name": "guides/codegen", "dependencies": { "a": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    assert!(env.exists("guides/codegen/node_modules/a/index.js"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
 }
 
 #[test]
