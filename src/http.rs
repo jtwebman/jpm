@@ -771,7 +771,7 @@ impl Read for Body {
                     let mut trailers = 0;
                     loop {
                         line.clear();
-                        if bounded_line(conn, &mut line)? <= 2 {
+                        if bounded_line(conn, &mut line)? == 0 || line.trim_end_matches(['\r', '\n']).is_empty() {
                             break;
                         }
                         trailers += 1;
@@ -1019,7 +1019,9 @@ mod tests {
     fn reuses_a_connection_across_framings() {
         let base = serve(vec![
             b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello".to_vec(),
-            b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n2;x=y\r\nde\r\n0\r\n\r\n".to_vec(),
+            // Trailers, one only two bytes long: the body ends at the blank line, not before.
+            b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n2;x=y\r\nde\r\n0\r\nx\nt: u\r\n\r\n"
+                .to_vec(),
             b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_vec(),
         ]);
         let auth = BTreeMap::new();
