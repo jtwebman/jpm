@@ -447,3 +447,17 @@ fn patch_commit_removes_only_its_own_copy() {
     assert!(own.join("index.js").exists(), "a directory of the user's own stays");
     assert_eq!(env.read("node_modules/b/index.js"), "module.exports = 'edited'\n");
 }
+
+#[test]
+fn patches_an_alias_by_the_package_it_installs() {
+    // anthropic-sdk-typescript's `"tsc-multi": "npm:@stainless-api/tsc-multi@1.1.12"`, patched
+    // as `@stainless-api/tsc-multi@1.1.12`, as pnpm matches it.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "t": "npm:b@1.0.0" } }));
+    env.write("patches/b.patch", &diff("b@1.0.0", "patched"));
+    env.write("pnpm-workspace.yaml", "patchedDependencies:\n  b@1.0.0: patches/b.patch\n");
+    env.ok(&["install"]);
+    assert_eq!(env.read("node_modules/t/index.js"), "module.exports = 'patched'");
+    assert!(env.ok(&["install"]).contains("up to date"));
+}
