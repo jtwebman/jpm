@@ -213,6 +213,13 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
     if let Some(dir) = s.strip_prefix("workspace:").filter(is_path) {
         return build(name, &format!("link:{dir}"), raw);
     }
+    // yarn's `workspace:<path>` (carbon's `workspace:packages/cli`): a path, not a range or a
+    // name. yarn reads it from the root, here from the package that names it: the same for the
+    // root's own dependencies, where projects write it.
+    let yarn_path = |p: &&str| p.contains('/') && !p.contains('@') && !semver::valid_range(p);
+    if let Some(dir) = s.strip_prefix("workspace:").filter(yarn_path) {
+        return build(name, &format!("link:{dir}"), raw);
+    }
     let repo = git(&s, raw)?;
     let source = if repo.is_some() { None } else { path(&s, raw)? };
     let mut local = false;
@@ -1099,6 +1106,10 @@ mod tests {
         assert_eq!((at.kind, at.fetch_spec.as_str()), (Kind::Directory, "link:../x/dist"));
         // DefinitelyTyped's `workspace:.`: the workspace's own directory.
         assert_eq!(parse_dep("x", "workspace:.").unwrap().kind, Kind::Directory);
+        // yarn's path, as carbon gives its own `workspace:packages/cli`.
+        let at = parse_dep("x", "workspace:packages/cli").unwrap();
+        assert_eq!((at.kind, at.fetch_spec.as_str()), (Kind::Directory, "link:packages/cli"));
+        assert_eq!(parse_dep("x", "workspace:@s/y@^1").unwrap().kind, Kind::Workspace);
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
             assert!(parse_dep("x", spec).is_ok(), "{spec}");
