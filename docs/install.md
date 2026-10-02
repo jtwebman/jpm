@@ -78,6 +78,7 @@ Linux:
 gh release download v0.1.0 --repo jtwebman/jpm --pattern jpm-linux-x64
 gh attestation verify jpm-linux-x64 --repo jtwebman/jpm
 chmod +x jpm-linux-x64 && mkdir -p ~/.jpm/bin && mv jpm-linux-x64 ~/.jpm/bin/jpm
+ln -sf jpm ~/.jpm/bin/jpx
 ```
 
 macOS:
@@ -86,7 +87,12 @@ macOS:
 gh release download v0.1.0 --repo jtwebman/jpm --pattern jpm-darwin-arm64
 gh attestation verify jpm-darwin-arm64 --repo jtwebman/jpm
 chmod +x jpm-darwin-arm64 && mkdir -p ~/.jpm/bin && mv jpm-darwin-arm64 ~/.jpm/bin/jpm
+ln -sf jpm ~/.jpm/bin/jpx
 ```
+
+curl and gh download without macOS's quarantine mark. A browser adds it, and macOS then refuses
+to open the binary, which is not notarized: `xattr -d com.apple.quarantine ~/.jpm/bin/jpm` takes
+the mark off once you have checked the file as above.
 
 Windows (PowerShell):
 
