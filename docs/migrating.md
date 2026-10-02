@@ -50,11 +50,13 @@ old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committe
 
 ## Known differences
 
-jpm lays out `node_modules` as pnpm does: each package is a link to its own entry, holding
-links to what it declares. npm, yarn's node-modules linker and pnpm's `node-linker=hoisted`
-make real directories instead, nested where versions differ. Node finds packages the same way
-in both, but a tool that reads file paths can see the difference. Each case below has a change
-in the project that works under jpm and under pnpm alike.
+jpm lays out `node_modules` as pnpm does by default: each package is a link to its own entry,
+holding links to what it declares. npm, yarn's node-modules linker and pnpm's
+`node-linker=hoisted` make real directories instead, nested where versions differ. Node finds
+packages the same way in both, but a tool that reads file paths can see the difference.
+`node-linker=hoisted` in `.npmrc` gives npm's layout ([configuration](configuration.md)), and
+each case below also has a change in the project that works under either layout, and under
+pnpm's.
 
 - **TypeScript declarations** (`TS2742` or `TS2883`: "The inferred type of 'x' cannot be named
   without a reference to '.jpm/…'. This is likely not portable."): a declaration needs a type
@@ -66,9 +68,7 @@ in the project that works under jpm and under pnpm alike.
   the name after the last `node_modules/` instead (webpack's `tooling/generate-types.js`), and
   give generated code a path of its own: Prisma's generator `output`, rather than
   `node_modules/.prisma/client` (documenso's vite config).
-- **Electron apps** pack `node_modules` into the app and rebuild native modules for Electron in
-  place, so jpm keeps every package inside the project for a project that depends on
-  `electron`, as `global-store=false` does. A tool that follows `require` itself from a link's
-  path rather than its target, as hyper's V8 snapshot builder (electron-link) does, can still
-  pick the wrong copy of a package that has two: that needs real directories, which jpm does
-  not make.
+- **Electron apps** pack `node_modules` into the app, rebuild native modules for Electron in
+  place, and some of their tools follow `require` from a link's path rather than its target
+  (hyper's V8 snapshot builder, electron-link). A project that depends on `electron` gets
+  `node-linker=hoisted` unless it sets `node-linker` itself.

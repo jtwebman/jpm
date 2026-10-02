@@ -37,6 +37,8 @@ use crate::store::{FileEntry, Index, Store, remove_tree};
 use crate::util::{relative, temp_suffix};
 use crate::{pool, sys};
 
+mod hoisted;
+
 const WIN: bool = cfg!(windows);
 /// Whether an entry in a `node_modules` this install made is built where it stays, not under a
 /// temp name renamed into place (see `materialize`): Windows, where the rename costs every link
@@ -115,6 +117,8 @@ pub struct Options<'a> {
     pub fetch: Option<&'a Fetch<'a>>,
     /// `jpm ci`: every top's `node_modules` removed first (see `clear_tops`).
     pub clean: bool,
+    /// `node-linker=hoisted`: npm's layout, real directories (see `hoisted`).
+    pub hoisted: bool,
 }
 
 /// See `Options::fetch`.
@@ -216,6 +220,8 @@ pub struct Outcome {
     /// The project's turn (see `Turn`), for the caller to hold while its install scripts run in
     /// the entries: another install would otherwise run them again, or change the tree under them.
     pub turn: Option<Turn>,
+    /// Hoisted: each package whose install scripts run, and each place it was put anew.
+    pub built: Vec<(String, PathBuf)>,
 }
 
 #[derive(Default)]
@@ -392,6 +398,9 @@ impl Turn {
 }
 
 pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
+    if opts.hoisted {
+        return hoisted::link(res, opts);
+    }
     let tops = tops_of(opts.dir, res);
     let entries_dir = opts.dir.join("node_modules").join(".jpm");
     // A cloned repo can hold `node_modules` or `.jpm` as a symlink to anywhere: entries would be
@@ -431,6 +440,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
                 None => Vec::new(),
             },
             stamps: inputs.and_then(|i| i.stamps.clone()),
+            hoisted: false,
+            placed: BTreeMap::new(),
+            built: Vec::new(),
         }
     };
     if let Some(prev) = previous.as_ref().filter(|s| !opts.verify && s.hash == opts.hash && s.complete)
@@ -444,7 +456,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             state::write(opts.dir, &state_of(prev.entries.clone(), prev.shared.clone(), true, root))?;
         }
         let stats = Stats { reused: prev.entries.len() + prev.shared.len(), ..Stats::default() };
-        return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true, turn });
+        return Ok(Outcome { stats, dropped: Vec::new(), up_to_date: true, turn, built: Vec::new() });
     }
     state::clear(opts.dir);
 
@@ -682,7 +694,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         out
     };
     state::write(opts.dir, &state_of(names(false), names(true), dropped.is_empty(), links))?;
-    Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false, turn })
+    Ok(Outcome { stats: linker.counts.stats(), dropped, up_to_date: false, turn, built: Vec::new() })
 }
 
 impl Linker<'_> {
@@ -1103,70 +1115,8 @@ impl Linker<'_> {
         Ok(())
     }
 
-    /// Directories first, then one hardlink per file; a filesystem that cannot share inodes with
-    /// the store gets copies from the first refusal on.
-    /// `copy`: writable copies, for install scripts to change freely.
-    /// `dest` is made here; its parent is there.
     fn place_files(&self, index: &Index, src: &Path, dest: &Path, copy: bool) -> Result<()> {
-        let cannot_create = |e: io::Error, at: &Path| Error::io(&e, format!("cannot create {}", at.display()));
-        fs::create_dir(dest)
-            .or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
-            .map_err(|e| cannot_create(e, dest))?;
-        // Both held open: each file is linked by its path in the package alone.
-        let from_dir = sys::Dir::open(src).map_err(|e| Error::io(&e, format!("cannot read {}", src.display())))?;
-        let to_dir = sys::Dir::open(dest).map_err(|e| cannot_create(e, dest))?;
-        let mut made: HashSet<String> = HashSet::new();
-        for f in &index.files {
-            if let Some((dir, _)) = f.path.rsplit_once('/') {
-                crate::store::make_dirs(&to_dir, dir, &mut made)
-                    .map_err(|e| cannot_create(e, &dest.join(dir)).with_code("ELINK"))?;
-            }
-        }
-        let place = |f: &FileEntry| -> Result<()> {
-            let stored: std::borrow::Cow<str> =
-                if index.suffixed { index.stored(&f.path).into() } else { f.path.as_str().into() };
-            if !copy && !self.copy_only.load(Ordering::Relaxed) {
-                match to_dir.link(&from_dir, &stored, &f.path) {
-                    Ok(()) => {
-                        Counts::add(&self.counts.linked, 1);
-                        return Ok(());
-                    }
-                    // Two names one file on a case-insensitive disk: already there.
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
-                    Err(e) if e.kind() == io::ErrorKind::TooManyLinks => {}
-                    Err(e) if cannot_link(&e) => self.copy_only.store(true, Ordering::Relaxed),
-                    Err(e) => {
-                        let to = dest.join(&f.path);
-                        return Err(Error::io(&e, format!("cannot link {}", to.display())).with_code("ELINK"));
-                    }
-                }
-            }
-            let (from, to) = (src.join(&*stored), dest.join(&f.path));
-            match fs::copy(&from, &to) {
-                Ok(_) => {
-                    Counts::add(&self.counts.copied, 1);
-                    // The store's time, so `--verify` reads it as unchanged (`Index::unchanged`).
-                    if let Ok(t) = fs::metadata(&from).and_then(|m| m.modified()) {
-                        let _ = fs::File::options().write(true).open(&to).and_then(|f| f.set_modified(t));
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(Error::io(&e, format!("cannot copy {}", to.display())).with_code("ELINK")),
-            }
-            if copy {
-                writable(&to, f.exec).map_err(|e| Error::io(&e, format!("cannot write {}", to.display())))?;
-            }
-            Ok(())
-        };
-        if index.files.len() < 2 * PLACE_CHUNK {
-            return index.files.iter().try_for_each(place);
-        }
-        // A package of thousands of files (next has 8,000) would take one thread for seconds
-        // while the others finish and wait: its files go to every core in chunks, each
-        // directory's in one, as a directory takes one new name at a time.
-        pool::map(pool::disk_threads(), chunks_by_dir(&index.files, PLACE_CHUNK), |c| c.into_iter().try_for_each(place))
-            .into_iter()
-            .collect()
+        place_files(&self.counts, &self.copy_only, index, src, dest, copy)
     }
 
     /// Windows shims for a bin whose file, once linked, is `file`; its `#!` read from the store.
@@ -1592,6 +1542,79 @@ fn chunks_by_dir(files: &[FileEntry], size: usize) -> Vec<Vec<&FileEntry>> {
     chunks
 }
 
+/// Directories first, then one hardlink per file; a filesystem that cannot share inodes with
+/// the store gets copies from the first refusal on.
+/// `copy`: writable copies, for install scripts to change freely.
+/// `dest` is made here; its parent is there.
+fn place_files(
+    counts: &Counts,
+    copy_only: &AtomicBool,
+    index: &Index,
+    src: &Path,
+    dest: &Path,
+    copy: bool,
+) -> Result<()> {
+    let cannot_create = |e: io::Error, at: &Path| Error::io(&e, format!("cannot create {}", at.display()));
+    fs::create_dir(dest)
+        .or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
+        .map_err(|e| cannot_create(e, dest))?;
+    // Both held open: each file is linked by its path in the package alone.
+    let from_dir = sys::Dir::open(src).map_err(|e| Error::io(&e, format!("cannot read {}", src.display())))?;
+    let to_dir = sys::Dir::open(dest).map_err(|e| cannot_create(e, dest))?;
+    let mut made: HashSet<String> = HashSet::new();
+    for f in &index.files {
+        if let Some((dir, _)) = f.path.rsplit_once('/') {
+            crate::store::make_dirs(&to_dir, dir, &mut made)
+                .map_err(|e| cannot_create(e, &dest.join(dir)).with_code("ELINK"))?;
+        }
+    }
+    let place = |f: &FileEntry| -> Result<()> {
+        let stored: std::borrow::Cow<str> =
+            if index.suffixed { index.stored(&f.path).into() } else { f.path.as_str().into() };
+        if !copy && !copy_only.load(Ordering::Relaxed) {
+            match to_dir.link(&from_dir, &stored, &f.path) {
+                Ok(()) => {
+                    Counts::add(&counts.linked, 1);
+                    return Ok(());
+                }
+                // Two names one file on a case-insensitive disk: already there.
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::TooManyLinks => {}
+                Err(e) if cannot_link(&e) => copy_only.store(true, Ordering::Relaxed),
+                Err(e) => {
+                    let to = dest.join(&f.path);
+                    return Err(Error::io(&e, format!("cannot link {}", to.display())).with_code("ELINK"));
+                }
+            }
+        }
+        let (from, to) = (src.join(&*stored), dest.join(&f.path));
+        match fs::copy(&from, &to) {
+            Ok(_) => {
+                Counts::add(&counts.copied, 1);
+                // The store's time, so `--verify` reads it as unchanged (`Index::unchanged`).
+                if let Ok(t) = fs::metadata(&from).and_then(|m| m.modified()) {
+                    let _ = fs::File::options().write(true).open(&to).and_then(|f| f.set_modified(t));
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(Error::io(&e, format!("cannot copy {}", to.display())).with_code("ELINK")),
+        }
+        if copy {
+            writable(&to, f.exec).map_err(|e| Error::io(&e, format!("cannot write {}", to.display())))?;
+        }
+        Ok(())
+    };
+    if index.files.len() < 2 * PLACE_CHUNK {
+        return index.files.iter().try_for_each(place);
+    }
+    // A package of thousands of files (next has 8,000) would take one thread for seconds
+    // while the others finish and wait: its files go to every core in chunks, each
+    // directory's in one, as a directory takes one new name at a time.
+    pool::map(pool::disk_threads(), chunks_by_dir(&index.files, PLACE_CHUNK), |c| c.into_iter().try_for_each(place))
+        .into_iter()
+        .collect()
+}
+
 fn dep_pkg<'a>(deps: &'a [(String, Dep)], name: &str) -> Option<&'a Package> {
     deps.iter().find(|(n, _)| n == name).map(|(_, d)| d.pkg())
 }
@@ -1865,6 +1888,9 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
 /// The no-op check, read off the state alone: every recorded link of the root and each workspace
 /// pointing where it was made to, every bin placed, every entry a directory. No graph needed.
 pub fn tree_standing(dir: &Path, st: &State) -> bool {
+    if st.hoisted {
+        return st.complete && hoisted::placed_standing(dir, &st.placed);
+    }
     let nm = dir.join("node_modules");
     let Some(root) = st.root.as_ref().filter(|_| st.complete) else { return false };
     let shared = !st.shared.is_empty();

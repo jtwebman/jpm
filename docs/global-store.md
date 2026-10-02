@@ -52,8 +52,10 @@ jpm install --no-global-store            # one install
 ```
 
 Entries are then built in the project's own `node_modules/.jpm`, where everything walks up to
-the project. It is already off for projects that depend on `next`, `nuxt` or `electron`, inside
-containers, and when the store cannot be written. `global-store=true` turns it back on.
+the project. It is already off for projects that depend on `next` or `nuxt`, inside
+containers, and when the store cannot be written. `global-store=true` turns it back on. It is
+always off with `node-linker=hoisted`, npm's layout, which a project that depends on `electron`
+gets by default ([configuration](configuration.md)).
 
 ## Do you still need a bundler?
 

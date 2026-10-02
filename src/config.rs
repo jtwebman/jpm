@@ -34,6 +34,8 @@ pub struct Config {
     /// `public-hoist-pattern[]` (`shamefully-hoist=true` is `*`): undeclared packages linked
     /// at the root as well as in the hidden hoist. `None` when neither is set.
     pub public_hoist: Option<Vec<String>>,
+    /// `node-linker`: `hoisted` lays out node_modules as npm does, `isolated` as pnpm does.
+    pub node_linker: Option<String>,
     /// `ignore-scripts`: run no install or lifecycle scripts.
     pub ignore_scripts: bool,
     /// pnpm's `block-exotic-subdeps`: only the root and workspaces may take a package from a git
@@ -267,10 +269,8 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         offline: merged.get("offline").is_some_and(|v| v == "true"),
         prefer_offline: merged.get("prefer-offline").is_some_and(|v| v == "true"),
         global_store: merged.get("global-store").map(|v| v == "true"),
-        // node-linker=hoisted is npm's flat layout: every package at the root is jpm's nearest.
-        public_hoist: if merged.get("shamefully-hoist").is_some_and(|v| v == "true")
-            || merged.get("node-linker").is_some_and(|v| v == "hoisted")
-        {
+        node_linker: merged.get("node-linker").cloned(),
+        public_hoist: if merged.get("shamefully-hoist").is_some_and(|v| v == "true") {
             Some(vec!["*".to_string()])
         } else {
             merged

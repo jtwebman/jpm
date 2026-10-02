@@ -166,6 +166,8 @@ pub struct Rules {
     extended: crate::project::Extended,
     /// pnpm-workspace.yaml's `publicHoistPattern` (`shamefullyHoist: true` is `*`).
     pub public_hoist: Option<Vec<String>>,
+    /// pnpm-workspace.yaml's `nodeLinker`.
+    pub node_linker: Option<String>,
     /// Whether a top's plain range lands on a workspace of its name, or only `workspace:` does:
     /// pnpm-workspace.yaml's `linkWorkspacePackages` (`deep` is on), .yarnrc.yml's
     /// `enableTransparentWorkspaces`. `None` when neither says.
@@ -220,9 +222,8 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             y.get("linkWorkspacePackages").filter(|v| !v.is_null()).map(|v| v != &Value::Bool(false));
         rules.link_deep = y.get("linkWorkspacePackages").and_then(Value::as_str) == Some("deep");
         rules.dedupe_peers = y.get("dedupePeerDependents") != Some(&Value::Bool(false));
-        // `nodeLinker: hoisted` is npm's flat layout: every package at the root is jpm's nearest.
-        let hoisted = y.get("nodeLinker").and_then(Value::as_str) == Some("hoisted");
-        rules.public_hoist = if hoisted || y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
+        rules.node_linker = y.get("nodeLinker").and_then(Value::as_str).map(str::to_string);
+        rules.public_hoist = if y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
             Some(vec!["*".to_string()])
         } else {
             y.get("publicHoistPattern")
