@@ -128,13 +128,28 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
     for (name, version) in pins(file, text)? {
         prefer.versions.entry(name).or_default().push(version);
     }
-    // The optional peers its snapshots settled: pnpm installed them.
+    // The version its snapshots gave each package's edge, and the optional peers they settled:
+    // pnpm installed them.
     if file == "pnpm-lock.yaml" {
         let doc = pnpm_doc(text)?;
         let empty = Map::new();
         let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty).index();
+        let mut twice = HashSet::new();
         for (key, snap) in doc.get("snapshots").and_then(Value::as_object).into_iter().flatten() {
             let id = strip_peers(key);
+            for (dep, version) in
+                deps(snap.get("dependencies")).into_iter().chain(deps(snap.get("optionalDependencies")))
+            {
+                let version = strip_peers(&version);
+                if !crate::semver::is_exact(version) {
+                    continue;
+                }
+                let edge = (id.to_string(), dep);
+                if prefer.edges.get(&edge).is_some_and(|v| v != version) {
+                    twice.insert(edge.clone());
+                }
+                prefer.edges.insert(edge, version.to_string());
+            }
             let Some(meta) = packages.get(id).and_then(|p| p.get("peerDependenciesMeta")) else { continue };
             for (peer, _) in deps(snap.get("dependencies")).into_iter().chain(deps(snap.get("optionalDependencies"))) {
                 if truthy(meta.get(&peer).and_then(|m| m.get("optional"))) {
@@ -142,6 +157,7 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
                 }
             }
         }
+        prefer.edges.retain(|e, _| !twice.contains(e));
     }
     prefer.ranges = top_ranges(file, text)?;
     Ok(prefer)

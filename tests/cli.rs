@@ -3166,6 +3166,49 @@ fn passes_arguments_through_scripts_and_shims() {
 }
 
 #[test]
+fn keeps_the_version_a_pnpm_lock_gave_each_package_edge() {
+    // pnpm resolves a range per package, so ^1.0.0 holds b 1.0.0 under a and 1.1.0 at the root
+    // (n8n's acorn under acorn-walk, a second acorn whose types tsc refused). A lock with
+    // workspaces is read for its versions: each package's edge keeps its own.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["w"], "dependencies": { "b": "1.1.0" } }));
+    env.write("w/package.json", r#"{ "name": "w", "dependencies": { "a": "1.0.0" } }"#);
+    env.write(
+        "pnpm-lock.yaml",
+        "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      b:
+        specifier: 1.1.0
+        version: 1.1.0
+  w:
+    dependencies:
+      a:
+        specifier: 1.0.0
+        version: 1.0.0
+packages:
+  a@1.0.0:
+    resolution: {integrity: sha512-a}
+  b@1.0.0:
+    resolution: {integrity: sha512-b}
+  b@1.1.0:
+    resolution: {integrity: sha512-b}
+snapshots:
+  a@1.0.0:
+    dependencies:
+      b: 1.0.0
+  b@1.0.0: {}
+  b@1.1.0: {}
+",
+    );
+    let out = env.ok(&["install"]);
+    assert!(out.contains("pnpm-lock.yaml has workspaces"), "{out}");
+    assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["b"], "1.0.0");
+}
+
+#[test]
 fn reads_pnpm_workspaces_and_catalogs() {
     let r = registry();
     let env = Env::new(&r);
