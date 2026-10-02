@@ -1193,7 +1193,9 @@ fn check_links(top: &Asks, deps: &Deps, at: &str, whole: &Whole) -> Result<()> {
             let named = if dirs.is_empty() && !lock.packages.contains_key(&format!("{name}@{version}")) {
                 by_name(path, whole)
             } else {
-                dirs.iter().any(|s| spec::join_path(top.base, &s.fetch_spec[5..]) == path)
+                // The project's own directory (`file:.`, `file:../../`) is the root's path, `.`.
+                let at = |s: &&spec::Spec| spec::join_path(top.base, &s.fetch_spec[5..]);
+                dirs.iter().any(|s| at(s) == path || (at(s).is_empty() && path == crate::project::ROOT_PATH))
             };
             // pnpm's `workspace:<other>@<range>`: the one workspace so named, under this name.
             let aliased = || {

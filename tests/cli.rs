@@ -1088,6 +1088,24 @@ fn leaves_out_a_workspace_bin_not_built_yet() {
 }
 
 #[test]
+fn links_the_root_that_depends_on_itself() {
+    // swr's and msw's `workspace:*`, eslint's `file:.`: node_modules/<name> is the project, as
+    // npm and pnpm link it.
+    let r = registry();
+    for range in ["workspace:*", "file:.", "link:."] {
+        let env = Env::new(&r);
+        env.manifest(json!({ "name": "root", "version": "1.0.0", "devDependencies": { "root": range, "b": "1.0.0" } }));
+        let out = env.ok(&["install"]);
+        assert!(!out.contains("workspace"), "{out}");
+        let real = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+        assert_eq!(real(env.project().join("node_modules/root")), real(env.project()), "{range}");
+        assert!(env.ok(&["install"]).contains("up to date"), "{range}");
+        env.ok(&["ci"]);
+        assert_eq!(real(env.project().join("node_modules/root")), real(env.project()), "{range}");
+    }
+}
+
+#[test]
 fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
     // Not listed, as in hono, nitro and nuxt/ui: `workspace:` still finds the named root, as
     // in pnpm and yarn berry. A range does not.
@@ -1114,12 +1132,12 @@ fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
     env.ok(&["install"]);
     assert_eq!(real(env.project().join("c/node_modules/c")), real(env.project().join("c")));
     assert!(env.ok(&["install"]).contains("up to date"));
-    // The root asking for itself is still refused.
+    // The root asking for itself links to the project, as pnpm links it (swr, msw).
     env.manifest(
         json!({ "name": "root", "version": "1.0.0", "workspaces": ["a"], "dependencies": { "root": "workspace:*" } }),
     );
-    let out = env.jpm(&["install"]);
-    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot depend on itself"), "{out:?}");
+    env.ok(&["install"]);
+    assert_eq!(real(env.project().join("node_modules/root")), real(env.project()));
 }
 
 #[test]

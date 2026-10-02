@@ -583,7 +583,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     let planned =
         plan(ctx, &project, &store, walk_pick, previous.as_ref().and_then(|s| s.tarballs.clone())).and_then(|lock| {
             // What is needed of the lockfile itself, before it is taken apart into the graph.
-            let facts = (lock.workspaces.len(), lock.packages.len(), lock::content_hash(&lock), files_of(ctx, &lock));
+            let facts = (workspace_count(&lock), lock.packages.len(), lock::content_hash(&lock), files_of(ctx, &lock));
             // Shared entries are named by keys computed here, over the graph this platform
             // installs: a lockfile could claim another project's key and plant an entry every
             // project trusts, and an entry built without a package another platform needs must
@@ -1960,9 +1960,14 @@ fn yarn_1(file: &str, text: &str) -> bool {
     file == "yarn.lock" && !text.lines().any(|l| l == "__metadata:")
 }
 
+/// The workspaces, the root among them (`.`) left out: it is the root.
+fn workspace_count(lock: &Lockfile) -> usize {
+    lock.workspaces.keys().filter(|p| *p != crate::project::ROOT_PATH).count()
+}
+
 pub fn counts(lock: &Lockfile) -> String {
     let (all, optional, dev) = lock::tally(lock);
-    let n = lock.workspaces.len();
+    let n = workspace_count(lock);
     let ws = if n > 0 { format!(", {n} workspace{}", if n == 1 { "" } else { "s" }) } else { String::new() };
     format!("{all} packages, {optional} optional, {dev} dev{ws}")
 }
