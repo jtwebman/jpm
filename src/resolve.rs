@@ -75,6 +75,8 @@ pub struct Prefer {
     pub only: bool,
     /// The file's manager never installs peers (yarn 1), so the resolve adds none.
     pub legacy_peers: bool,
+    /// (package, peer): an optional peer the file installed (pnpm's), fetched as a required one.
+    pub optional_peers: HashSet<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -947,6 +949,13 @@ impl Walk<'_> {
                 fresh: false,
                 peer: false,
             });
+        }
+        if let Some(p) = self.opts.prefer.filter(|p| !p.optional_peers.is_empty()) {
+            for (n, kind) in &mut peers {
+                if p.optional_peers.contains(&(m.name.clone(), n.clone())) {
+                    *kind = PeerKind::Required;
+                }
+            }
         }
         settle(&mut s, &key, false, &peers, Some(&m.peer_dependencies), self.overrides());
         Ok(true)
