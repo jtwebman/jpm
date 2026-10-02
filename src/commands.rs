@@ -2753,8 +2753,9 @@ pub struct ScriptResult {
 /// One package.json script, or one per workspace picked. `replace`: a single script may take
 /// over this process, so signals and the exit code are the script's own.
 pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> Result<(i32, Vec<ScriptResult>)> {
-    // pnpm's `run /regex/`: each script whose name matches, in name order, wherever picked, a
-    // workspace without it skipped. The pattern runs in linear time (`ScriptPattern`).
+    // pnpm's `run /regex/`: each script whose name matches, all at once as pnpm runs them
+    // (directus's `build:*` take turns with each other's output), wherever picked, a workspace
+    // without it skipped. The pattern runs in linear time (`ScriptPattern`).
     if let Some(pattern) = run::ScriptPattern::of(script) {
         let pattern = pattern.map_err(|m| fail("ESCRIPT", m))?;
         let mut names: Vec<String> = Vec::new();
@@ -2769,9 +2770,17 @@ pub fn run_script(script: &str, args: &[String], opts: &Opts, replace: bool) -> 
             return Err(fail("ENOSCRIPT", format!("no script matches {script}")));
         }
         let each = Opts { if_present: true, ..opts.clone() };
+        install_first(opts)?;
+        let runs: Vec<Result<(i32, Vec<ScriptResult>)>> = std::thread::scope(|s| {
+            let started: Vec<_> = names.iter().map(|name| s.spawn(|| run_script(name, args, &each, false))).collect();
+            started
+                .into_iter()
+                .map(|t| t.join().unwrap_or_else(|_| Err(fail("ESCRIPT", "a script's run panicked"))))
+                .collect()
+        });
         let (mut code, mut all) = (0, Vec::new());
-        for name in names {
-            let (c, r) = run_script(&name, args, &each, false)?;
+        for run in runs {
+            let (c, r) = run?;
             if code == 0 {
                 code = c;
             }
