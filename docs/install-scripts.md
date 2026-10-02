@@ -13,7 +13,8 @@ jpm approve esbuild         # trust it, approve this version, install
 `onlyBuiltDependencies`, and `pnpm-workspace.yaml`'s `onlyBuiltDependencies` and `allowBuilds`,
 are read too, where `name: false` takes a name out and silences it) and marks the locked version `build` in jpm.lock. Both
 must agree: a new version of a trusted package does not run its scripts until it is approved
-again. Approved packages are copies, not links into the store, kept in the project; their
+again. When jpm.lock is first made from another manager's lockfile, the registry versions it
+holds of trusted names are approved, as that manager ran their scripts. Approved packages are copies, not links into the store, kept in the project; their
 scripts run once, dependencies first, with output in `.build.log` beside the package and
 shown when a script fails. npm, yarn and bun tokens are taken out of their environment, but
 that is hygiene, not a sandbox: an approved script runs as you and can read your files. Only

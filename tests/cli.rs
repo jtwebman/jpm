@@ -2025,6 +2025,29 @@ fn believes_the_tarball_over_the_registry_on_install_scripts() {
 
 #[cfg(unix)]
 #[test]
+fn an_import_approves_what_the_other_manager_built() {
+    // tldraw's pnpm-workspace.yaml allows sqlite3's build: pnpm ran it at the locked version.
+    let r = scripted();
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "bld": "1.0.0" } }));
+    env.write("pnpm-workspace.yaml", "allowBuilds:\n  bld: true\n");
+    env.write(
+        "pnpm-lock.yaml",
+        &format!(
+            "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      bld:\n        specifier: 1.0.0\n        version: 1.0.0\npackages:\n  bld@1.0.0:\n    resolution: {{integrity: {}}}\n    requiresBuild: true\nsnapshots:\n  bld@1.0.0: {{}}\n",
+            common::sha512(&bld("1.0.0").tarball())
+        ),
+    );
+    env.write(".npmrc", &format!("registry={}\n", r.url));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("approved the install scripts of bld@1.0.0"), "{out}");
+    assert_eq!(env.read("node_modules/bld/count.txt"), "run\n");
+    // Only on import: a new version waits for `jpm approve`.
+    let out = env.ok(&["add", "bld@1.1.0"]);
+    assert!(out.contains("install scripts not run for bld@1.1.0"), "{out}");
+}
+
+#[test]
 fn runs_install_scripts_only_when_approved() {
     let r = scripted();
     let env = Env::new(&r);
