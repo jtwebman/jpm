@@ -2098,6 +2098,30 @@ fn a_script_copies_a_file_out_of_node_modules_again() {
 
 #[cfg(unix)]
 #[test]
+fn runs_a_workspaces_prepare_as_the_projects_manager_does() {
+    // yarn runs only the root's prepare on install; npm and pnpm run each workspace's too.
+    let r = registry();
+    let ran = |yarn: bool| {
+        let env = Env::new(&r);
+        env.manifest(
+            json!({ "name": "root", "workspaces": ["w"], "scripts": { "prepare": "echo root >> ../ran.txt" } }),
+        );
+        env.write("w/package.json", r#"{ "name": "w", "scripts": { "prepare": "echo w-prepare >> ../../ran.txt", "postinstall": "echo w-postinstall >> ../../ran.txt" } }"#);
+        if yarn {
+            env.write("yarn.lock", "# yarn lockfile v1\n");
+        }
+        env.ok(&["install"]);
+        let mut lines: Vec<String> =
+            std::fs::read_to_string(env.root.join("ran.txt")).unwrap_or_default().lines().map(str::to_string).collect();
+        lines.sort();
+        lines.join(" ")
+    };
+    assert_eq!(ran(true), "root w-postinstall");
+    assert_eq!(ran(false), "root w-postinstall w-prepare");
+}
+
+#[cfg(unix)]
+#[test]
 fn runs_the_projects_own_lifecycle_scripts() {
     let r = scripted();
     let env = Env::new(&r);

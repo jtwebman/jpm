@@ -417,6 +417,12 @@ fn flat_workspaces(dir: &Path, manifest: &RootManifest) -> bool {
     dir.join("yarn.lock").exists() || name == "yarn"
 }
 
+/// Whether yarn made the project: its yarn.lock or .yarnrc.yml, or packageManager naming yarn.
+fn yarn_project(dir: &Path, manifest: &RootManifest) -> bool {
+    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
+    pm.starts_with("yarn@") || dir.join("yarn.lock").exists() || dir.join(".yarnrc.yml").exists()
+}
+
 /// The first of `PROJECT_LAYOUT` that the root or a workspace depends on.
 fn framework_of(project: &Project) -> Option<&'static str> {
     let manifests = std::iter::once(&project.manifest).chain(project.workspaces.iter().map(|w| &w.manifest));
@@ -753,7 +759,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     if scripts && edit.is_none() && !outcome.up_to_date {
         let mut tops = vec![(dir.as_path(), &project.manifest)];
         tops.extend(project.workspaces.iter().map(|w| (w.dir.as_path(), &w.manifest)));
-        build::run_lifecycle(&tops).map_err(again)?;
+        build::run_lifecycle(&tops, !yarn_project(&dir, &project.manifest)).map_err(again)?;
     }
     // Installed, and with scripts in the tarball itself, whatever the registry said.
     let ships = |p: &crate::graph::Package| match (store.pkg_dir(&p.integrity), store.index(&p.integrity)) {

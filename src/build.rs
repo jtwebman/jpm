@@ -170,11 +170,14 @@ fn fresh(path: &Path) -> std::io::Result<fs::File> {
 
 /// The project's lifecycle scripts (`preinstall` to `postprepare`), the root first, then each
 /// workspace, each in its own directory. Their output is shown: it is the project's own code.
-pub fn run_lifecycle(tops: &[(&Path, &RootManifest)]) -> Result<()> {
+/// `workspace_prepare`: a workspace's `prepare` runs too, as npm and pnpm run it; yarn runs only
+/// the root's (gatsby's create-gatsby would build before what it needs is built).
+pub fn run_lifecycle(tops: &[(&Path, &RootManifest)], workspace_prepare: bool) -> Result<()> {
     let Some(&(root, _)) = tops.first() else { return Ok(()) };
-    for (dir, m) in tops {
+    for (i, (dir, m)) in tops.iter().enumerate() {
         let scripts = m.doc.get("scripts").and_then(Value::as_object);
-        for event in LIFECYCLE {
+        let prepare = i == 0 || workspace_prepare;
+        for event in LIFECYCLE.iter().filter(|e| prepare || !e.ends_with("prepare")) {
             let Some(line) = scripts.and_then(|s| s.get(event)).and_then(Value::as_str) else { continue };
             let (name, version) = (m.name.as_deref().unwrap_or(""), m.version.as_deref().unwrap_or(""));
             ui::info(&format!("> {event}: {line}"));
