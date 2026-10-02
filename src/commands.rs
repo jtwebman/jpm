@@ -389,32 +389,55 @@ pub fn install(opts: Opts) -> Result<InstallResult> {
     install_tree(&mut ctx, None, None)
 }
 
-/// Whether the project was laid out by npm or yarn's node-modules linker, which link every
-/// workspace at the root: its package-lock.json or yarn.lock, or packageManager naming npm or
-/// yarn. Not pnpm's, nor yarn's Plug'n'Play (nodeLinker other than node-modules), nor one with
-/// none of these: jpm's own layout links what a package declares.
-fn flat_workspaces(dir: &Path, manifest: &RootManifest) -> bool {
-    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
-    let (name, version) = pm.split_once('@').unwrap_or((pm, ""));
-    if dir.join("pnpm-lock.yaml").exists() || name == "pnpm" || name == "bun" {
-        return false;
-    }
-    if dir.join("package-lock.json").exists() || dir.join("npm-shrinkwrap.json").exists() || name == "npm" {
-        return true;
-    }
-    let yarnrc = std::fs::read_to_string(dir.join(".yarnrc.yml")).ok();
-    let berry = yarnrc.is_some() || (name == "yarn" && !version.starts_with('1'));
-    if berry {
-        // yarn 2 and later lay out node_modules only with nodeLinker: node-modules.
-        return yarnrc.is_some_and(|t| {
-            t.lines().any(|l| {
-                l.split_once(':').is_some_and(|(k, v)| {
-                    k.trim() == "nodeLinker" && v.trim().trim_matches(['"', '\'']) == "node-modules"
+/// The layout a project was made for, by the manager whose files it has (its lockfile, or
+/// packageManager): what jpm hoists to the root by default follows it (`Layout::public_hoist`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// npm, yarn 1, yarn's node-modules linker and bun: a flat node_modules, every package and
+    /// workspace at the root, which their projects import from without declaring.
+    Flat,
+    /// pnpm, and yarn's Plug'n'Play: what a package declares, nothing at the root besides.
+    Strict,
+    /// None of these: jpm's own.
+    Own,
+}
+
+impl Layout {
+    fn of(dir: &Path, manifest: &RootManifest) -> Self {
+        let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
+        let (name, version) = pm.split_once('@').unwrap_or((pm, ""));
+        if dir.join("pnpm-lock.yaml").exists() || name == "pnpm" {
+            return Layout::Strict;
+        }
+        let npm = dir.join("package-lock.json").exists() || dir.join("npm-shrinkwrap.json").exists() || name == "npm";
+        if npm || dir.join("bun.lock").exists() || name == "bun" {
+            return Layout::Flat;
+        }
+        let yarnrc = std::fs::read_to_string(dir.join(".yarnrc.yml")).ok();
+        if yarnrc.is_some() || (name == "yarn" && !version.starts_with('1')) {
+            // yarn 2 and later lay out a node_modules only with nodeLinker: node-modules.
+            let modules = yarnrc.is_some_and(|t| {
+                t.lines().any(|l| {
+                    l.split_once(':').is_some_and(|(k, v)| {
+                        k.trim() == "nodeLinker" && v.trim().trim_matches(['"', '\'']) == "node-modules"
+                    })
                 })
-            })
-        });
+            });
+            return if modules { Layout::Flat } else { Layout::Strict };
+        }
+        if dir.join("yarn.lock").exists() || name == "yarn" { Layout::Flat } else { Layout::Own }
     }
-    dir.join("yarn.lock").exists() || name == "yarn"
+
+    /// What the root links of the hidden hoist when no setting says: everything where the
+    /// project's manager lays it out flat, nothing where it is strict (pnpm 10 hoists none, and
+    /// @types stubs at the root break tsc there), and types, linters and formatters for jpm's own.
+    fn public_hoist(self) -> Vec<String> {
+        match self {
+            Layout::Flat => vec!["*".to_string()],
+            Layout::Strict => Vec::new(),
+            Layout::Own => link::PUBLIC_HOIST.iter().map(|p| p.to_string()).collect(),
+        }
+    }
 }
 
 /// Whether yarn made the project: its yarn.lock or .yarnrc.yml, or packageManager naming yarn.
@@ -611,14 +634,13 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     // No salt (a store that cannot be written): a hash no state holds, so none vouches for the tree.
     let salt = crate::store::salt(&store.dir).unwrap_or_else(crate::util::temp_suffix);
     // Undeclared packages linked at the root too, as pnpm's public-hoist-pattern does: .npmrc's
-    // setting, else pnpm-workspace.yaml's, else types, eslint and prettier, which tools look for
-    // at the root (tsc's `types: ["node"]`, an editor's eslint).
+    // setting, else pnpm-workspace.yaml's, else what the project's own manager would put there.
     let public_hoist = ctx
         .config()
         .public_hoist
         .clone()
         .or_else(|| project.rules.public_hoist.clone())
-        .unwrap_or_else(|| link::PUBLIC_HOIST.iter().map(|p| p.to_string()).collect());
+        .unwrap_or_else(|| Layout::of(&dir, &project.manifest).public_hoist());
     let hash = state::state_hash(
         &lock_hash,
         ctx.opts.production,
@@ -723,7 +745,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         tarballs: Some(tarballs.clone()),
         patches: &project.manifest.patches,
         public_hoist: &public_hoist,
-        workspaces_at_root: flat_workspaces(&dir, &project.manifest),
+        workspaces_at_root: Layout::of(&dir, &project.manifest) == Layout::Flat,
         fetch: if overlap { Some(&fetch) } else { None },
         clean: ctx.opts.clean,
     };
