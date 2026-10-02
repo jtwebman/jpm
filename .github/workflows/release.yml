@@ -103,6 +103,15 @@ jobs:
           readelf -d ${{ matrix.asset }} | grep -q NEEDED && { echo "the musl build is not static"; exit 1; }
           readelf -l ${{ matrix.asset }} | grep -q INTERP && { echo "the musl build names a loader"; exit 1; }
           true
+      # A Mac build runs on the runner it was built on, for its own CPU. An arm64 Mac kills a
+      # binary whose signature (the linker's ad-hoc one) is broken, so that is checked first; an
+      # Intel build needs none.
+      - if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
+        run: |
+          ${{ startsWith(matrix.target, 'aarch64') && format('codesign --verify --verbose {0}', matrix.asset) || 'true' }}
+          want=${{ startsWith(matrix.target, 'aarch64') && 'arm64' || 'x86_64' }}
+          [ "$(lipo -archs ${{ matrix.asset }})" = "$want" ] || { echo "not a $want build: $(lipo -archs ${{ matrix.asset }})"; exit 1; }
+          ./${{ matrix.asset }} --version
       # Run each Linux build on the oldest system it is for: glibc 2.17's CentOS 7, and Alpine.
       # Both by the digest of their multi-arch index, which serves the x64 and the arm64 runners.
       - if: matrix.run
