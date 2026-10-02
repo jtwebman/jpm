@@ -2213,6 +2213,7 @@ snapshots:
             hash: "f".repeat(64),
             text: Vec::new(),
             yarn: false,
+            missing: None,
         };
         let load_with = |file: &str, text: &str, m: &RootManifest| load(file, text, m, false, &npmjs).map(|_| ());
         let pnpm =

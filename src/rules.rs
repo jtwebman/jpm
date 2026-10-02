@@ -496,7 +496,15 @@ impl Rules {
         root.patches.clear();
         for (key, path, yarn) in &self.patches {
             let (name, range) = name_range(key);
-            let patch = Patch::read(dir, name, range.filter(|r| !r.is_empty()), path)?;
+            let range = range.filter(|r| !r.is_empty());
+            let patch = match Patch::read(dir, name.clone(), range.clone(), path) {
+                Ok(p) => p,
+                // yarn reads a patch only for a package that takes it: `select` says, if one does.
+                Err(e) if *yarn => {
+                    Patch { name, range, path: path.clone(), missing: Some(e.message), ..Patch::default() }
+                }
+                Err(e) => return Err(e),
+            };
             root.patches.push(Patch { yarn: *yarn, ..patch });
         }
         root.extensions = self.extensions.clone();

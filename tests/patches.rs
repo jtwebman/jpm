@@ -216,6 +216,14 @@ fn leaves_a_yarn_patch_nothing_takes_unused() {
     // pnpm's is an error, as in pnpm.
     env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "pnpm": { "patchedDependencies": { "b@2.0.0": ".yarn/patches/b-npm-2.0.0-abc.patch" } } }));
     assert!(fails(&env, &["install"]).contains("no package in the tree is patched by b@2.0.0"));
+    // Its file gone too (joplin's): yarn never reads it, and neither does jpm, until a package
+    // takes it.
+    let gone = "patch:b@npm%3A2.0.0#./.yarn/patches/gone.patch";
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@^2.0.0": gone } }));
+    assert!(env.ok(&["install"]).contains("yarn leaves it unused"));
+    let gone = "patch:b@npm%3A1.0.0#./.yarn/patches/gone.patch";
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@npm:1.0.0": gone } }));
+    assert!(fails(&env, &["install"]).contains("cannot read the patch ./.yarn/patches/gone.patch"));
 }
 
 #[test]
