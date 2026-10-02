@@ -645,7 +645,9 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         let mut at: HashMap<String, Vec<String>> = HashMap::new();
         let mut put = |pkg: &Package, place: PathBuf| {
             let place = relative(opts.dir, &place).to_string_lossy().replace('\\', "/");
-            let places = at.entry(format!("{}@{}", pkg.name, pkg.version)).or_default();
+            // yarn names an alias's package by its own name: `@typescript/typescript6@npm:6.0.2`.
+            let real = pkg.alias.as_deref().unwrap_or(&pkg.name);
+            let places = at.entry(format!("{real}@{}", pkg.version)).or_default();
             if !places.contains(&place) {
                 places.push(place);
             }
