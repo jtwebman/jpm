@@ -907,8 +907,11 @@ fn fill_subgraphs(lock: &mut Lockfile) {
 /// Mark each package the project's patches apply to. Whether that changed anything: then the
 /// subgraphs are hashed again, and the file no longer has the content it was read with.
 pub fn mark_patches(lock: &mut Lockfile, patches: &[crate::patch::Patch]) -> Result<bool> {
+    // An alias by the package it installs, as pnpm patches it: anthropic-sdk-typescript's
+    // `tsc-multi` is @stainless-api/tsc-multi, and its patch names that.
     let packages = lock.packages.iter().filter(|(k, _)| !is_link(k)).filter_map(|(k, e)| {
         let (name, tail) = split_key(split_peers(k).0)?;
+        let (name, tail) = crate::graph::split_alias(tail).unwrap_or((name, tail));
         Some((k.as_str(), name, e.version.as_deref().unwrap_or(tail)))
     });
     let chosen = crate::patch::select(patches, packages)?;
