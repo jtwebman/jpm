@@ -90,6 +90,8 @@ pub struct Prefer {
     /// (`name@version`, dependency) -> the version the file gave that package's edge (pnpm's
     /// snapshots), where two copies did not differ.
     pub edges: HashMap<(String, String), String>,
+    /// `name@spec` of a git dependency -> the commit the file resolved it to (yarn's).
+    pub commits: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -453,7 +455,13 @@ impl Walk<'_> {
                     source
                 }
                 None => {
-                    let m = self.read(&spec.fetch_spec, None, "")?;
+                    // The commit the old lockfile resolved this very spec to, a branch's that may
+                    // be gone (babel/minify's `gulpjs/gulp#4.0`).
+                    let preferred = (!fresh)
+                        .then(|| self.opts.prefer?.commits.get(&format!("{name}@{range}")))
+                        .flatten()
+                        .map(|c| format!("{}#{c}", crate::git::split(&spec.fetch_spec).0));
+                    let m = self.read(preferred.as_deref().unwrap_or(&spec.fetch_spec), None, "")?;
                     let source = m.dist.tarball.clone().unwrap_or_default();
                     self.visit(from, &spec.name, &m, Some(&source), None, queue)?;
                     source

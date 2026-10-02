@@ -479,3 +479,23 @@ fn installs_a_git_repository_with_no_package_json() {
     ok(&env, &["ci"]);
     assert_eq!(env.read("node_modules/src/lib/a.js"), "a");
 }
+
+#[test]
+fn takes_the_commit_yarn_lock_resolved_a_branch_to() {
+    // babel/minify's `gulpjs/gulp#4.0`, a branch since deleted: yarn.lock holds its commit.
+    let r = registry();
+    let env = Env::new(&r);
+    let repo = Repo::new(&env, "gp");
+    let first = repo.commit(&[("package.json", MANIFEST), ("lib/index.js", "first"), ("lib/cli.js", "")]);
+    repo.commit(&[("lib/index.js", "moved")]);
+    let spec = format!("{}#main", repo.url());
+    env.manifest(json!({ "dependencies": { "gp": spec } }));
+    let entry = format!(
+        "# yarn lockfile v1\n\n\n\"gp@{spec}\":\n  version \"1.0.0\"\n  resolved \"{}#{first}\"\n  dependencies:\n    b \"1\"\n\nb@1:\n  version \"1.0.0\"\n",
+        repo.url()
+    );
+    env.write("yarn.lock", &entry);
+    ok(&env, &["install"]);
+    assert_eq!(env.read("node_modules/gp/lib/index.js"), "first");
+    assert!(env.read("jpm.lock").contains(&first));
+}
