@@ -125,6 +125,7 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
         return Ok(read_yarn(text));
     }
     let mut prefer = Prefer::default();
+    let mut edges: Vec<(String, String, String)> = Vec::new();
     for (name, version) in pins(file, text)? {
         prefer.versions.entry(name).or_default().push(version);
     }
@@ -134,21 +135,12 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
         let doc = pnpm_doc(text)?;
         let empty = Map::new();
         let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty).index();
-        let mut twice = HashSet::new();
         for (key, snap) in doc.get("snapshots").and_then(Value::as_object).into_iter().flatten() {
             let id = strip_peers(key);
             for (dep, version) in
                 deps(snap.get("dependencies")).into_iter().chain(deps(snap.get("optionalDependencies")))
             {
-                let version = strip_peers(&version);
-                if !crate::semver::is_exact(version) {
-                    continue;
-                }
-                let edge = (id.to_string(), dep);
-                if prefer.edges.get(&edge).is_some_and(|v| v != version) {
-                    twice.insert(edge.clone());
-                }
-                prefer.edges.insert(edge, version.to_string());
+                edges.push((id.to_string(), dep, strip_peers(&version).to_string()));
             }
             let Some(meta) = packages.get(id).and_then(|p| p.get("peerDependenciesMeta")) else { continue };
             for (peer, _) in deps(snap.get("dependencies")).into_iter().chain(deps(snap.get("optionalDependencies"))) {
@@ -157,8 +149,31 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
                 }
             }
         }
-        prefer.edges.retain(|e, _| !twice.contains(e));
     }
+    // npm's and bun's trees: what each package's folder finds on the walk up, as Node would.
+    let tree = match file {
+        "package-lock.json" | "npm-shrinkwrap.json" => read_npm(file, text).ok(),
+        "bun.lock" => read_bun(text).ok(),
+        _ => None,
+    };
+    for node in tree.iter().flat_map(|t| &t.nodes).filter(|n| n.real.is_none()) {
+        for (dep, version) in node.dependencies.iter().chain(&node.optional_dependencies) {
+            edges.push((format!("{}@{}", node.name, node.version), dep.clone(), version.clone()));
+        }
+    }
+    // Two copies of a package that took one edge differently: neither is kept.
+    let mut twice = HashSet::new();
+    for (from, dep, version) in edges {
+        if !crate::semver::is_exact(&version) {
+            continue;
+        }
+        let edge = (from, dep);
+        if prefer.edges.get(&edge).is_some_and(|v| *v != version) {
+            twice.insert(edge.clone());
+        }
+        prefer.edges.insert(edge, version);
+    }
+    prefer.edges.retain(|e, _| !twice.contains(e));
     prefer.ranges = top_ranges(file, text)?;
     Ok(prefer)
 }
