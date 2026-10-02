@@ -667,3 +667,61 @@ fn a_peer_nothing_in_scope_has_links_the_root_of_its_name() {
         assert_eq!(node_require(&env, "packages/app", "wrap"), "the root", "{store}");
     }
 }
+
+#[test]
+fn a_pnpm_lock_keeps_the_optional_peers_it_settled() {
+    // nuxt/ui's lock settles @nuxt/content's optional better-sqlite3, which nothing else brings
+    // in: pnpm installed it, and Nuxt Content needs it.
+    let sqlite = pkg("sqlite", "1.0.0", json!({}));
+    let content = pkg(
+        "content",
+        "1.0.0",
+        json!({ "peerDependencies": { "sqlite": "^1" }, "peerDependenciesMeta": { "sqlite": { "optional": true } } }),
+    );
+    let sri = (common::sha512(&content.tarball()), common::sha512(&sqlite.tarball()));
+    let r = Registry::start(vec![sqlite, content]);
+    for workspaces in [false, true] {
+        let env = Env::new(&r);
+        env.write(".npmrc", &format!("registry={}\n", r.url));
+        let mut manifest = json!({ "dependencies": { "content": "1.0.0" } });
+        let mut importers = String::new();
+        if workspaces {
+            manifest["workspaces"] = json!(["packages/*"]);
+            env.write("packages/app/package.json", r#"{ "name": "app", "version": "1.0.0" }"#);
+            importers = "  packages/app: {}\n".into();
+        }
+        env.manifest(manifest);
+        env.write(
+            "pnpm-lock.yaml",
+            &format!(
+                "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      content:
+        specifier: 1.0.0
+        version: 1.0.0(sqlite@1.0.0)
+{importers}packages:
+  content@1.0.0:
+    resolution: {{integrity: {}}}
+    peerDependencies:
+      sqlite: ^1
+    peerDependenciesMeta:
+      sqlite:
+        optional: true
+  sqlite@1.0.0:
+    resolution: {{integrity: {}}}
+snapshots:
+  content@1.0.0(sqlite@1.0.0):
+    optionalDependencies:
+      sqlite: 1.0.0
+  sqlite@1.0.0: {{}}
+",
+                sri.0, sri.1
+            ),
+        );
+        let out = env.ok(&["install"]);
+        assert!(env.exists("node_modules/content/../sqlite/index.js"), "workspaces {workspaces}: {out}");
+        assert!(env.ok(&["install"]).contains("up to date"));
+    }
+}

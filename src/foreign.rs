@@ -78,6 +78,9 @@ struct Source {
     /// pnpm's `packageExtensionsChecksum`; npm and bun apply no packageExtensions.
     extensions: Option<String>,
     runtimes: Runtimes,
+    /// The optional peers it settled were installed: pnpm installs one its snapshot names, npm
+    /// and bun only one something else brings in.
+    optional_peers: bool,
 }
 
 /// What an edge finds: a version, a copy inside the parent's tarball, or nothing from a registry.
@@ -124,6 +127,21 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
     let mut prefer = Prefer::default();
     for (name, version) in pins(file, text)? {
         prefer.versions.entry(name).or_default().push(version);
+    }
+    // The optional peers its snapshots settled: pnpm installed them.
+    if file == "pnpm-lock.yaml" {
+        let doc = pnpm_doc(text)?;
+        let empty = Map::new();
+        let packages = doc.get("packages").and_then(Value::as_object).unwrap_or(&empty).index();
+        for (key, snap) in doc.get("snapshots").and_then(Value::as_object).into_iter().flatten() {
+            let id = strip_peers(key);
+            let Some(meta) = packages.get(id).and_then(|p| p.get("peerDependenciesMeta")) else { continue };
+            for (peer, _) in deps(snap.get("dependencies")).into_iter().chain(deps(snap.get("optionalDependencies"))) {
+                if truthy(meta.get(&peer).and_then(|m| m.get("optional"))) {
+                    prefer.optional_peers.insert((split_id(id).0, peer));
+                }
+            }
+        }
     }
     Ok(prefer)
 }
@@ -399,6 +417,7 @@ fn read_npm(file: &str, text: &str) -> Result<Source> {
         patches: Value::Null,
         extensions: None,
         runtimes: Runtimes::new(),
+        optional_peers: false,
     })
 }
 
@@ -783,6 +802,7 @@ fn read_pnpm(text: &str) -> Result<Source> {
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
         extensions: doc.get("packageExtensionsChecksum").and_then(Value::as_str).map(str::to_string),
         runtimes,
+        optional_peers: true,
     })
 }
 
@@ -930,6 +950,7 @@ fn read_bun(text: &str) -> Result<Source> {
         patches: doc.get("patchedDependencies").cloned().unwrap_or(Value::Null),
         extensions: None,
         runtimes: Runtimes::new(),
+        optional_peers: false,
     })
 }
 
@@ -1095,7 +1116,7 @@ fn build(
         let mut next = Vec::new();
         for (name, version) in node.dependencies.iter().chain(&optional) {
             // An optional peer brings nothing in: npm prunes a package only such edges reach.
-            if node.peers.get(name) != Some(&PeerKind::Optional) {
+            if source.optional_peers || node.peers.get(name) != Some(&PeerKind::Optional) {
                 next.push(edge_key(&nodes, file, &key, name, version)?);
             }
         }
@@ -1115,8 +1136,9 @@ fn build(
         let Some(mut node) = nodes.remove(key) else { continue };
         // An optional peer stays settled only on a package something else brings in.
         let peers = &node.peers;
-        node.optional_dependencies
-            .retain(|n, v| peers.get(n) != Some(&PeerKind::Optional) || seen.contains(&format!("{n}@{v}")));
+        node.optional_dependencies.retain(|n, v| {
+            source.optional_peers || peers.get(n) != Some(&PeerKind::Optional) || seen.contains(&format!("{n}@{v}"))
+        });
         if node.integrity.is_empty() {
             return Err(fail(format!("{file} gives {key} no integrity")));
         }
