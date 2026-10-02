@@ -2442,6 +2442,49 @@ fn links_a_workspace_for_a_plain_range_only_where_the_manager_would() {
 }
 
 #[test]
+fn a_lock_with_workspaces_keeps_the_version_each_workspace_range_got() {
+    // cline's bun.lock: the workspace's ^4 got the hoisted 4.0.42, not the 4.0.66 only a package
+    // below nests, and a `latest` keeps the version locked then.
+    let r = Registry::start(vec![
+        pkg("x", "1.0.0", json!({})),
+        pkg("x", "1.1.0", json!({})),
+        pkg("x", "1.2.0", json!({})),
+        pkg("deep", "1.0.0", json!({ "dependencies": { "x": "1.1.0" } })),
+    ]);
+    let sri = |v: &str| common::sha512(&pkg("x", v, json!({})).tarball());
+    let deep = common::sha512(&pkg("deep", "1.0.0", json!({ "dependencies": { "x": "1.1.0" } })).tarball());
+    for (range, want) in [("^1.0.0", "1.0.0"), ("latest", "1.0.0")] {
+        let env = Env::new(&r);
+        env.write(".npmrc", &format!("registry={}\n", r.url));
+        env.manifest(json!({ "name": "root", "workspaces": ["app"], "dependencies": { "deep": "1.0.0" } }));
+        env.write("app/package.json", &json!({ "name": "app", "dependencies": { "x": range } }).to_string());
+        env.write(
+            "bun.lock",
+            &format!(
+                r#"{{
+  "lockfileVersion": 1,
+  "workspaces": {{
+    "": {{ "name": "root", "dependencies": {{ "deep": "1.0.0" }} }},
+    "app": {{ "name": "app", "dependencies": {{ "x": "{range}" }} }},
+  }},
+  "packages": {{
+    "app": ["app@workspace:app"],
+    "deep": ["deep@1.0.0", "", {{ "dependencies": {{ "x": "1.1.0" }} }}, "{deep}"],
+    "x": ["x@1.0.0", "", {{}}, "{}"],
+    "deep/x": ["x@1.1.0", "", {{}}, "{}"],
+  }}
+}}
+"#,
+                sri("1.0.0"),
+                sri("1.1.0")
+            ),
+        );
+        let out = env.ok(&["install"]);
+        assert!(env.read("app/node_modules/x/index.js").contains(&format!("x@{want}")), "{range}: {out}");
+    }
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
