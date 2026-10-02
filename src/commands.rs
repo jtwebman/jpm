@@ -1669,7 +1669,6 @@ fn resolve_lock(
             .link_workspaces
             .or(project.rules.link_workspaces)
             .unwrap_or_else(|| !pnpm_9(&project.dir, &project.manifest)),
-        dedupe_peers: project.rules.dedupe_peers,
         block_exotic: ctx.config().block_exotic_subdeps,
         threads: pool::resolve_threads(),
     };
