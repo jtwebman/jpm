@@ -706,7 +706,21 @@ impl Walk<'_> {
         let source = self.source_of(&spec.fetch_spec, from)?;
         let path = &source[5..]; // `link:` or `file:`
         if path.is_empty() {
-            return Err(Error::new("EINVALIDSPEC", "a package cannot depend on the project's own directory"));
+            // The project's own directory under its own name (eslint's `file:.`): the root,
+            // linked as npm links it. Under another name it is nothing jpm can install.
+            let root = self
+                .root_local
+                .as_ref()
+                .or_else(|| self.local.get(&spec.name))
+                .filter(|r| r.name == spec.name && r.local.as_deref() == Some(project::ROOT_PATH));
+            let Some(root) = root else {
+                return Err(Error::new("EINVALIDSPEC", "a package cannot depend on the project's own directory"));
+            };
+            let mut s = lock(&self.state);
+            if s.started.insert(root.key()) {
+                s.records.insert(root.key(), root.clone());
+            }
+            return Ok(root.edge_version());
         }
         let version = format!("link:{path}");
         if self.tops.contains_key(&format!("{}@{version}", spec.name)) {
@@ -821,10 +835,7 @@ impl Walk<'_> {
                 return fail(format!("no workspace package named {}", spec.fetch_name));
             };
             // A workspace on itself (mui's `@mui/types`) links to its own directory, as pnpm links
-            // it; the root, which no workspace path names, cannot.
-            if root.is_some() && from == ROOT {
-                return fail(format!("workspace {} cannot depend on itself", spec.name));
-            }
+            // it; the root on itself (swr's, msw's `workspace:*`) too, its node_modules linking up.
             if root.is_some() {
                 // Recorded once a workspace links it, as a root listed among its workspaces is.
                 let mut s = lock(&self.state);
