@@ -6,7 +6,7 @@ installs each with jpm and reports what failed:
 
 ```sh
 cargo build --release
-python3 tests/corpus/run.py                # every project, 4 at a time
+python3 tests/corpus/run.py                # every project, 4 at a time (2 with --run)
 python3 tests/corpus/run.py vitejs/vite    # just these
 python3 tests/corpus/run.py --run          # also run a build, typecheck, check or lint script
 ```
@@ -33,6 +33,12 @@ that lets only one manager in.
 pnpm, yarn or bun becomes jpm, `dlx` and `bunx` become jpx, a one-manager preinstall goes), then
 installs with scripts and runs the build script. Its results go to `results/<platform>.fixup.tsv`,
 the table's *after changes* column. jpm and jpx are on `PATH` for every script.
+
+Each step runs in a process group of its own, and the group goes when the step ends: a dev
+server, a watcher or a build daemon a script left behind does not outlive it (turbo's and nx's
+daemons are off). A step whose processes pass 6 GB together is stopped (`CORPUS_MAX_RSS_MB`), and
+a step waits to start while the machine has under 4 GB free (`CORPUS_MIN_FREE_MB`). `--run` and
+`--fixup` build 2 projects at a time, `-j` says otherwise.
 
 All projects share one store under the work dir. Logs of every step are kept in its `logs/`,
 and the results in `results-<stamp>.json`. A line's `# expect: <reason>` marks a failure by
