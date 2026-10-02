@@ -2439,7 +2439,9 @@ fn links_a_workspace_for_a_plain_range_only_where_the_manager_would() {
     assert!(!linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\n")]));
     assert!(linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\nlinkWorkspacePackages: true\n")]));
     assert!(linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\n"), (".npmrc", "link-workspace-packages=true\n")]));
+}
 
+#[test]
 fn a_lock_with_workspaces_keeps_the_version_each_workspace_range_got() {
     // cline's bun.lock: the workspace's ^4 got the hoisted 4.0.42, not the 4.0.66 only a package
     // below nests, and a `latest` keeps the version locked then.
