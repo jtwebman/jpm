@@ -467,3 +467,19 @@ fn a_registry_package_path_out_of_itself_is_refused() {
         assert!(!out.status.success() && stderr(&out).contains(&want), "{path}: {}", stderr(&out));
     }
 }
+
+#[test]
+fn links_a_directory_with_no_package_json() {
+    // chakra's `"compositions": "../compositions/src"`, a source folder: only linked, as pnpm
+    // links it, with nothing of its own to install.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["www"] }));
+    env.write("www/package.json", r#"{ "name": "www", "dependencies": { "src": "../lib/src", "a": "1.0.0" } }"#);
+    env.write("lib/src/index.js", "module.exports = 1;\n");
+    env.ok(&["install"]);
+    leads(&env.project().join("www"), "src", &env.project().join("lib/src"));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    env.ok(&["ci"]);
+    leads(&env.project().join("www"), "src", &env.project().join("lib/src"));
+}
