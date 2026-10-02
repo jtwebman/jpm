@@ -20,12 +20,13 @@ pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 const YARNRC: &str = ".yarnrc.yml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 9] = [
+const UNREAD: [&str; 10] = [
     "hoistPattern",
     "hoistWorkspacePackages",
     "supportedArchitectures",
     "ignoredOptionalDependencies",
     "resolutionMode",
+    "dedupePeerDependents",
     "injectWorkspacePackages",
     "configDependencies",
     "dangerouslyAllowAllBuilds",
@@ -170,8 +171,6 @@ pub struct Rules {
     /// pnpm-workspace.yaml's `linkWorkspacePackages` (`deep` is on), .yarnrc.yml's
     /// `enableTransparentWorkspaces`. `None` when neither says.
     pub link_workspaces: Option<bool>,
-    /// pnpm-workspace.yaml's `dedupePeerDependents`, on unless it says `false`.
-    pub dedupe_peers: bool,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -196,7 +195,7 @@ fn truthy(v: Option<&Value>) -> bool {
 
 /// The project's rules, from its root package.json and the files beside it.
 pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
-    let mut rules = Rules { file: dir.join("package.json"), dedupe_peers: true, ..Rules::default() };
+    let mut rules = Rules { file: dir.join("package.json"), ..Rules::default() };
     let doc = &root.doc;
     let pnpm = doc.get("pnpm");
     let mut workspace_extensions = None;
@@ -216,7 +215,6 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
         rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
         rules.link_workspaces =
             y.get("linkWorkspacePackages").filter(|v| !v.is_null()).map(|v| v != &Value::Bool(false));
-        rules.dedupe_peers = y.get("dedupePeerDependents") != Some(&Value::Bool(false));
         // `nodeLinker: hoisted` is npm's flat layout: every package at the root is jpm's nearest.
         let hoisted = y.get("nodeLinker").and_then(Value::as_str) == Some("hoisted");
         rules.public_hoist = if hoisted || y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
