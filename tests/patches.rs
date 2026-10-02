@@ -210,9 +210,12 @@ fn leaves_a_yarn_patch_nothing_takes_unused() {
     env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@^2.0.0": stale } }));
     let out = env.ok(&["install"]);
     assert!(
-        out.contains("no package in the tree is patched by b@2.0.0") && out.contains("yarn leaves it unused"),
+        out.contains("no package in the tree is patched by b@2.0.0") && out.contains("yarn and bun leave it unused"),
         "{out}"
     );
+    // bun's too (tamagui patches qrcode-terminal, which its tree no longer has).
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "patchedDependencies": { "b@2.0.0": ".yarn/patches/b-npm-2.0.0-abc.patch" } }));
+    assert!(env.ok(&["install"]).contains("yarn and bun leave it unused"));
     // pnpm's is an error, as in pnpm.
     env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "pnpm": { "patchedDependencies": { "b@2.0.0": ".yarn/patches/b-npm-2.0.0-abc.patch" } } }));
     assert!(fails(&env, &["install"]).contains("no package in the tree is patched by b@2.0.0"));
@@ -220,7 +223,7 @@ fn leaves_a_yarn_patch_nothing_takes_unused() {
     // takes it.
     let gone = "patch:b@npm%3A2.0.0#./.yarn/patches/gone.patch";
     env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@^2.0.0": gone } }));
-    assert!(env.ok(&["install"]).contains("yarn leaves it unused"));
+    assert!(env.ok(&["install"]).contains("yarn and bun leave it unused"));
     let gone = "patch:b@npm%3A1.0.0#./.yarn/patches/gone.patch";
     env.manifest(json!({ "dependencies": { "a": "1.0.0" }, "resolutions": { "b@npm:1.0.0": gone } }));
     assert!(fails(&env, &["install"]).contains("cannot read the patch ./.yarn/patches/gone.patch"));
