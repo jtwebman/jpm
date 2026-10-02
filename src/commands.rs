@@ -1761,12 +1761,18 @@ fn find_dirs(project: &Project) -> Result<Vec<resolve::Dir>> {
             let source = spec::source_at(&s.fetch_spec, &base);
             let path = source[5..].to_string();
             let outside = path == ".." || path.starts_with("../");
-            let top = source.starts_with("file:") && !outside && !path.is_empty() && !workspaces.contains(&*path);
+            let file = project.dir.join(&path).join("package.json");
+            // One with no package.json (chakra's `../compositions/src`, a source folder) has no
+            // dependencies to walk: only linked, as pnpm links it. One not there is an error.
+            let top = source.starts_with("file:")
+                && !outside
+                && !path.is_empty()
+                && !workspaces.contains(&*path)
+                && (file.exists() || !project.dir.join(&path).is_dir());
             let at = out.iter().position(|d| d.path == path);
             if at.is_some_and(|at| out[at].top || !top) {
                 continue;
             }
-            let file = project.dir.join(&path).join("package.json");
             let manifest = match project::read_manifest(&file) {
                 Ok(mut m) => {
                     crate::extensions::extend_top(&project.manifest.extensions, &mut m);
