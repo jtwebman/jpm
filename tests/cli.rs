@@ -3209,6 +3209,31 @@ snapshots:
 }
 
 #[test]
+fn keeps_the_version_an_npm_lock_gave_each_package_edge() {
+    // npm's tree: a's ^1.0.0 finds b 1.0.0 nested under it, the root's b is 1.1.0.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["w"], "dependencies": { "b": "1.1.0" } }));
+    env.write("w/package.json", r#"{ "name": "w", "dependencies": { "a": "1.0.0" } }"#);
+    let entry =
+        |v: &str, deps: serde_json::Value| json!({ "version": v, "integrity": "sha512-x", "dependencies": deps });
+    let lock = json!({
+        "name": "root", "lockfileVersion": 3, "packages": {
+            "": { "name": "root", "workspaces": ["w"], "dependencies": { "b": "1.1.0" } },
+            "w": { "name": "w", "dependencies": { "a": "1.0.0" } },
+            "node_modules/w": { "resolved": "w", "link": true },
+            "node_modules/a": entry("1.0.0", json!({ "b": "^1.0.0" })),
+            "node_modules/a/node_modules/b": entry("1.0.0", json!({})),
+            "node_modules/b": entry("1.1.0", json!({})),
+        }
+    });
+    env.write("package-lock.json", &lock.to_string());
+    let out = env.ok(&["install"]);
+    assert!(out.contains("package-lock.json has workspaces"), "{out}");
+    assert_eq!(env.lock()["packages"]["a@1.0.0"]["dependencies"]["b"], "1.0.0");
+}
+
+#[test]
 fn reads_pnpm_workspaces_and_catalogs() {
     let r = registry();
     let env = Env::new(&r);
