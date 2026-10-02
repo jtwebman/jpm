@@ -37,8 +37,8 @@ def repos(path, only):
 # A manager in command position: a line's start, or after ; && || | or (. bun is a runtime too
 # (bun test, bun build, bun ./x.ts), which jpm installs and leaves as is: only its package
 # manager's commands count, and `bun run` of a script, not of a file.
-AT = r"(?:^|[;&|(])\s*"
-OTHER_PM = re.compile(AT + r"(?:(pnpm|yarn)(?=\s|$)|(bunx)(?=\s|$)|(bun)(?=\s+(?:install|i|add|remove|rm|x|run\s+[\w:-]+(?=\s|$|[;&|)]))\b))")
+AT = r"(?:^|[;&|(])\s*(?:(?:cross-env\s+)?(?:\w+=\S*\s+)+)?"
+OTHER_PM = re.compile(AT + r"(?:(pnpm|yarn|pn|pnx)(?=\s|$)|(bunx)(?=\s|$)|(bun)(?=\s+(?:install|i|add|remove|rm|x|run\s+(?:--cwd\s+\S+\s+)?(?!-)[\w:-]+(?=\s|$|[;&|)]))\b))")
 
 
 def calls(work):
@@ -56,7 +56,7 @@ def calls(work):
             if not isinstance(line, str):
                 continue
             for pm in {next(g for g in m if g) for m in OTHER_PM.findall(line)}:
-                pm = "bun" if pm == "bunx" else pm
+                pm = {"bunx": "bun", "pn": "pnpm", "pnx": "pnpm"}.get(pm, pm)
                 used[pm] = used.get(pm, 0) + 1
             if key == "preinstall" and ("only-allow" in line or "npm_config_user_agent" in line or "block-npm" in line):
                 guard = "preinstall allows only " + (line.split("only-allow", 1)[1].split()[0] if "only-allow" in line else "its own manager")
@@ -65,14 +65,17 @@ def calls(work):
 
 
 def fixup(work):
-    """The changes `calls` names, made: each script's pnpm, yarn or bun is jpm (dlx and bunx jpx),
-    and a preinstall that lets one manager in is gone. The number of scripts changed."""
+    """The changes `calls` names, made: each script's pnpm, yarn or bun is jpm (dlx, bunx and pnpm
+    12's pnx jpx, its pn jpm), and a preinstall that lets one manager in is gone. The number of
+    scripts changed."""
     changed = 0
-    at = r"(^|[;&|(]\s*)"
+    at = r"((?:^|[;&|(])\s*(?:(?:cross-env\s+)?(?:\w+=\S*\s+)+)?)"
     swap = [(re.compile(at + r"(?:pnpm|yarn) dlx(?=\s)"), r"\1jpx"),
+            (re.compile(at + r"pnx(?=\s|$)"), r"\1jpx"),
+            (re.compile(at + r"pn(?=\s|$)"), r"\1jpm"),
             (re.compile(at + r"(?:bunx|bun x)(?=\s|$)"), r"\1jpx"),
             (re.compile(at + r"(?:pnpm|yarn)(?=\s|$)"), r"\1jpm"),
-            (re.compile(at + r"bun(?=\s+(?:install|i|add|remove|rm|run\s+[\w:-]+(?:\s|$|[;&|)])))"), r"\1jpm")]
+            (re.compile(at + r"bun(?=\s+(?:install|i|add|remove|rm|run\s+(?:--cwd\s+\S+\s+)?(?!-)[\w:-]+(?:\s|$|[;&|)])))"), r"\1jpm")]
     files = subprocess.run(["git", "ls-files", "package.json", "*/package.json"], cwd=work,
                            capture_output=True, text=True).stdout.split()
     for f in files:
@@ -99,21 +102,99 @@ def fixup(work):
     return changed
 
 
+# Memory. A step's whole process group is watched: past MAX_RSS_MB it is killed, and when the
+# step ends what it started goes with it (a dev server, a watcher, a build left running by a
+# timeout). One left behind per repository took a 36 GB machine's memory over a --fixup run. A
+# step starts only while the machine has MIN_FREE_MB free.
+MAX_RSS_MB = int(os.environ.get("CORPUS_MAX_RSS_MB", "6144"))
+MIN_FREE_MB = int(os.environ.get("CORPUS_MIN_FREE_MB", "4096"))
+TAIL = 64 * 1024
+
+
+def free_mb():
+    """Memory the system can give out now, in MB; None where it cannot be read."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+            page = int(re.search(r"page size of (\d+)", out).group(1))
+            pages = sum(int(m) for m in re.findall(r"Pages (?:free|inactive|speculative|purgeable):\s+(\d+)", out))
+            return pages * page // 2**20
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def group_rss_mb(pgid):
+    out = subprocess.run(["ps", "-axo", "pgid=,rss="], capture_output=True, text=True).stdout
+    rows = [line.split() for line in out.splitlines()]
+    return sum(int(row[1]) for row in rows if len(row) == 2 and row[0] == str(pgid)) // 1024
+
+
+def kill_group(p):
+    """The step's process and everything in its group, the lingering ones included."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+        return
+    import signal
+    for sig, wait in [(signal.SIGTERM, 2), (signal.SIGKILL, 0)]:
+        try:
+            os.killpg(p.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(wait)
+
+
 def run(cmd, cwd, env, log, timeout):
     t = time.time()
-    try:
-        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
-        rc, out = p.returncode, p.stdout + p.stderr
-    except subprocess.TimeoutExpired as e:
-        rc, out = "timeout", str(e.stdout or "") + str(e.stderr or "")
-    with open(log, "w", encoding="utf-8") as f:
-        f.write(out)
+    while (free := free_mb()) is not None and free < MIN_FREE_MB and time.time() - t < 600:
+        time.sleep(5)
+    rc = None
+    with open(log, "w", encoding="utf-8", errors="replace") as f:
+        try:
+            # Its own session: a script that signals its process group (to stop a dev server)
+            # cannot stop the run, and the group is the step's to kill.
+            p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT,
+                                 start_new_session=os.name != "nt")
+        except OSError as e:
+            f.write(str(e))
+            rc = "not started"
+        while rc is None:
+            try:
+                rc = p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                if time.time() - t > timeout:
+                    rc = "timeout"
+                elif os.name != "nt" and group_rss_mb(p.pid) > MAX_RSS_MB:
+                    rc = "memory"
+        if rc != "not started":
+            kill_group(p)
+            if rc == "memory":
+                f.write(f"\n[corpus] killed: its processes passed {MAX_RSS_MB} MB\n")
+    with open(log, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - TAIL))
+        out = f.read().decode("utf-8", "replace")
     tail = [l for l in out.strip().splitlines() if l.strip()]
     return {"rc": rc, "secs": round(time.time() - t, 1), "last": tail[-1][:300] if tail else "", "out": out}
 
 
+def sweep(work):
+    """Whatever a repository's steps left running that left their group (a daemon): by its path."""
+    if os.name != "nt":
+        subprocess.run(["pkill", "-9", "-f", work], capture_output=True)
+
+
 def one(name, expect, extra, a, env):
+    try:
+        return _one(name, expect, extra, a, env)
+    finally:
+        sweep(os.path.join(a.work, "repos", name.replace("/", "__")))
+
+
+def _one(name, expect, extra, a, env):
     work = os.path.join(a.work, "repos", name.replace("/", "__"))
     logs = os.path.join(a.work, "logs", name.replace("/", "__"))
     os.makedirs(logs, exist_ok=True)
@@ -134,6 +215,9 @@ def one(name, expect, extra, a, env):
     r["calls"] = calls(work)
     if a.fixup:
         r["fixed"] = fixup(work)
+        # bun is a runtime too, and scripts run it as one: a bun project adds it as jpm installs it.
+        if r["lock"] == "bun":
+            step("addbun", [a.jpm, "add", "-D", "bun@runtime:^1", "--ignore-scripts"])
     flags = ([] if a.scripts else ["--ignore-scripts"]) + extra
     jpm = [a.jpm, "install", *flags]
     if step("install", jpm)["rc"] != 0:
@@ -163,7 +247,7 @@ def main():
     p.add_argument("--work", default=os.path.join(os.path.expanduser("~"), ".cache", "jpm-corpus"),
                    help="clones, store and logs (default ~/.cache/jpm-corpus)")
     p.add_argument("--list", default=os.path.join(HERE, "repos.txt"))
-    p.add_argument("-j", "--jobs", type=int, default=4, help="repositories at a time (default 4)")
+    p.add_argument("-j", "--jobs", type=int, help="repositories at a time (default 4, 2 with --run or --fixup)")
     p.add_argument("--scripts", action="store_true", help="run install scripts (default --ignore-scripts)")
     p.add_argument("--run", action="store_true", help="also run a build, typecheck, check or lint script")
     p.add_argument("--fixup", action="store_true",
@@ -173,6 +257,7 @@ def main():
     a = p.parse_args()
     if a.fixup:
         a.scripts = a.run = True
+    a.jobs = a.jobs or (2 if a.run else 4)
     if a.report:
         return report(a.list)
     a.jpm = os.path.abspath(a.jpm)
@@ -188,7 +273,8 @@ def main():
             shutil.copy(a.jpm, at)
         else:
             os.symlink(a.jpm, at)
-    env = dict(os.environ, CI="1", JPM_STORE=os.path.join(a.work, "store"),
+    # No build daemons: they leave the step's group, and outlive it.
+    env = dict(os.environ, CI="1", JPM_STORE=os.path.join(a.work, "store"), NX_DAEMON="false", TURBO_DAEMON="false",
                PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
     todo = repos(a.list, {o.lower() for o in a.only})
     results = []
