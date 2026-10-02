@@ -2024,6 +2024,7 @@ fn believes_the_tarball_over_the_registry_on_install_scripts() {
 }
 
 #[cfg(unix)]
+#[cfg(unix)]
 #[test]
 fn an_import_approves_what_the_other_manager_built() {
     // tldraw's pnpm-workspace.yaml allows sqlite3's build: pnpm ran it at the locked version.
