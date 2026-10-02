@@ -47,3 +47,28 @@ does not find those packages' bins (grafana's `yarn nx`): `jpm run` and `jpx` do
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
 old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committed.
+
+## Known differences
+
+jpm lays out `node_modules` as pnpm does: each package is a link to its own entry, holding
+links to what it declares. npm, yarn's node-modules linker and pnpm's `node-linker=hoisted`
+make real directories instead, nested where versions differ. Node finds packages the same way
+in both, but a tool that reads file paths can see the difference. Each case below has a change
+in the project that works under jpm and under pnpm alike.
+
+- **TypeScript declarations** (`TS2742` or `TS2883`: "The inferred type of 'x' cannot be named
+  without a reference to '.jpm/…'. This is likely not portable."): a declaration needs a type
+  from a package the workspace does not depend on itself. Add that package to the workspace's
+  dependencies, or give the export an explicit type. Seen in strapi (`logform`), cal.com
+  (`@prisma/client`), medusa (`@eslint/core`) and Trilium (`@ai-sdk/provider`).
+- **Paths written for npm's layout**: a script or config that names `node_modules/<pkg>/…` or
+  takes a package name out of a real path breaks when that path is `node_modules/.jpm/…`. Read
+  the name after the last `node_modules/` instead (webpack's `tooling/generate-types.js`), and
+  give generated code a path of its own: Prisma's generator `output`, rather than
+  `node_modules/.prisma/client` (documenso's vite config).
+- **Electron apps** pack `node_modules` into the app and rebuild native modules for Electron in
+  place, so jpm keeps every package inside the project for a project that depends on
+  `electron`, as `global-store=false` does. A tool that follows `require` itself from a link's
+  path rather than its target, as hyper's V8 snapshot builder (electron-link) does, can still
+  pick the wrong copy of a package that has two: that needs real directories, which jpm does
+  not make.

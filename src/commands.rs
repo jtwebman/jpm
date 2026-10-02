@@ -106,9 +106,10 @@ struct Ctx {
 }
 
 /// Frameworks that fail when a package's real path is outside the project: Next's Turbopack
-/// compiles nothing outside its root, and Nuxt imports what it did not declare, which only the
-/// project's hidden hoist provides.
-const PROJECT_LAYOUT: [&str; 2] = ["next", "nuxt"];
+/// compiles nothing outside its root, Nuxt imports what it did not declare, which only the
+/// project's hidden hoist provides, and an Electron app packs node_modules into itself and
+/// rebuilds native modules for Electron in place.
+const PROJECT_LAYOUT: [&str; 3] = ["next", "nuxt", "electron"];
 
 /// Bundlers that resolve a package from its real path: under the global store, from inside the
 /// store, where an import the package does not declare finds nothing (docs/global-store.md).
