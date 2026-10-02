@@ -55,9 +55,10 @@ The age applies when a version is picked: what a lockfile already holds is kept 
 The global virtual store is on by default. Turn it off with `global-store=false` in `.npmrc`,
 `JPM_GLOBAL_STORE=0` or `--no-global-store`. It is off inside containers (`/.dockerenv` or
 `/run/.containerenv`), where a mounted project would not see the store, and when the store
-cannot be written. It is also off, with a note, for a project that depends on `next` or `nuxt`:
-Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
-declare. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
+cannot be written. It is also off, with a note, for a project that depends on `next`, `nuxt`
+or `electron`: Next's Turbopack compiles nothing outside the project, Nuxt imports packages it
+does not declare, and an Electron app packs `node_modules` into itself and rebuilds native
+modules for Electron in place. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
 project still needs a bundler: [global-store.md](global-store.md). An install warns when the
 project declares a bundler under it.
 

@@ -23,6 +23,7 @@ fn registry() -> Registry {
             "#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)))\n",
         ),
         pkg("next", "1.0.0", json!({ "dependencies": { "b": "1.0.0" } })),
+        pkg("electron", "1.0.0", json!({})),
         pkg("host", "1.0.0", json!({})),
         pkg("host", "2.0.0", json!({})),
         pkg("plugin", "1.0.0", json!({ "peerDependencies": { "host": ">=1" } })),
@@ -3753,6 +3754,11 @@ fn builds_in_the_project_for_frameworks_that_need_it() {
     let out = env.command(&["install"]).env("JPM_GLOBAL_STORE", "1").output().unwrap();
     assert!(out.status.success());
     assert!(link_of(&env.project(), "next").contains("v1"), "{}", link_of(&env.project(), "next"));
+    // An Electron app, which packs node_modules into itself: a dev dependency is enough.
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" }, "devDependencies": { "electron": "1.0.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("building packages in the project") && out.contains("electron"), "{out}");
 }
 
 #[test]
