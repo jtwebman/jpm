@@ -1077,6 +1077,10 @@ fn leaves_out_a_workspace_bin_not_built_yet() {
     let bin = if cfg!(windows) { "node_modules/.bin/tt.cmd" } else { "node_modules/.bin/tt" };
     env.ok(&["install"]);
     assert!(!env.exists(bin));
+    assert!(env.ok(&["install"]).contains("up to date"));
+    // The lockfile's text changed, its graph not: the tree is checked on disk, still standing.
+    env.write("jpm.lock", &format!("# x\n{}", env.read("jpm.lock")));
+    assert!(env.ok(&["install"]).contains("up to date"));
     env.write("t/dist/index.js", "#!/usr/bin/env node\n");
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
     env.ok(&["install"]);
