@@ -75,9 +75,18 @@ main() {
   ln -sf jpm "$dir/jpx"
   echo "jpm: installed $("$dir/jpm" --version) to $dir/jpm"
 
+  # The file the user's shell reads: zsh, macOS's own, never reads ~/.profile, and a login bash
+  # on macOS reads ~/.bash_profile.
   case ":$PATH:" in
     *":$dir:"*) ;;
-    *) echo "jpm: add $dir to your PATH, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
+    *)
+      case "${SHELL##*/}" in
+        fish) echo "jpm: add $dir to your PATH, for example: fish_add_path $dir"; return ;;
+        zsh) rc="~/.zshrc" ;;
+        bash) if [ "$os" = darwin ]; then rc="~/.bash_profile"; else rc="~/.bashrc"; fi ;;
+        *) rc="~/.profile" ;;
+      esac
+      echo "jpm: add $dir to your PATH, for example: echo 'export PATH=\"$dir:\$PATH\"' >> $rc" ;;
   esac
 }
 
