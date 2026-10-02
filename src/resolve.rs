@@ -909,6 +909,12 @@ impl Walk<'_> {
             m.is_optional_peer(n)
         });
         peers.retain(|n, kind| *kind == PeerKind::Required || !m.dependencies.contains_key(n));
+        // With no peers installed (legacy-peer-deps, a yarn 1 lockfile), a peer that is also a
+        // dependency is one again, as npm's legacy mode installs it: else nothing would bring it
+        // (excalidraw's vite-plugin-pwa lost workbox-window).
+        if self.opts.legacy_peers {
+            peers.retain(|n, _| !m.dependencies.contains_key(n));
+        }
         if !peers.is_empty() {
             found.peers = Some(peers.clone());
         }
