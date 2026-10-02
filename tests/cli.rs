@@ -1067,6 +1067,23 @@ fn links_the_root_listed_as_a_workspace() {
 }
 
 #[test]
+fn leaves_out_a_workspace_bin_not_built_yet() {
+    // As npm and pnpm do: the `npm rebuild` a build runs after (Babylon.js) then links it and
+    // makes it executable, which it does only for a bin it links itself.
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "name": "root", "workspaces": ["t"], "devDependencies": { "t": "*" } }));
+    env.write("t/package.json", r#"{ "name": "t", "version": "1.0.0", "bin": { "tt": "dist/index.js" } }"#);
+    let bin = if cfg!(windows) { "node_modules/.bin/tt.cmd" } else { "node_modules/.bin/tt" };
+    env.ok(&["install"]);
+    assert!(!env.exists(bin));
+    env.write("t/dist/index.js", "#!/usr/bin/env node\n");
+    std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
+    env.ok(&["install"]);
+    assert!(env.exists(bin));
+}
+
+#[test]
 fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
     // Not listed, as in hono, nitro and nuxt/ui: `workspace:` still finds the named root, as
     // in pnpm and yarn berry. A range does not.
