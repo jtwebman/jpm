@@ -1910,17 +1910,21 @@ fn writes_yarns_state_beside_a_berry_lockfile() {
     // `yarn run` (turbo's, a Makefile's `yarn tsc`) finds packages through it: jest, babel.
     let r = registry();
     let env = Env::new(&r);
-    env.manifest(json!({ "name": "app", "dependencies": { "a": "1.1.0", "b": "^1.0.0" } }));
+    env.manifest(json!({ "name": "app", "dependencies": { "a": "1.1.0", "b": "^1.0.0", "x": "npm:b@1.0.0" } }));
     env.write(".yarnrc.yml", "nodeLinker: node-modules\n");
     env.write(
         "yarn.lock",
-        "__metadata:\n  version: 8\n\n\"a@npm:1.1.0\":\n  version: 1.1.0\n  resolution: \"a@npm:1.1.0\"\n  dependencies:\n    b: \"npm:^1.1.0\"\n\n\"app@workspace:.\":\n  version: 0.0.0-use.local\n  resolution: \"app@workspace:.\"\n\n\"b@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"b@npm:1.0.0\"\n\n\"b@npm:^1.1.0\":\n  version: 1.1.0\n  resolution: \"b@npm:1.1.0\"\n",
+        "__metadata:\n  version: 8\n\n\"a@npm:1.1.0\":\n  version: 1.1.0\n  resolution: \"a@npm:1.1.0\"\n  dependencies:\n    b: \"npm:^1.1.0\"\n\n\"app@workspace:.\":\n  version: 0.0.0-use.local\n  resolution: \"app@workspace:.\"\n\n\"b@npm:^1.0.0, x@npm:b@1.0.0\":\n  version: 1.0.0\n  resolution: \"b@npm:1.0.0\"\n\n\"b@npm:^1.1.0\":\n  version: 1.1.0\n  resolution: \"b@npm:1.1.0\"\n",
     );
     env.ok(&["install"]);
     let state = env.read("node_modules/.yarn-state.yml");
     assert!(state.contains("__metadata:\n  version: 1\n  nmMode: classic\n"), "{state}");
     assert!(state.contains("\n\"a@npm:1.1.0\":\n  locations:\n    - \"node_modules/a\"\n"), "{state}");
-    assert!(state.contains("\n\"b@npm:1.0.0\":\n  locations:\n    - \"node_modules/b\"\n"), "{state}");
+    // An alias's package by its own name, as yarn names it.
+    assert!(
+        state.contains("\n\"b@npm:1.0.0\":\n  locations:\n    - \"node_modules/b\"\n    - \"node_modules/x\"\n"),
+        "{state}"
+    );
     // Never a place outside the project, which yarn refuses; never a workspace, which it finds.
     assert!(!state.contains("..") && !state.contains("workspace:"), "{state}");
 }

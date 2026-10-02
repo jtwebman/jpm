@@ -40,7 +40,9 @@ Its `minimumReleaseAge` (in minutes) and `minimumReleaseAgeExclude` are read as 
 Tools that read the other manager's state find what they need: beside `pnpm-lock.yaml`, jpm
 writes the `node_modules/.modules.yaml` nx looks for; beside a yarn 2 or later `yarn.lock` with
 `nodeLinker: node-modules`, it writes yarn's `node_modules/.yarn-state.yml`, so `yarn run` and
-`yarn <bin>` (turbo's, or a build script's) find each package where jpm put it.
+`yarn <bin>` (turbo's, or a build script's) find each package where jpm put it. yarn names a
+package with peer dependencies by a hash of its own resolution, which jpm cannot know, so yarn
+does not find those packages' bins (grafana's `yarn nx`): `jpm run` and `jpx` do.
 
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
