@@ -225,7 +225,8 @@ impl Registry {
             ),
             _ => e,
         })?;
-        let at = now_ms() - response.age.unwrap_or(0) as i64 * 1000;
+        // Capped: a header past u32 seconds (136 years) is a lie, and must not overflow.
+        let at = now_ms() - response.age.unwrap_or(0).min(u32::MAX.into()) as i64 * 1000;
         match response.status {
             304 if kept.is_some() => {
                 if let Some(c) = &self.cache {
@@ -236,8 +237,9 @@ impl Registry {
             200..=299 => {
                 let control = response.cache_control.unwrap_or_default().to_ascii_lowercase();
                 if let Some(c) = self.cache.as_ref().filter(|_| !control.contains("no-store")) {
-                    let max_age =
-                        control.split(',').find_map(|d| d.trim().strip_prefix("max-age=").and_then(|v| v.parse().ok()));
+                    let max_age = control.split(',').find_map(|d| {
+                        d.trim().strip_prefix("max-age=").and_then(|v| v.parse::<u32>().ok().map(i64::from))
+                    });
                     c.set(&key, &response.body, response.gzipped.as_deref(), at, response.etag.as_deref(), max_age);
                 }
                 Ok(response.body)
