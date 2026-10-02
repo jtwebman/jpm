@@ -45,7 +45,9 @@ pub fn clean_map(map: &BTreeMap<String, String>) -> Bins {
 
 fn put(out: &mut Bins, key: &str, target: &str) {
     let key = basename(&key.replace(['\\', ':'], "/")).to_string();
-    if matches!(key.as_str(), "" | "." | "..") {
+    // A device (`nul`, `con.cmd`) or a name Windows trims (`x.`, `x `) names another file there:
+    // refused on every OS, as tarball entries are, so one lockfile installs everywhere.
+    if matches!(key.as_str(), "" | "." | "..") || crate::tar::device(&key) || key.ends_with(['.', ' ']) {
         return;
     }
     let target = rooted(&target.replace('\\', "/"));
@@ -105,6 +107,7 @@ mod tests {
         assert!(
             bins("x", j(r#"{"a": "C:/Windows/x.exe", "b": "c:i.js", "c": "./x/../C:\\y", "d": "a:s"}"#)).is_empty()
         );
+        assert!(bins("x", j(r#"{"nul": "a", "CON.js": "a", "com1": "a", "x.": "a", "y ": "a"}"#)).is_empty());
         let lock: BTreeMap<String, String> = [("x".to_string(), "C:/Windows/x.exe".to_string())].into();
         assert!(clean_map(&lock).is_empty());
     }
