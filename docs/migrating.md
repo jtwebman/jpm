@@ -37,6 +37,11 @@ more, is that copy, as pnpm's `dedupePeerDependents` makes it; `dedupePeerDepend
 Its `minimumReleaseAge` (in minutes) and `minimumReleaseAgeExclude` are read as the project's
 `min-release-age` and `min-release-age-exclude`, under its `.npmrc` and held to the same rule.
 
+Tools that read the other manager's state find what they need: beside `pnpm-lock.yaml`, jpm
+writes the `node_modules/.modules.yaml` nx looks for; beside a yarn 2 or later `yarn.lock` with
+`nodeLinker: node-modules`, it writes yarn's `node_modules/.yarn-state.yml`, so `yarn run` and
+`yarn <bin>` (turbo's, or a build script's) find each package where jpm put it.
+
 The old lockfile is left in place and no longer read; delete it when you are ready.
 `jpm install --frozen-lockfile` (and `jpm ci`) write nothing: in CI they install from the
 old lockfile as it is, so a pipeline keeps working before `jpm.lock` is committed.

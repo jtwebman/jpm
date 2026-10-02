@@ -633,6 +633,41 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             .into_iter()
             .collect::<Result<_>>()?;
     linker.sweep_temp();
+    // yarn's node-modules linker finds each package through its own state file, and `yarn run`
+    // (turbo's, a Makefile's `yarn tsc`) stops without it: "Couldn't find the node_modules state
+    // file". Beside a berry yarn.lock laid out flat: where jpm put each locked package. Only
+    // places inside the project, which yarn insists on: entries built there, and the links of
+    // each top's dependencies and of the root's hoist, where yarn looks for their bins.
+    if opts.workspaces_at_root
+        && let Ok(text) = fs::read_to_string(opts.dir.join("yarn.lock"))
+        && text.lines().any(|l| l == "__metadata:")
+    {
+        let mut at: HashMap<String, Vec<String>> = HashMap::new();
+        let mut put = |pkg: &Package, place: PathBuf| {
+            let place = relative(opts.dir, &place).to_string_lossy().replace('\\', "/");
+            let places = at.entry(format!("{}@{}", pkg.name, pkg.version)).or_default();
+            if !places.contains(&place) {
+                places.push(place);
+            }
+        };
+        for e in linker.wanted.values().filter(|e| !e.shared) {
+            put(e.pkg, linker.entries_dir.join(&e.home));
+        }
+        for top in &tops {
+            for (name, version) in &top.dependencies {
+                if let Some(pkg) = res.packages.get(&format!("{name}@{version}")) {
+                    put(pkg, top.nm.join(name));
+                }
+            }
+        }
+        for (name, _, _, key) in public.iter().filter(|(.., key)| !key.is_empty()) {
+            if let Some(pkg) = res.packages.get(key) {
+                put(pkg, opts.dir.join("node_modules").join(name));
+            }
+        }
+        let state = crate::foreign::yarn_state(&text, &at);
+        crate::util::write_atomic(&opts.dir.join("node_modules").join(".yarn-state.yml"), state.as_bytes())?;
+    }
     let settled = linker.settled.lock().map(|s| s.clone()).unwrap_or_default();
     dropped.extend(settled.iter().filter(|(_, arrived)| !**arrived).map(|(id, _)| id.clone()));
     dropped.sort();
