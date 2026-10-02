@@ -982,6 +982,10 @@ fn nm_removing_a_dependency_removes_its_bins() {
             ("dep2", json!({ "name": "dep2", "version": "1.0.0", "bin": "bin2.js" })),
         ],
     );
+    // The bins' files, which npm and pnpm (and jpm) need to link them; yarn links them anyway.
+    env.write("dep1/bin1.js", "");
+    env.write("dep2/bin2.js", "");
+    env.ok(&["install"]);
     let bin = if cfg!(windows) { "node_modules/.bin/dep1.cmd" } else { "node_modules/.bin/dep1" };
     assert!(env.exists(bin));
     env.ok(&["remove", "dep1"]);

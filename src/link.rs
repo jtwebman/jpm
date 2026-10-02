@@ -1236,6 +1236,11 @@ impl Linker<'_> {
                 bins.entry(bin.clone()).or_insert_with(|| (name.clone(), target.clone(), pkg));
             }
         }
+        // A workspace's bin its build has yet to write: left out, as npm and pnpm leave it, so
+        // the `npm rebuild` a build script runs next links it and makes it executable.
+        bins.retain(|_, (name, target, pkg)| {
+            pkg.local.is_none() || nm.join(name.as_str()).join(target.as_str()).exists()
+        });
         // Made, written and swept below: never through a symlink out of the project.
         let fresh_bin = fresh && !bins.is_empty() && fs::create_dir(&bin_dir).is_ok();
         if !fresh_bin {
