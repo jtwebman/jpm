@@ -2035,6 +2035,24 @@ fn believes_the_tarball_over_the_registry_on_install_scripts() {
 
 #[cfg(unix)]
 #[test]
+fn an_install_script_finds_npms_node_gyp() {
+    // better-sqlite3's `prebuild-install || node-gyp rebuild`: npm and pnpm give a script their
+    // node-gyp, and payload's scripts read npm_node_execpath.
+    let r = Registry::start(vec![pkg(
+        "addon",
+        "1.0.0",
+        json!({ "scripts": { "install": "node-gyp --version > gyp.txt && echo \"$npm_node_execpath\" > node.txt" } }),
+    )]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "addon": "1.0.0" }, "trustedDependencies": ["addon"] }));
+    env.ok(&["install"]);
+    let out = env.ok(&["approve", "addon"]);
+    assert!(env.read("node_modules/addon/gyp.txt").starts_with('v'), "{out}");
+    assert!(env.read("node_modules/addon/node.txt").trim().ends_with("node"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
 fn an_import_approves_what_the_other_manager_built() {
     // tldraw's pnpm-workspace.yaml allows sqlite3's build: pnpm ran it at the locked version.
     let r = scripted();
