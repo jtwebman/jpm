@@ -1834,11 +1834,16 @@ fn read_tarball(
     if let Some(stamp) = stamp {
         ctx.stamped.lock().unwrap_or_else(PoisonError::into_inner).insert(source.to_string(), stamp);
     }
-    if !index.files.iter().any(|f| f.path == "package.json") {
+    let text = if index.files.iter().any(|f| f.path == "package.json") {
+        std::fs::read_to_string(store.file(&integrity, "package.json")?)
+            .map_err(|e| Error::io(&e, format!("cannot read the package.json of {source}")))?
+    } else if git {
+        // A repository with none (firebase's google/closure-net, source files only) is a package
+        // with no dependencies, as yarn 1 installs one: versioned 0.0.0 below.
+        "{}".to_string()
+    } else {
         return Err(fail("EMANIFEST", format!("{source} has no package.json")));
-    }
-    let text = std::fs::read_to_string(store.file(&integrity, "package.json")?)
-        .map_err(|e| Error::io(&e, format!("cannot read the package.json of {source}")))?;
+    };
     let where_ = format!("package.json of {source}");
     // Written by hand, not checked by a registry.
     let doc = RootManifest::parse(&text, Path::new(&where_))?.doc;

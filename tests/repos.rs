@@ -461,3 +461,21 @@ fn never_hands_git_a_transport_helper() {
         assert!(!env.exists("pwned"), "{spec}");
     }
 }
+
+#[test]
+fn installs_a_git_repository_with_no_package_json() {
+    // firebase's google/closure-net, source files only: a package with no dependencies at
+    // 0.0.0, as yarn 1 installs it.
+    let r = registry();
+    let env = Env::new(&r);
+    let repo = Repo::new(&env, "src");
+    let commit = repo.commit(&[("lib/a.js", "a")]);
+    env.manifest(json!({ "devDependencies": { "src": format!("{}#{commit}", repo.url()) } }));
+    ok(&env, &["install"]);
+    assert_eq!(env.read("node_modules/src/lib/a.js"), "a");
+    assert!(env.read("jpm.lock").contains("0.0.0"));
+    assert!(ok(&env, &["install"]).contains("up to date"));
+    wipe(&env);
+    ok(&env, &["ci"]);
+    assert_eq!(env.read("node_modules/src/lib/a.js"), "a");
+}
