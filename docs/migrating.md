@@ -18,7 +18,9 @@ Workspaces are read from package.json, or from `pnpm-workspace.yaml` when packag
 none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-workspace.yaml`,
 `.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
 
-A root or workspace range lands on a workspace of its name, as npm, yarn and bun link one, but
+A root or workspace range lands on a workspace of its name, as npm, yarn and bun link one (in an
+npm project a dependency's range does too, as npm's root holds every workspace; in pnpm, with
+`linkWorkspacePackages: deep`), but
 in a pnpm 9 or later project (a `pnpm-workspace.yaml`) only a `workspace:` range does, unless
 `linkWorkspacePackages` (or `.npmrc`'s `link-workspace-packages`) is on. `.yarnrc.yml`'s
 `enableTransparentWorkspaces: false` does the same for yarn.

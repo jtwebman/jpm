@@ -170,6 +170,8 @@ pub struct Rules {
     /// pnpm-workspace.yaml's `linkWorkspacePackages` (`deep` is on), .yarnrc.yml's
     /// `enableTransparentWorkspaces`. `None` when neither says.
     pub link_workspaces: Option<bool>,
+    /// `linkWorkspacePackages: deep`: a dependency's range lands on a workspace too.
+    pub link_deep: bool,
     /// pnpm-workspace.yaml's `dedupePeerDependents`, on unless it says `false`.
     pub dedupe_peers: bool,
 }
@@ -216,6 +218,7 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
         rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
         rules.link_workspaces =
             y.get("linkWorkspacePackages").filter(|v| !v.is_null()).map(|v| v != &Value::Bool(false));
+        rules.link_deep = y.get("linkWorkspacePackages").and_then(Value::as_str) == Some("deep");
         rules.dedupe_peers = y.get("dedupePeerDependents") != Some(&Value::Bool(false));
         // `nodeLinker: hoisted` is npm's flat layout: every package at the root is jpm's nearest.
         let hoisted = y.get("nodeLinker").and_then(Value::as_str) == Some("hoisted");

@@ -49,6 +49,10 @@ pub struct Options<'a> {
     /// A top's plain range lands on a workspace of its name, as npm, bun and yarn link one;
     /// else only `workspace:` does, as pnpm 9 and later (see `Rules::link_workspaces`).
     pub link_workspaces: bool,
+    /// A registry package's range lands on a workspace of its name too, as npm's tree has it
+    /// (every workspace at its root, found by whatever the range allows) and pnpm's
+    /// `linkWorkspacePackages: deep`.
+    pub link_deep: bool,
     /// One copy of a package in place of another whose peers it has and more (`Split::dedupe`):
     /// pnpm's `dedupePeerDependents`, on unless pnpm-workspace.yaml turns it off.
     pub dedupe_peers: bool,
@@ -455,7 +459,7 @@ impl Walk<'_> {
             push(source);
             return Ok(());
         }
-        if self.tops.contains_key(from)
+        if (self.tops.contains_key(from) || (self.opts.link_deep && spec.kind != Kind::Workspace))
             && let Some(ws) = self.local_for(&spec, from)?
         {
             push(ws.edge_version());
@@ -853,6 +857,10 @@ impl Walk<'_> {
         };
         if fits(&found.version, &spec.fetch_spec) {
             return Ok(Some(found.clone()));
+        }
+        // A registry package's own range out of a workspace's reach is no news.
+        if !self.tops.contains_key(from) {
+            return Ok(None);
         }
         let who = if from.is_empty() { "root" } else { from };
         lock(&self.state).warnings.insert(format!(

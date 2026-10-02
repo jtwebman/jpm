@@ -390,10 +390,10 @@ fn a_package_links_a_directory_only_as_a_peer_on_a_workspace() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && err.contains(why), "{err}\n{edited}");
     };
-    // wrap's own dependency, sent to the workspace by an edit.
+    // wrap's own dependency, sent by an edit to a workspace of another name.
     refused(
-        text.replace("package wrap@1.0.0\n", "package wrap@1.0.0\n  dep schema link:packages/schema\n"),
-        "packages[\"wrap@1.0.0\"].dependencies[\"schema\"] is link:packages/schema: a package links a directory only for a peer",
+        text.replace("package wrap@1.0.0\n", "package wrap@1.0.0\n  dep schema link:packages/app\n"),
+        "is link:packages/app: a package links a directory only to the workspace of its name",
     );
     // plugin's peer, sent to a directory that is no workspace.
     let peer = "link:packages/schema
@@ -401,7 +401,7 @@ fn a_package_links_a_directory_only_as_a_peer_on_a_workspace() {
     for dir in ["link:packages/app", "link:../outside"] {
         refused(
             text.replace(peer, &peer.replace("link:packages/schema", dir)),
-            "only for a peer, to the workspace of its name",
+            "a package links a directory only to the workspace of its name",
         );
     }
     env.write("jpm.lock", &text);

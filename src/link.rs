@@ -485,11 +485,11 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     }
     // An entry that lacks an optional package, or reaches one that does, stays in the project:
     // a global copy would be incomplete for everyone else.
-    // So does one being built, and one whose peer is a workspace of this project, and every
-    // entry that reaches either.
+    // So does one being built, and one that reaches a workspace of this project (as its peer, or
+    // as npm's tree has it), and every entry that reaches either.
     let to_dir = |p: &Package| {
         let dir = |(n, v): (&String, &String)| res.packages.get(&format!("{n}@{v}")).is_some_and(|d| d.local.is_some());
-        p.peer_dependencies.as_ref().is_some_and(|peers| p.all_deps().iter().any(|e| peers.contains_key(e.0) && dir(e)))
+        p.all_deps().iter().any(dir)
     };
     let peering: Vec<String> = match opts.global {
         Some(_) => wanted.iter().filter(|(_, e)| to_dir(e.pkg)).map(|(id, _)| id.clone()).collect(),
@@ -816,9 +816,11 @@ impl Linker<'_> {
         let mut out = Vec::new();
         for (name, version) in pkg.all_deps() {
             let id = format!("{name}@{version}");
-            // Only a peer reaches a workspace from an entry: a package never names a path.
+            // Only a peer, or the workspace of its name (npm's tree), reaches a directory from an
+            // entry: a package never names a path.
             if let Some(dir) = self.res.packages.get(&id).filter(|p| p.local.is_some()) {
-                if !pkg.peer_dependencies.as_ref().is_some_and(|p| p.contains_key(&name)) {
+                let workspace = dir.name == name && !dir.linked;
+                if !workspace && !pkg.peer_dependencies.as_ref().is_some_and(|p| p.contains_key(&name)) {
                     return Err(fail(format!("{}@{} depends on the workspace {name}", pkg.name, pkg.version)));
                 }
                 out.push((name, Dep::Dir(dir)));

@@ -43,6 +43,8 @@ pub struct Config {
     pub legacy_peer_deps: bool,
     /// pnpm's `link-workspace-packages` (`deep` is on): see `Rules::link_workspaces`.
     pub link_workspaces: Option<bool>,
+    /// `link-workspace-packages=deep`.
+    pub link_deep: bool,
     /// `cafile`: a PEM file of certificates to trust in place of Mozilla's roots.
     pub cafile: Option<PathBuf>,
     /// `ca`: the same as PEM text, `\n` for its line breaks; `ca[]=` once per certificate.
@@ -282,6 +284,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         block_exotic_subdeps: merged.get("block-exotic-subdeps").is_none_or(|v| v != "false"),
         legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
         link_workspaces: merged.get("link-workspace-packages").map(|v| v != "false"),
+        link_deep: merged.get("link-workspace-packages").is_some_and(|v| v == "deep"),
         cafile: set("cafile").map(PathBuf::from),
         // npm's ini reads `\n` in a quoted value as a line break.
         ca: set("ca").map(|v| v.replace("\\n", "\n")),
