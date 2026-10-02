@@ -386,10 +386,17 @@ fn same(file_line: &[u8], (_, text, newline): &(u8, Vec<u8>, bool)) -> bool {
 type Matcher = fn(&[u8], &(u8, Vec<u8>, bool)) -> bool;
 
 /// `same`, but a context line may differ in the whitespace around it, as GNU patch's `-l` and
-/// bun allow (opencode's photon-node patch indents three context lines one space too far). A
-/// context line is written as the file has it, so this only chooses where a hunk goes.
+/// bun allow (opencode's photon-node patch indents three context lines one space too far), and a
+/// removed line in the whitespace after it, which editors trim (Rocket.Chat's @react-aria/i18n
+/// patch, as yarn applies it). Neither is written from the patch, so this only chooses where a
+/// hunk goes.
 fn same_loosely(file_line: &[u8], l: &(u8, Vec<u8>, bool)) -> bool {
-    same(file_line, l) || l.0 == b' ' && file_line.trim_ascii() == l.1.trim_ascii()
+    same(file_line, l)
+        || match l.0 {
+            b' ' => file_line.trim_ascii() == l.1.trim_ascii(),
+            b'-' => file_line.trim_ascii_end() == l.1.trim_ascii_end(),
+            _ => false,
+        }
 }
 
 /// The hunks applied to `data`, each at the line it names or the nearest place its old lines match.
@@ -661,6 +668,11 @@ mod tests {
         assert_eq!(read(&dir4, "lib/x.js"), "    ;\n};\n\nconst p = 2;\nnext\n");
         let removed = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -4 +4 @@\n- const p = 2;\n+const p = 3;\n";
         assert!(apply(&dir4, removed).unwrap_err().contains("does not apply"));
+        // Only its trailing whitespace may differ, an editor's trim (Rocket.Chat's patch).
+        let trimmed = b"--- a/lib/x.js\n+++ b/lib/x.js\n@@ -3,2 +3,2 @@\n \n-const p = 2;\n+const p = 3;\n";
+        fs::write(dir4.join("lib/x.js"), "    ;\n};\n\nconst p = 2; \nnext\n").unwrap();
+        apply(&dir4, trimmed).unwrap();
+        assert_eq!(read(&dir4, "lib/x.js"), "    ;\n};\n\nconst p = 3;\nnext\n");
         for d in [dir, dir2, dir3, dir4] {
             fs::remove_dir_all(d).unwrap();
         }
