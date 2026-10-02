@@ -207,8 +207,10 @@ fn build(name: &str, spec: &str, raw: &str) -> Result<Spec> {
         });
     }
     // pnpm's `workspace:<path>` links the directory there, as `link:` does (drizzle's
-    // `workspace:../drizzle-typebox/dist`, a workspace's build output).
-    if let Some(dir) = s.strip_prefix("workspace:").filter(|p| p.starts_with("./") || p.starts_with("../")) {
+    // `workspace:../drizzle-typebox/dist`, a workspace's build output; DefinitelyTyped's
+    // `workspace:.`, each types package on itself).
+    let is_path = |p: &&str| matches!(*p, "." | "..") || p.starts_with("./") || p.starts_with("../");
+    if let Some(dir) = s.strip_prefix("workspace:").filter(is_path) {
         return build(name, &format!("link:{dir}"), raw);
     }
     let repo = git(&s, raw)?;
@@ -1095,6 +1097,8 @@ mod tests {
         // pnpm's `workspace:<path>`: the directory, linked.
         let at = parse_dep("x", "workspace:../x/dist").unwrap();
         assert_eq!((at.kind, at.fetch_spec.as_str()), (Kind::Directory, "link:../x/dist"));
+        // DefinitelyTyped's `workspace:.`: the workspace's own directory.
+        assert_eq!(parse_dep("x", "workspace:.").unwrap().kind, Kind::Directory);
         // Still read as before.
         for spec in ["npm:y@1", "workspace:*", "https://example.com/y.tgz", "file:y.tgz", "latest", "^1"] {
             assert!(parse_dep("x", spec).is_ok(), "{spec}");
