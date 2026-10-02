@@ -87,6 +87,9 @@ pub struct Prefer {
     pub legacy_peers: bool,
     /// (package, peer): an optional peer the file installed (pnpm's), fetched as a required one.
     pub optional_peers: HashSet<(String, String)>,
+    /// (`name@version`, dependency) -> the version the file gave that package's edge (pnpm's
+    /// snapshots), where two copies did not differ.
+    pub edges: HashMap<(String, String), String>,
 }
 
 #[derive(Debug, Clone)]
@@ -474,8 +477,15 @@ impl Walk<'_> {
             push(edge(&version));
             return Ok(());
         }
+        // What the file gave this very package's edge, while its range allows it: pnpm resolves
+        // a range per package, so one range may hold two versions (n8n's acorn under acorn-walk).
+        let edged = (!fresh && !self.opts.dedupe && alias.is_none() && spec.kind == Kind::Range)
+            .then(|| self.opts.prefer?.edges.get(&(from.to_string(), name.to_string())))
+            .flatten()
+            .filter(|v| semver::satisfies(v, &spec.fetch_spec));
+        let pinned = edged.map(|v| spec::parse_dep(name, v)).transpose()?;
         let top = self.tops.contains_key(from);
-        let m = self.pick(&spec, fresh, top, top || overridden)?;
+        let m = self.pick(pinned.as_ref().unwrap_or(&spec), fresh, top, top || overridden)?;
         m.integrity()?;
         let key = format!("{}@{}", spec.name, edge(&m.version));
         let libc = needs_libc(&m);
