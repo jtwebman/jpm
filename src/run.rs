@@ -17,7 +17,11 @@ pub fn bin_dirs(dir: &Path) -> Vec<PathBuf> {
 /// A program on PATH, as the shell would find it, from absolute directories only: a `.` or a
 /// relative entry would find whatever the current directory holds.
 pub fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+    which_in(&std::env::var_os("PATH")?, name)
+}
+
+/// `which` on a PATH of its own.
+fn which_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
     let exts: Vec<String> = if cfg!(windows) {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
@@ -27,7 +31,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    std::env::split_paths(&path)
+    std::env::split_paths(path)
         .filter(|dir| dir.is_absolute())
         .find_map(|dir| exts.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|file| file.is_file()))
 }
@@ -130,6 +134,14 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Comman
         let all = std::env::split_paths(&path).chain(std::iter::once(dir));
         path = std::env::join_paths(all).unwrap_or(path);
     }
+    // npm's own node-gyp where none is installed, as npm and pnpm give a script theirs: an
+    // addon's `node-gyp rebuild` (better-sqlite3, isolated-vm) found no node-gyp to run.
+    let gyp = npm_node_gyp(&path);
+    if let Some((dir, _)) = &gyp {
+        let all = std::env::split_paths(&path).chain(std::iter::once(dir.clone()));
+        path = std::env::join_paths(all).unwrap_or(path);
+    }
+    let node = which_in(&path, "node");
     // The shell is named by its full path: found on the PATH the script gets, a dependency's bin
     // called `sh` (or `cmd`) would run in its place, approved or not.
     #[cfg(windows)]
@@ -151,8 +163,31 @@ pub fn shell(line: &str, cwd: &Path, dirs: &[PathBuf], project: &Path) -> Comman
         c
     };
     command.current_dir(cwd).env(key, path);
+    if let Some((_, js)) = gyp.filter(|_| std::env::var_os("npm_config_node_gyp").is_none()) {
+        command.env("npm_config_node_gyp", js);
+    }
+    // The node a script runs, as npm names it (payload's scripts refuse to run without it).
+    if let Some(node) = node {
+        command.env("npm_node_execpath", &node);
+        if std::env::var_os("NODE").is_none() {
+            command.env("NODE", node);
+        }
+    }
     hoist_env(&mut command, project);
     command
+}
+
+/// The directory of npm's `node-gyp` shim and the node-gyp it runs, when `path` has no
+/// node-gyp of its own: beside the npm that `path` finds (`<npm>/bin/node-gyp-bin`).
+fn npm_node_gyp(path: &std::ffi::OsStr) -> Option<(PathBuf, PathBuf)> {
+    if which_in(path, "node-gyp").is_some() {
+        return None;
+    }
+    let npm = std::fs::canonicalize(which_in(path, "npm")?).ok()?;
+    let bin = npm.parent()?;
+    let js = bin.parent()?.join("node_modules/node-gyp/bin/node-gyp.js");
+    let dir = bin.join("node-gyp-bin");
+    (dir.is_dir() && js.is_file()).then_some((dir, js))
 }
 
 /// With no `node` on PATH, a project with a bun runtime gets bun by that name, last on PATH, as
