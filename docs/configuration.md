@@ -76,15 +76,19 @@ is installed with `--no-global-store`.
 
 Some packages of the hidden hoist are also linked in the root's `node_modules`, as pnpm's
 `public-hoist-pattern` does: where tsc (`"types": ["node"]`), an editor's eslint and prettier,
-and tools that npm's and yarn's flat layout let find anything, look. By default those are
-`@types/*`, `*eslint*` and `*prettier*`; `*` matches any characters, a scope's `/` too, and a
-`!` pattern leaves names out. `public-hoist-pattern[]=<pattern>` in `.npmrc` (one line each)
+and tools that npm's and yarn's flat layout let find anything, look. What is linked by default
+follows the manager the project was made for (its lockfile, or `packageManager`): every package
+for npm, yarn 1, yarn's `nodeLinker: node-modules` and bun, whose flat `node_modules` their
+projects import from; none for pnpm (pnpm 10 hoists none, and `@types` stubs at the root break
+tsc) and yarn's Plug'n'Play; and `@types/*`, `*eslint*` and `*prettier*` for a project with no
+other manager's files. `*` matches any characters, a scope's `/` too, and a `!` pattern leaves
+names out. `public-hoist-pattern[]=<pattern>` in `.npmrc` (one line each)
 takes the default's place, an empty `public-hoist-pattern[]=` links none, and
 `shamefully-hoist=true` links every one, close to npm's and yarn's layout.
 `publicHoistPattern` and `shamefullyHoist` in `pnpm-workspace.yaml` are read the same way when
-`.npmrc` says nothing. Workspaces are linked at the root the same way, as npm and yarn link every
-one: a workspace a pattern names (all of them under `shamefully-hoist`), in place of a registry
-package of its name. A package the root declares is always its own, never the hoist's.
+`.npmrc` says nothing. Workspaces are linked at the root as well: every one for the flat
+managers' projects, which import them by name as npm and yarn link them all, else those a
+pattern names; in place of a registry package of the name. A package the root declares is always its own, never the hoist's.
 
 `jpm prune` removes what no project uses. Every install registers its project with the store
 (`v1/projects`), and a prune keeps the global entries and packages that registered projects

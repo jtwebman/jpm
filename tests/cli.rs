@@ -2317,6 +2317,36 @@ fn warns_of_a_bundler_under_the_global_store() {
 }
 
 #[test]
+fn hoists_to_the_root_as_the_projects_own_manager_would() {
+    // npm's and yarn's projects import from a flat node_modules; pnpm's hoists nothing to the
+    // root (and @types stubs there break tsc); jpm's own gets types, linters and formatters.
+    let r = Registry::start(vec![
+        pkg("lib", "1.0.0", json!({ "dependencies": { "@types/x": "1.0.0", "other": "1.0.0" } })),
+        pkg("@types/x", "1.0.0", json!({})),
+        pkg("other", "1.0.0", json!({})),
+    ]);
+    let at_root = |pm: Option<&str>| {
+        let env = Env::new(&r);
+        let mut m = json!({ "dependencies": { "lib": "1.0.0" } });
+        if let Some(pm) = pm {
+            m["packageManager"] = json!(pm);
+        }
+        env.manifest(m);
+        env.ok(&["install"]);
+        ["@types/x", "other"]
+            .into_iter()
+            .filter(|n| env.exists(&format!("node_modules/{n}")))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert_eq!(at_root(Some("npm@10.0.0")), "@types/x other");
+    assert_eq!(at_root(Some("yarn@1.22.22")), "@types/x other");
+    assert_eq!(at_root(Some("bun@1.2.0")), "@types/x other");
+    assert_eq!(at_root(Some("pnpm@10.0.0")), "");
+    assert_eq!(at_root(None), "@types/x");
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();
