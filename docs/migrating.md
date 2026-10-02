@@ -23,12 +23,8 @@ in a pnpm 9 or later project (a `pnpm-workspace.yaml`) only a `workspace:` range
 `linkWorkspacePackages` (or `.npmrc`'s `link-workspace-packages`) is on. `.yarnrc.yml`'s
 `enableTransparentWorkspaces: false` does the same for yarn.
 
-Of copies of one package that differ in peers, a copy whose peers another copy has too, and
-more, is that copy, as pnpm's `dedupePeerDependents` makes it; `dedupePeerDependents: false` in
-`pnpm-workspace.yaml` keeps them apart.
-
 `pnpm-workspace.yaml` settings that change what pnpm installs and jpm does not read, such as
-`hoistPattern` or `injectWorkspacePackages`, are named in a warning; the rest are left alone. Its
+`hoistPattern` or `dedupePeerDependents`, are named in a warning; the rest are left alone. Its
 `overrides`, `patchedDependencies`, `onlyBuiltDependencies`, `allowBuilds` and
 `packageExtensions` are read, and so is `.yarnrc.yml`'s `packageExtensions`
 ([package extensions](overrides.md#package-extensions)).
