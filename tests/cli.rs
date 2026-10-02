@@ -441,6 +441,19 @@ fn a_dependency_that_is_a_peer_too_settles_as_a_peer() {
 }
 
 #[test]
+fn a_dependency_that_is_a_peer_too_is_installed_without_peers() {
+    // vite-plugin-pwa lists workbox-window in both: legacy-peer-deps installs it as npm does.
+    let r = Registry::start(vec![
+        pkg("pwa", "1.0.0", json!({ "dependencies": { "wb": "^1" }, "peerDependencies": { "wb": "^1" } })),
+        pkg("wb", "1.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "pwa": "1.0.0" } }));
+    env.ok(&["install", "--legacy-peer-deps"]);
+    assert!(env.read("node_modules/pwa/../wb/index.js").contains("wb@1.0.0"));
+}
+
+#[test]
 fn a_peer_with_no_parent_copy_takes_the_roots() {
     // opencode's zod 4.1.8, not the 4.4.3 a package below pins: npm and bun hoist the root's.
     let r = Registry::start(vec![
