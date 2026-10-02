@@ -145,3 +145,44 @@ fn a_run_keeps_the_layout_the_last_install_chose() {
     assert!(!out.contains("installed"), "{out}");
     assert!(real_dir(&env, "node_modules/a"), "still hoisted");
 }
+
+#[cfg(unix)]
+#[test]
+fn never_writes_through_a_link_out_of_the_project() {
+    // A checkout can leave a link where a package was: nothing is placed or removed under it.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "node-linker=hoisted\n");
+    env.manifest(json!({ "dependencies": { "a": "1.0.0", "b": "2.0.0" } }));
+    env.ok(&["install"]);
+    let outside = env.root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::remove_dir_all(env.path("node_modules/a")).unwrap();
+    std::os::unix::fs::symlink(&outside, env.path("node_modules/a")).unwrap();
+    // The link goes, as a link; a's own directory and its b are made in its place.
+    env.ok(&["install"]);
+    assert!(real_dir(&env, "node_modules/a") && real_dir(&env, "node_modules/a/node_modules/b"));
+    assert!(!outside.join("node_modules").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn never_keeps_a_link_where_a_package_was_placed() {
+    // The previous install's state says node_modules/a is a@1.0.0; a link to elsewhere there is
+    // not it: replaced with a's own files, the elsewhere left alone.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "node-linker=hoisted\n");
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    env.ok(&["install"]);
+    let outside = env.root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("index.js"), "evil").unwrap();
+    std::fs::remove_dir_all(env.path("node_modules/a")).unwrap();
+    std::os::unix::fs::symlink(&outside, env.path("node_modules/a")).unwrap();
+    env.manifest(json!({ "dependencies": { "a": "1.0.0", "cli": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(real_dir(&env, "node_modules/a"));
+    assert!(env.read("node_modules/a/index.js").contains("a@1.0.0"));
+    assert_eq!(std::fs::read_to_string(outside.join("index.js")).unwrap(), "evil");
+}

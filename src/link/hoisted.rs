@@ -228,18 +228,29 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     gone.sort_by_key(|at| Reverse(at.len()));
     let counts = Counts::default();
     for at in &gone {
+        // Never through a link out of the project, which a checkout can leave where a package was.
         let path = opts.dir.join(at);
-        within(&path, &real_root)?;
+        within(&path, opts.dir)?;
+        if let Some(parent) = path.parent() {
+            inside(parent, &real_root)?;
+        }
         if remove_link(&path).is_ok() {
             Counts::add(&counts.removed, 1);
         }
     }
     let moved = |at: &str| gone.iter().any(|g| at.starts_with(&format!("{g}/")));
+    // Still what was placed: a package's own directory, a workspace's link. Never a link where
+    // a package's files should be, which a checkout's state could vouch for.
+    let kept = |at: &str, id: &String| {
+        let meta = fs::symlink_metadata(opts.dir.join(at));
+        match res.packages[id].local {
+            Some(_) => meta.is_ok_and(|m| m.file_type().is_symlink() || m.is_dir()),
+            None => meta.is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()),
+        }
+    };
     let todo: Vec<(&String, &String)> = placed
         .iter()
-        .filter(|(at, id)| {
-            old.get(*at) != Some(id) || unbuilt(at, id) || moved(at) || fs::symlink_metadata(opts.dir.join(at)).is_err()
-        })
+        .filter(|(at, id)| old.get(*at) != Some(id) || unbuilt(at, id) || moved(at) || !kept(at, id))
         .collect();
     Counts::add(&counts.reused, placed.len() - todo.len());
 
@@ -252,7 +263,7 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         let these: Vec<(&String, &String)> = todo.iter().filter(|(at, _)| depth(at) == level).copied().collect();
         let results = pool::map(pool::disk_threads(), these, |(at, id)| {
             let pkg = &res.packages[id];
-            match place(res, opts, &counts, &copy_only, at, pkg) {
+            match place(opts, &real_root, &counts, &copy_only, at, pkg) {
                 Err(e) if pkg.optional => {
                     crate::ui::warn(&format!("skipped optional {id}: {e}"));
                     failed.lock().unwrap_or_else(PoisonError::into_inner).push(id.clone());
@@ -354,18 +365,27 @@ fn ready(opts: &Options, p: &Package) -> bool {
 
 /// One package at `at`: a link to a workspace or a linked directory, else its files.
 fn place(
-    res: &Resolution,
     opts: &Options,
+    real_root: &Path,
     counts: &Counts,
     copy_only: &AtomicBool,
     at: &str,
     pkg: &Package,
 ) -> Result<()> {
-    let _ = res;
     let path = opts.dir.join(at);
+    within(&path, opts.dir)?;
     let parent = path.parent().unwrap_or(opts.dir);
+    // Never through a link out of the project, which a checkout can leave where a package was:
+    // what of the parent is there already leads inside it.
+    let there = parent.ancestors().find(|a| fs::symlink_metadata(a).is_ok()).unwrap_or(opts.dir);
+    inside(there, real_root)?;
     fs::create_dir_all(parent)
         .map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())).with_code("ELINK"))?;
+    // Whatever is there goes first, a link as a link: never filled through.
+    if fs::symlink_metadata(&path).is_ok() {
+        remove_link(&path)
+            .map_err(|e| Error::io(&e, format!("cannot replace {}", path.display())).with_code("ELINK"))?;
+    }
     if let Some(local) = &pkg.local {
         let target = relative(parent, &opts.dir.join(local));
         return sys::symlink_dir(&target.to_string_lossy(), &path)
