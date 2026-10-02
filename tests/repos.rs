@@ -159,10 +159,13 @@ fn installs_from_a_git_repository() {
     wipe(&env);
     ok(&env, &["ci"]);
     assert!(env.exists("node_modules/gp/lib/cli.js"));
-    // A short commit id is not a ref.
+    // A short commit id is that commit, as npm takes it (parcel's `#b8a4fa94`); locked in full.
     env.manifest(json!({ "dependencies": { "gp": format!("{}#{}", repo.url(), &v1[..8]) } }));
+    ok(&env, &["install"]);
+    assert!(env.read("jpm.lock").contains(&v1) && !env.exists("node_modules/gp/lib/index.js"));
+    env.manifest(json!({ "dependencies": { "gp": format!("{}#{}", repo.url(), "0123abcd") } }));
     let out = jpm(&env, &["install"]);
-    assert!(stderr(&out).contains("full 40-character id"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("no branch, tag or commit 0123abcd"), "{}", stderr(&out));
     // file:// is for tests: a package.json cannot reach the disk through git.
     env.manifest(json!({ "dependencies": { "gp": repo.url() } }));
     let out = env.jpm(&["install"]);

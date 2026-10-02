@@ -62,12 +62,31 @@ pub fn resolve(fetch_spec: &str, offline: bool, tmp: &Path) -> Result<String> {
     let listing = listing?;
     match pick(&listing, committish) {
         Some(commit) => Ok(format!("{url}#{commit}")),
-        None if committish.len() >= 7 && committish.bytes().all(|b| b.is_ascii_hexdigit()) => Err(Error::new(
-            "EGIT",
-            format!("{fetch_spec}: no branch or tag {committish}; give a commit as its full 40-character id"),
-        )),
+        None if committish.len() >= 7 && committish.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            let commit = abbreviated(url, committish, tmp, fetch_spec).map_err(|e| {
+                Error::new("EGIT", format!("{fetch_spec}: no branch, tag or commit {committish}: {}", e.message))
+            })?;
+            Ok(format!("{url}#{commit}"))
+        }
         None => Err(Error::new("EGIT", format!("{fetch_spec}: no branch, tag or version matches {committish:?}"))),
     }
+}
+
+/// The commit an abbreviated id names (parcel's `#b8a4fa94`), as npm takes one: the branches'
+/// and tags' commits fetched into an empty directory, without their trees or files, and the id
+/// looked up among them. `short` is hex, never an option.
+fn abbreviated(url: &str, short: &str, tmp: &Path, what: &str) -> Result<String> {
+    let work = tmp.join(temp_suffix());
+    std::fs::create_dir_all(&work).map_err(|e| Error::io(&e, format!("cannot create {}", work.display())))?;
+    let found = (|| {
+        run(git(&work, url).args(["init", "-q"]), what)?;
+        let refs = ["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"];
+        run(git(&work, url).args(["fetch", "-q", "--filter=tree:0", "--", &remote(url)?]).args(refs), what)?;
+        run(git(&work, url).args(["rev-parse", "--verify", "--quiet", &format!("{short}^{{commit}}")]), what)
+    })();
+    remove_tree(&work);
+    let id = found?.trim().to_ascii_lowercase();
+    if spec::is_commit(&id) { Ok(id) } else { Err(Error::new("EGIT", format!("{short} is not a commit there"))) }
 }
 
 /// The commit `committish` names in `git ls-remote` output: HEAD for none, the highest tag in a
