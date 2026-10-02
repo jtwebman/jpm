@@ -1805,7 +1805,9 @@ fn standing_top(dir: &Path, global: Option<&Path>, top: &Top, res: &Resolution, 
             }
         }
         read.links.insert(name.clone(), to);
-        bins.extend(pkg.iter().flat_map(|p| p.bin.keys().cloned()));
+        // A workspace's bin not built yet is left out (see `link_top`).
+        let built = |p: &Package, target: &str| p.local.as_ref().is_none_or(|l| dir.join(l).join(target).exists());
+        bins.extend(pkg.iter().flat_map(|p| p.bin.iter().filter(|(_, t)| built(p, t)).map(|(b, _)| b.clone())));
     }
     if !bins.is_empty() {
         let placed: HashSet<String> = fs::read_dir(top.nm.join(".bin"))
