@@ -31,6 +31,12 @@ is plainly installed:
 Could not resolve "load-tsconfig" from ".../store/v1/links/esbuild-fix-imports-plugin@1.0.22-…/…"
 ```
 
+One such case jpm handles itself: a package's types importing its peer's types. tsc resolves
+react-router's `import 'react'` from react-router's folder, where `react` is linked but the
+project's `@types/react` is not, so the import loses its types (`NavLink` had no props). Under
+the global store, a package that takes a peer gets the project's `@types/<peer>` linked beside
+it, and an entry with one version of the types is never shared with one with another.
+
 That is why `jpm install` warns when a project declares a bundler and the global store is on.
 The package at fault is the one importing what it does not declare; the fix that always works
 is to build entries in the project instead.
