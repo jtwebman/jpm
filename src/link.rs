@@ -104,6 +104,9 @@ pub struct Options<'a> {
     /// Every workspace linked at the root as well, as npm and yarn's node-modules layouts have
     /// them (`commands::flat_workspaces`); a pnpm project's and a new one's are not.
     pub workspaces_at_root: bool,
+    /// The version the project's npm or bun lockfile puts at the root, by name: the hidden
+    /// hoist's pick where the tree has it (`foreign::root_placement`).
+    pub placed: &'a HashMap<String, String>,
     /// Puts a package in the store, waiting for its download if one is under way. With it,
     /// entries are built as their packages arrive rather than after the last one. With the
     /// global store, optional packages must be settled before, as whether they arrived decides
@@ -1322,24 +1325,31 @@ impl Linker<'_> {
         };
         let root: HashSet<&str> =
             self.res.root.dependencies.iter().filter(|(n, v)| linked(n, v)).map(|(n, _)| n.as_str()).collect();
-        // The copy nearest a top, then the highest, as npm's and pnpm's hoisting place the first
-        // found from the root: an undeclared import gets the version the project's own tree has
-        // there, not one a package deep below pins.
-        let mut depth: HashMap<&str, usize> = HashMap::new();
-        let mut queue: VecDeque<(String, usize)> =
-            self.res.root.dependencies.iter().map(|(n, v)| (format!("{n}@{v}"), 1)).collect();
-        queue.extend(self.res.packages.iter().filter(|(_, p)| p.local.is_some()).map(|(id, _)| (id.clone(), 0)));
-        while let Some((id, d)) = queue.pop_front() {
+        // The version the project's npm or bun lockfile has at the root, else the first copy a walk from the root finds, a level at a time and each level by name, as
+        // npm, pnpm and bun place the first they find: an undeclared import gets the version the
+        // project's own tree has there, not one a package deep below pins (tldraw), nor the
+        // higher of two at one depth (echarts' @types/node 12, which npm puts at its root, not 16).
+        // What the walk misses goes by version.
+        let mut found: HashMap<&str, usize> = HashMap::new();
+        let mut tops: Vec<(&str, String)> =
+            self.res.root.dependencies.iter().map(|(n, v)| (n.as_str(), format!("{n}@{v}"))).collect();
+        tops.extend(
+            self.res.packages.iter().filter(|(_, p)| p.local.is_some()).map(|(id, p)| (p.name.as_str(), id.clone())),
+        );
+        tops.sort();
+        let mut queue: VecDeque<String> = tops.into_iter().map(|(_, id)| id).collect();
+        while let Some(id) = queue.pop_front() {
             let Some((id, p)) = self.res.packages.get_key_value(&id) else { continue };
-            if depth.get(id.as_str()).is_some_and(|&have| have <= d) {
+            if found.contains_key(id.as_str()) {
                 continue;
             }
-            depth.insert(id, d);
-            queue.extend(p.all_deps().iter().map(|(n, v)| (format!("{n}@{v}"), d + 1)));
+            found.insert(id, found.len());
+            queue.extend(p.all_deps().iter().map(|(n, v)| format!("{n}@{v}")));
         }
         let rank = |e: &Entry| {
             (
-                Reverse(depth.get(e.pkg.key().as_str()).copied().unwrap_or(usize::MAX)),
+                self.opts.placed.get(&e.pkg.name) == Some(&e.pkg.version),
+                Reverse(found.get(e.pkg.key().as_str()).copied().unwrap_or(usize::MAX)),
                 crate::semver::parse(&e.pkg.version),
             )
         };
