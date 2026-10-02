@@ -725,3 +725,52 @@ snapshots:
         assert!(env.ok(&["install"]).contains("up to date"));
     }
 }
+
+#[test]
+fn a_copy_goes_into_the_one_with_its_peers_and_more() {
+    // sveltejs/kit: one workspace reaches vitest with @types/node, another with jsdom too; pnpm's
+    // dedupePeerDependents makes them one vitest, the bigger. Its ui takes vitest as a peer and
+    // vitest takes the ui as one: the two copies of each merge together.
+    let soft =
+        |names: &[&str]| -> Value { names.iter().map(|n| (n.to_string(), json!({ "optional": true }))).collect() };
+    let r = Registry::start(vec![
+        pkg("types", "1.0.0", json!({})),
+        pkg("dom", "1.0.0", json!({})),
+        pkg(
+            "tool",
+            "1.0.0",
+            json!({ "peerDependencies": { "types": "*", "dom": "*", "ui": "*" }, "peerDependenciesMeta": soft(&["types", "dom", "ui"]) }),
+        ),
+        pkg("ui", "1.0.0", json!({ "peerDependencies": { "tool": "*" } })),
+        // Its key names the copy of tool it takes: the merged one, once tool's copies are one.
+        pkg("plugin", "1.0.0", json!({ "peerDependencies": { "tool": "*", "x": "*" } })),
+        pkg("x", "1.0.0", json!({})),
+        pkg("x", "2.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    monorepo(
+        &env,
+        json!({}),
+        &[
+            ("a", json!({ "tool": "1.0.0", "types": "1.0.0", "ui": "1.0.0", "plugin": "1.0.0", "x": "1.0.0" })),
+            (
+                "b",
+                json!({ "tool": "1.0.0", "types": "1.0.0", "dom": "1.0.0", "ui": "1.0.0", "plugin": "1.0.0", "x": "2.0.0" }),
+            ),
+        ],
+    );
+    env.ok(&["install"]);
+    let lock = env.lock();
+    assert_eq!(keys(&lock, "tool").len(), 1, "{:?}", keys(&lock, "tool"));
+    assert_eq!(keys(&lock, "ui").len(), 1, "{:?}", keys(&lock, "ui"));
+    let tool = &lock["packages"][keys(&lock, "tool")[0].as_str()];
+    assert!(tool.to_string().contains("dom"), "the bigger copy: {tool}");
+    // plugin stays two (x@1 and x@2), each naming the one tool.
+    assert_eq!(keys(&lock, "plugin").len(), 2, "{:?}", keys(&lock, "plugin"));
+    assert!(env.ok(&["install", "--frozen-lockfile"]).contains("up to date"));
+    // pnpm-workspace.yaml can say no, for a tree resolved afresh.
+    env.write("pnpm-workspace.yaml", "packages:\n  - packages/*\ndedupePeerDependents: false\n");
+    std::fs::remove_file(env.path("jpm.lock")).unwrap();
+    env.ok(&["install"]);
+    assert_eq!(keys(&env.lock(), "tool").len(), 2);
+}

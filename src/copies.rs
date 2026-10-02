@@ -76,13 +76,13 @@ struct Split<'a> {
 
 /// Split each package the resolver settled into a copy per set of peers. `res` has no peer
 /// suffixes yet; one without a package that has peers comes back as it is.
-pub fn split(res: Resolution) -> Resolution {
+pub fn split(res: Resolution, dedupe: bool) -> Resolution {
     if res.packages.values().all(|p| p.peers.as_ref().is_none_or(|p| p.is_empty())) {
         return res;
     }
     // Deep trees recurse deep: a thread of its own with room for it.
     let plan = std::thread::scope(|s| {
-        let walk = std::thread::Builder::new().stack_size(64 << 20).spawn_scoped(s, || plan(&res)).ok()?;
+        let walk = std::thread::Builder::new().stack_size(64 << 20).spawn_scoped(s, || plan(&res, dedupe)).ok()?;
         walk.join().ok()
     });
     let Some(Some(plan)) = plan else { return res };
@@ -130,7 +130,7 @@ struct Plan {
 }
 
 /// `None` when nothing changes.
-fn plan(res: &Resolution) -> Option<Plan> {
+fn plan(res: &Resolution, dedupe: bool) -> Option<Plan> {
     let index: HashMap<&str, usize> = res.packages.keys().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
     let mut key = String::new();
     let mut find = |n: &String, v: &String| {
@@ -209,6 +209,9 @@ fn plan(res: &Resolution) -> Option<Plan> {
         let edges = split.pkgs[i].edges.clone();
         let level = split.level(root, Some(owner), p.name.as_str(), &edges);
         top_edges.push((i, split.fill(level)));
+    }
+    if dedupe {
+        split.dedupe();
     }
     split.finish(res, top_edges)
 }
@@ -375,6 +378,75 @@ impl<'a> Split<'a> {
         self.open[pkg].pop();
         self.done[pkg].push(n);
         n
+    }
+
+    /// One copy of a package in place of another whose peers it has and more, as pnpm's
+    /// `dedupePeerDependents`: sveltejs/kit's vitest with `@types/node` alone and the one with
+    /// jsdom and the rest too were two vitests, and a `declare module 'vitest'` reached one. A
+    /// copy forwards to the one copy of its package that takes every peer it takes and the most
+    /// (of two that take as many, the first made), when each of its edges and peers reaches what
+    /// that copy's does once the forwards are made. They are proposed at once and dropped until
+    /// all hold, so copies that take each other (vitest and `@vitest/ui`) go together. Done
+    /// before keys are made, a key names only copies that stay.
+    fn dedupe(&mut self) {
+        let mut by_pkg: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (n, node) in self.nodes.iter().enumerate() {
+            let pkg = &self.pkgs[node.pkg];
+            if node.forward.is_none() && !pkg.plain && pkg.p.local.is_none() {
+                by_pkg.entry(node.pkg).or_default().push(n);
+            }
+        }
+        let mut into: HashMap<usize, usize> = HashMap::new();
+        for nodes in by_pkg.values().filter(|n| n.len() > 1) {
+            let names = |n: usize| self.nodes[n].above.iter().map(|a| a.0).collect::<Vec<&str>>();
+            for &b in nodes {
+                let theirs = names(b);
+                let best = nodes
+                    .iter()
+                    .copied()
+                    .filter(|&a| theirs.iter().all(|n| names(a).contains(n)))
+                    .max_by_key(|&a| (self.nodes[a].above.len(), std::cmp::Reverse(a)));
+                if let Some(a) = best.filter(|&a| a != b) {
+                    into.insert(b, a);
+                }
+            }
+        }
+        // A proposal's target only ever has more peers, or as many and is made first: no cycle.
+        let rep = |into: &HashMap<usize, usize>, split: &Split, n: usize| {
+            let mut n = split.find(n);
+            while let Some(&next) = into.get(&n) {
+                n = split.find(next);
+            }
+            n
+        };
+        loop {
+            let wrong: Vec<usize> = into
+                .iter()
+                .filter(|&(&b, &a)| {
+                    let (b, a) = (&self.nodes[b], &self.nodes[a]);
+                    let reach = |list: &[(&str, usize)], name: &str| list.iter().find(|e| e.0 == name).map(|e| e.1);
+                    let holds = |from: &[(&str, usize)], to: &[(&str, usize)]| {
+                        from.iter().all(|&(name, t)| {
+                            reach(to, name).is_some_and(|u| rep(&into, self, t) == rep(&into, self, u))
+                        })
+                    };
+                    // Its own edges the other has too; the other's beyond them only peers it takes.
+                    let extra =
+                        a.edges.iter().any(|e| reach(&b.edges, e.0).is_none() && !a.above.iter().any(|p| p.0 == e.0));
+                    !holds(&b.edges, &a.edges) || !holds(&b.above, &a.above) || extra
+                })
+                .map(|(&b, _)| b)
+                .collect();
+            if wrong.is_empty() {
+                break;
+            }
+            for b in wrong {
+                into.remove(&b);
+            }
+        }
+        for (b, a) in into {
+            self.nodes[b].forward = Some(a);
+        }
     }
 
     /// Each node's key: its package's, and pnpm's suffix of what it takes from above, each
@@ -551,7 +623,7 @@ mod tests {
                 pkg("d@1.0.0", &[("a", "1.0.0"), ("r", "1.0.0")], &[]),
             ],
         );
-        let out = split(res.clone());
+        let out = split(res.clone(), true);
         let keys: Vec<&str> = out.packages.keys().map(String::as_str).collect();
         assert_eq!(keys, ["a@1.0.0", "a@1.0.1", "d@1.0.0", "r@1.0.0(a@1.0.0)", "r@1.0.0(a@1.0.1)"]);
         assert_eq!(out.root.dependencies["r"], "1.0.0(a@1.0.1)");
@@ -559,13 +631,13 @@ mod tests {
         assert_eq!(out.packages["r@1.0.0(a@1.0.0)"].dependencies["d"], "1.0.0");
         assert_eq!(out.packages["r@1.0.0(a@1.0.0)"].optional_dependencies["a"], "1.0.0");
         // The same input, the same copies.
-        assert_eq!(split(res).packages, out.packages);
+        assert_eq!(split(res, true).packages, out.packages);
     }
 
     #[test]
     fn a_tree_without_peers_is_left_as_it_is() {
         let res = resolution(&[("x", "1.0.0")], vec![pkg("x@1.0.0", &[("y", "1.0.0")], &[]), pkg("y@1.0.0", &[], &[])]);
-        assert_eq!(split(res.clone()).packages, res.packages);
+        assert_eq!(split(res.clone(), true).packages, res.packages);
         // Peers met the same way everywhere: the keys stay plain.
         let res = resolution(
             &[("host", "1.0.0"), ("p", "1.0.0"), ("q", "1.0.0")],
@@ -576,6 +648,6 @@ mod tests {
                 pkg("plugin@1.0.0", &[("host", "1.0.0")], &[("host", PeerKind::Required)]),
             ],
         );
-        assert_eq!(split(res.clone()).packages, res.packages);
+        assert_eq!(split(res.clone(), true).packages, res.packages);
     }
 }

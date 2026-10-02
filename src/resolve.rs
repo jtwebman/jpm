@@ -49,6 +49,9 @@ pub struct Options<'a> {
     /// A top's plain range lands on a workspace of its name, as npm, bun and yarn link one;
     /// else only `workspace:` does, as pnpm 9 and later (see `Rules::link_workspaces`).
     pub link_workspaces: bool,
+    /// One copy of a package in place of another whose peers it has and more (`Split::dedupe`):
+    /// pnpm's `dedupePeerDependents`, on unless pnpm-workspace.yaml turns it off.
+    pub dedupe_peers: bool,
     /// pnpm's `block-exotic-subdeps`: only a top may take a git or tarball-url package.
     pub block_exotic: bool,
     pub threads: usize,
@@ -269,7 +272,7 @@ pub fn resolve(manifest: &RootManifest, opts: &Options) -> Result<Resolution> {
     let res = walk.run()?;
     // Peers only linked to what the tree has, as yarn 1 and npm's legacy mode link them, are
     // one set per package, as there.
-    Ok(if opts.legacy_peers { res } else { crate::copies::split(res) })
+    Ok(if opts.legacy_peers { res } else { crate::copies::split(res, opts.dedupe_peers) })
 }
 
 impl Walk<'_> {
