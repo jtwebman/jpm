@@ -194,21 +194,54 @@ pub fn dedupe(mut res: Resolution) -> Resolution {
     if into.is_empty() {
         return res;
     }
-    let moved = |into: &HashMap<String, String>, deps: &mut Deps| {
+    // A key whose suffix names a copy that is gone names the one it went into: the copies of
+    // other packages that took it (`@unhead/bundler@…(vite@…)`) are renamed too. Longest first,
+    // so a gone copy inside another gone one is replaced with it.
+    let mut subs: Vec<(String, String)> =
+        into.keys().map(|b| (format!("({b})"), format!("({})", end(&into, b)))).collect();
+    subs.sort_by_key(|(old, _)| std::cmp::Reverse(old.len()));
+    fn rename(subs: &[(String, String)], key: &str) -> String {
+        let (base, suffix) = crate::graph::split_peers(key);
+        let mut suffix = suffix.to_string();
+        for (old, new) in subs {
+            if suffix.contains(old.as_str()) {
+                suffix = suffix.replace(old.as_str(), new);
+            }
+        }
+        format!("{base}{suffix}")
+    }
+    // A copy merged into may itself name a gone one: its new name too, until none changes.
+    for _ in 0..subs.len() {
+        let next: Vec<(String, String)> = subs
+            .iter()
+            .map(|(old, new)| (old.clone(), format!("({})", rename(&subs, &new[1..new.len() - 1]))))
+            .collect();
+        if next == subs {
+            break;
+        }
+        subs = next;
+    }
+    let renamed = |key: &str| rename(&subs, key);
+    let moved = |deps: &mut Deps| {
         for (n, v) in deps.iter_mut() {
-            let to = target(into, n, v);
+            let to = renamed(&target(&into, n, v));
             if let Some(version) = to.strip_prefix(n.as_str()).and_then(|t| t.strip_prefix('@')) {
                 *v = version.to_string();
             }
         }
     };
-    moved(&into, &mut res.root.dependencies);
-    for key in into.keys() {
-        res.packages.remove(key);
-    }
-    for p in res.packages.values_mut() {
-        moved(&into, &mut p.dependencies);
-        moved(&into, &mut p.optional_dependencies);
+    moved(&mut res.root.dependencies);
+    let packages = std::mem::take(&mut res.packages);
+    for (key, mut p) in packages {
+        if into.contains_key(&key) {
+            continue;
+        }
+        moved(&mut p.dependencies);
+        moved(&mut p.optional_dependencies);
+        let key = renamed(&key);
+        p.peer_suffix = crate::graph::split_peers(&key).1.to_string();
+        // Two copies the renames made one key are one package: their edges went the same way.
+        res.packages.entry(key).or_insert(p);
     }
     res
 }

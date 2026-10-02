@@ -742,14 +742,21 @@ fn a_copy_goes_into_the_one_with_its_peers_and_more() {
             json!({ "peerDependencies": { "types": "*", "dom": "*", "ui": "*" }, "peerDependenciesMeta": soft(&["types", "dom", "ui"]) }),
         ),
         pkg("ui", "1.0.0", json!({ "peerDependencies": { "tool": "*" } })),
+        // Its key names the copy of tool it takes: the merged one, once tool's copies are one.
+        pkg("plugin", "1.0.0", json!({ "peerDependencies": { "tool": "*", "x": "*" } })),
+        pkg("x", "1.0.0", json!({})),
+        pkg("x", "2.0.0", json!({})),
     ]);
     let env = Env::new(&r);
     monorepo(
         &env,
         json!({}),
         &[
-            ("a", json!({ "tool": "1.0.0", "types": "1.0.0", "ui": "1.0.0" })),
-            ("b", json!({ "tool": "1.0.0", "types": "1.0.0", "dom": "1.0.0", "ui": "1.0.0" })),
+            ("a", json!({ "tool": "1.0.0", "types": "1.0.0", "ui": "1.0.0", "plugin": "1.0.0", "x": "1.0.0" })),
+            (
+                "b",
+                json!({ "tool": "1.0.0", "types": "1.0.0", "dom": "1.0.0", "ui": "1.0.0", "plugin": "1.0.0", "x": "2.0.0" }),
+            ),
         ],
     );
     env.ok(&["install"]);
@@ -757,6 +764,9 @@ fn a_copy_goes_into_the_one_with_its_peers_and_more() {
     assert_eq!(keys(&lock, "tool").len(), 1, "{:?}", keys(&lock, "tool"));
     assert_eq!(keys(&lock, "ui").len(), 1, "{:?}", keys(&lock, "ui"));
     assert!(keys(&lock, "tool")[0].contains("dom@1.0.0"), "{:?}", keys(&lock, "tool"));
+    // plugin stays two (x@1 and x@2), each naming the one tool.
+    assert!(keys(&lock, "plugin").iter().all(|k| k.contains("dom@1.0.0")), "{:?}", keys(&lock, "plugin"));
+    assert!(env.ok(&["install", "--frozen-lockfile"]).contains("up to date"));
     // pnpm-workspace.yaml can say no, for a tree resolved afresh.
     env.write("pnpm-workspace.yaml", "packages:\n  - packages/*\ndedupePeerDependents: false\n");
     std::fs::remove_file(env.path("jpm.lock")).unwrap();
