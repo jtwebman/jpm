@@ -55,12 +55,27 @@ The age applies when a version is picked: what a lockfile already holds is kept 
 The global virtual store is on by default. Turn it off with `global-store=false` in `.npmrc`,
 `JPM_GLOBAL_STORE=0` or `--no-global-store`. It is off inside containers (`/.dockerenv` or
 `/run/.containerenv`), where a mounted project would not see the store, and when the store
-cannot be written. It is also off, with a note, for a project that depends on `next`, `nuxt`
-or `electron`: Next's Turbopack compiles nothing outside the project, Nuxt imports packages it
-does not declare, and an Electron app packs `node_modules` into itself and rebuilds native
-modules for Electron in place. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
+cannot be written. It is also off, with a note, for a project that depends on `next` or `nuxt`:
+Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
+declare. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
 project still needs a bundler: [global-store.md](global-store.md). An install warns when the
 project declares a bundler under it.
+
+`node-linker` picks the layout of `node_modules`, in `.npmrc` or as `nodeLinker` in
+`pnpm-workspace.yaml`:
+
+- `isolated`, the default: pnpm's layout. Each package is a link to an entry holding its files
+  and links to what it declares, in the global store or the project's `node_modules/.jpm`.
+- `hoisted`: npm's layout. Each package is a real directory, as high in the tree as it goes
+  without changing what anything else there finds, and nested under what needs it where two
+  versions of one name meet; every workspace is linked at the root. Files are hardlinked from
+  the store, and copied for a package whose install scripts run or that is patched; the scripts
+  run where the package is. Never in the global store. For tools that read npm's paths (see
+  [Known differences](migrating.md#known-differences)).
+
+A project that depends on `electron` gets `hoisted` unless `node-linker` says otherwise, with a
+note: an Electron app packs `node_modules` into itself, rebuilds native modules for Electron in
+place, and its tools walk npm's directories.
 
 Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: one version
 of every package the root does not link itself (the version the project's package-lock.json or

@@ -101,15 +101,23 @@ struct Ctx {
     /// A framework the tree depends on that needs every package inside the project, found
     /// from the project the install reads.
     framework: Option<&'static str>,
+    /// `node-linker=hoisted`: npm's layout, never in the global store (see `link::hoisted`).
+    hoisted: bool,
+    /// The layout to keep where nothing names one (`install_first`: the last install's).
+    keep_hoisted: Option<bool>,
     /// The hashes of the project's patches: a patch file edited is a changed input.
     patched: String,
 }
 
 /// Frameworks that fail when a package's real path is outside the project: Next's Turbopack
-/// compiles nothing outside its root, Nuxt imports what it did not declare, which only the
-/// project's hidden hoist provides, and an Electron app packs node_modules into itself and
-/// rebuilds native modules for Electron in place.
-const PROJECT_LAYOUT: [&str; 3] = ["next", "nuxt", "electron"];
+/// compiles nothing outside its root, and Nuxt imports what it did not declare, which only the
+/// project's hidden hoist provides.
+const PROJECT_LAYOUT: [&str; 2] = ["next", "nuxt"];
+
+/// What lays out node_modules as npm does unless `node-linker` says otherwise: an Electron app
+/// packs node_modules into itself, rebuilds native modules for Electron in place, and its
+/// tools (electron-builder's, electron-link's) walk npm's directories.
+const HOISTED_FOR: [&str; 1] = ["electron"];
 
 /// Bundlers that resolve a package from its real path: under the global store, from inside the
 /// store, where an import the package does not declare finds nothing (docs/global-store.md).
@@ -164,6 +172,8 @@ impl Ctx {
             scriptless: false,
             stamped: Mutex::default(),
             framework: None,
+            hoisted: false,
+            keep_hoisted: None,
             patched: String::new(),
         }
     }
@@ -324,6 +334,7 @@ impl Ctx {
             self.opts.production.into(),
             store.display().to_string().into(),
             self.wants_global().into(),
+            self.hoisted.into(),
             self.ignore_scripts().into(),
             hosts,
             platform,
@@ -345,9 +356,12 @@ impl Ctx {
     /// The global virtual store is on unless the config says `global-store=false` or this runs
     /// in a container, whose project mount would not see the store's links.
     fn wants_global(&self) -> bool {
-        self.global_setting().unwrap_or_else(|| {
-            self.framework.is_none() && !Path::new("/.dockerenv").exists() && !Path::new("/run/.containerenv").exists()
-        })
+        !self.hoisted
+            && self.global_setting().unwrap_or_else(|| {
+                self.framework.is_none()
+                    && !Path::new("/.dockerenv").exists()
+                    && !Path::new("/run/.containerenv").exists()
+            })
     }
 
     /// `--[no-]global-store`, `JPM_GLOBAL_STORE` or `global-store`, when one is given.
@@ -505,6 +519,11 @@ fn yarn_project(dir: &Path, manifest: &RootManifest) -> bool {
 
 /// The first of `PROJECT_LAYOUT` that the root or a workspace depends on.
 fn framework_of(project: &Project) -> Option<&'static str> {
+    first_of(project, &PROJECT_LAYOUT)
+}
+
+/// The first of `list` that the root or a workspace depends on.
+fn first_of(project: &Project, list: &[&'static str]) -> Option<&'static str> {
     let manifests = std::iter::once(&project.manifest).chain(project.workspaces.iter().map(|w| &w.manifest));
     let names: HashSet<&str> = manifests
         .flat_map(|m| {
@@ -514,7 +533,7 @@ fn framework_of(project: &Project) -> Option<&'static str> {
                 .flat_map(|d| d.keys().map(String::as_str))
         })
         .collect();
-    PROJECT_LAYOUT.into_iter().find(|f| names.contains(f))
+    list.iter().copied().find(|f| names.contains(f))
 }
 
 /// Resolve every range again, preferring locked versions, then install.
@@ -547,6 +566,17 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ),
     };
     ctx.framework = framework_of(&project);
+    let linker = ctx.config().node_linker.clone().or_else(|| project.rules.node_linker.clone());
+    let electron = first_of(&project, &HOISTED_FOR);
+    ctx.hoisted = match linker.as_deref() {
+        Some(l) => l == "hoisted",
+        None => ctx.keep_hoisted.unwrap_or(electron.is_some()),
+    };
+    if let (None, None, Some(e)) = (linker, ctx.keep_hoisted, electron) {
+        info(&format!(
+            "laying out node_modules as npm does: {e} packs it into the app (node-linker=isolated overrides)"
+        ));
+    }
     let dir = project.dir.clone();
     // `jpm ci` trusts no tree it finds: it is removed (see `link::clear_tops`).
     let previous = if ctx.opts.verify || ctx.opts.clean { None } else { state::read(&dir) };
@@ -706,7 +736,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ctx.opts.production,
         &store.dir,
         &salt,
-        global.is_some(),
+        match (ctx.hoisted, global.is_some()) {
+            (true, _) => "hoisted",
+            (false, true) => "global",
+            (false, false) => "isolated",
+        },
         &platform,
         &public_hoist,
     );
@@ -809,6 +843,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         placed: &foreign::root_placement(&dir),
         fetch: if overlap { Some(&fetch) } else { None },
         clean: ctx.opts.clean,
+        hoisted: ctx.hoisted,
     };
     let mut outcome = match link::link(&resolution, &options) {
         Err(e) if e.code == "ELINK" && e.message.contains("is not in the store") => {
@@ -835,8 +870,24 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     // done, rather than running them again in the same entries or changing the tree under them.
     // Not through the project's own scripts, which may well install it again themselves.
     let turn = outcome.turn.take();
-    let built =
-        if build_keys.is_empty() { 0 } else { build::run_packages(&dir, &resolution, &build_keys).map_err(again)? };
+    let built = if ctx.hoisted {
+        let ran = build::run_placed(&dir, &resolution, &outcome.built).map_err(again)?;
+        // Built where they are: not again until they are placed anew.
+        if !outcome.built.is_empty()
+            && let Some(mut st) = state::read(&dir)
+        {
+            let at = |p: &PathBuf| p.strip_prefix(&dir).map(|r| r.to_string_lossy().replace('\\', "/")).ok();
+            st.built.extend(outcome.built.iter().filter_map(|(_, p)| at(p)));
+            st.built.sort();
+            st.built.dedup();
+            state::write(&dir, &st)?;
+        }
+        ran
+    } else if build_keys.is_empty() {
+        0
+    } else {
+        build::run_packages(&dir, &resolution, &build_keys).map_err(again)?
+    };
     drop(turn);
     // The project's own scripts, on an install that changed the tree, as npm runs them.
     if scripts && edit.is_none() && !outcome.up_to_date {
@@ -2983,10 +3034,13 @@ fn install_first(opts: &Opts) -> Result<()> {
     ctx.inside = found.workspace.clone();
     ctx.found = Some(found);
     ctx.opened()?;
-    // The last install's `--no-global-store` holds too, when nothing says otherwise.
+    // The last install's `--no-global-store` and layout hold too, when nothing says otherwise:
+    // a script's environment may lack what chose them (turbo passes on only the variables it
+    // is told to).
     if ctx.global_setting().is_none() {
         ctx.opts.flags.global_store = previous.as_ref().map(|s| !s.shared.is_empty());
     }
+    ctx.keep_hoisted = previous.as_ref().map(|s| s.hoisted);
     let project = ctx.load_project()?;
     // No lockfile or node_modules for a project that never needed one.
     if previous.is_none() && !project.manifest.declares() && project.workspaces.is_empty() {
