@@ -1530,10 +1530,41 @@ fn import(
             lock
         }
     };
+    let mut lock = lock;
+    let approved = approve_trusted(project, &mut lock);
+    if !approved.is_empty() {
+        lock::write_lockfile(dir, &mut lock)?;
+        info(&format!("approved the install scripts of {}, which the project trusts", approved.join(", ")));
+    }
     ctx.binless.clear();
     ctx.scriptless = false;
     ctx.source = None;
     Ok(lock)
+}
+
+/// On import, the versions another manager ran the scripts of: a registry package whose name
+/// the project trusts (`trustedDependencies`, `onlyBuiltDependencies`, `allowBuilds`), at the
+/// version its lockfile holds. A git, tarball or aliased package still waits for `jpm approve`.
+fn approve_trusted(project: &Project, lock: &mut Lockfile) -> Vec<String> {
+    let trusted = build::trusted(&project.manifest, &project.rules);
+    let mut approved = Vec::new();
+    for (key, e) in &mut lock.packages {
+        let registry = e.version.is_none() && e.resolved.is_none();
+        let name = crate::graph::split_key(crate::graph::split_peers(key).0)
+            .filter(|(_, v)| crate::graph::split_alias(v).is_none())
+            .map(|(n, _)| n);
+        if e.scripts && !e.build && registry && name.is_some_and(|n| trusted.contains(n)) {
+            e.build = true;
+            approved.push(key.clone());
+        }
+    }
+    // An approved package is an entry of its own, and so is all that reaches it.
+    if !approved.is_empty() {
+        for e in lock.packages.values_mut() {
+            e.subgraph = None;
+        }
+    }
+    approved
 }
 
 /// What a converted lockfile leaves out, read from the packages once they are in the store:
