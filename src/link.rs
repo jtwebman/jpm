@@ -121,8 +121,9 @@ fn publicly(patterns: &[String], name: &str) -> bool {
 }
 
 /// A package of the hidden hoist linked at the root too: its name, its entry's package directory,
-/// and whether that is in the global store (linked to as it is, not relative).
-type Public = (String, PathBuf, bool);
+/// whether that is in the global store (linked to as it is, not relative), and its key in the
+/// resolution, for its bins.
+type Public = (String, PathBuf, bool, String);
 
 /// What the root links of the hidden hoist unless a setting says otherwise: type packages
 /// (tsc's `types: ["node"]` looks for @types/node at the root) and the linters and formatters
@@ -594,7 +595,7 @@ pub fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
             continue;
         }
         public.retain(|(n, ..)| *n != p.name);
-        public.push((p.name.clone(), opts.dir.join(&top.path), false));
+        public.push((p.name.clone(), opts.dir.join(&top.path), false, p.key()));
     }
     // Downloads no entry took whole, into the store as they are.
     opts.store.flush()?;
@@ -1191,8 +1192,9 @@ impl Linker<'_> {
         // The hidden hoist's packages a public pattern names, at the root as well: where tsc,
         // an editor's eslint and a script's require look under npm and yarn. Never in place of
         // what the root declares (the hoist leaves those out already).
+        let mut hoisted: Vec<(String, &Package)> = Vec::new();
         if top.path.is_empty() {
-            for (name, real, shared) in public {
+            for (name, real, shared, key) in public {
                 let at = nm.join(name);
                 let parent = at.parent().unwrap_or(nm);
                 if name.contains('/') {
@@ -1204,6 +1206,9 @@ impl Linker<'_> {
                 let target = target.to_string_lossy().into_owned();
                 replace_link(&at, &target, nm, true)?;
                 links.insert(name.clone(), target);
+                if let Some(pkg) = self.res.packages.get(key) {
+                    hoisted.push((name.clone(), pkg));
+                }
             }
         }
         let bin_dir = nm.join(".bin");
@@ -1211,6 +1216,13 @@ impl Linker<'_> {
         for (name, pkg) in &direct {
             for (bin, target) in &pkg.bin {
                 bins.insert(bin.clone(), (name.clone(), target.clone(), pkg));
+            }
+        }
+        // A hoisted package's bins as well, as pnpm links them (npm/cli's eslint, a peer of its
+        // config): never in place of a bin the root's own dependencies have.
+        for (name, pkg) in &hoisted {
+            for (bin, target) in &pkg.bin {
+                bins.entry(bin.clone()).or_insert_with(|| (name.clone(), target.clone(), pkg));
             }
         }
         // Made, written and swept below: never through a symlink out of the project.
@@ -1337,7 +1349,7 @@ impl Linker<'_> {
         let public: Vec<Public> = pick
             .iter()
             .filter(|(n, _)| publicly(self.opts.public_hoist, n))
-            .map(|(n, e)| (n.to_string(), self.root_of(e).join(&e.home), e.shared))
+            .map(|(n, e)| (n.to_string(), self.root_of(e).join(&e.home), e.shared, e.pkg.key()))
             .collect();
         // Each scope directory once, before the links that go in it.
         let scopes: BTreeSet<&str> = pick.keys().filter_map(|n| n.split_once('/').map(|(s, _)| s)).collect();
