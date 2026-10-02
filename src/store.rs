@@ -50,6 +50,10 @@ pub struct Index {
     pub stamp: Option<u128>,
 }
 
+fn now_ns() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
+}
+
 /// A file's time of last change, in ns since the epoch.
 pub fn mtime_ns(meta: &fs::Metadata) -> Option<u128> {
     Some(meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos())
@@ -97,14 +101,15 @@ impl Index {
 
     /// Stamped now: every file is written.
     fn stamped(mut self) -> Self {
-        self.stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_nanos());
+        self.stamp = Some(now_ns());
         self
     }
 
-    fn render(&self) -> String {
+    /// As written in the store, stamped `stamp`.
+    fn render(&self, stamp: Option<u128>) -> String {
         use std::fmt::Write as _;
         let mut out = format!("jpm-index {} {}", if self.suffixed { 2 } else { 1 }, self.unpacked_size);
-        if let Some(stamp) = self.stamp {
+        if let Some(stamp) = stamp {
             let _ = write!(out, " {stamp}");
         }
         out.push('\n');
@@ -667,15 +672,19 @@ impl Store {
 
     /// Publish an unpacked, verified entry: rename it into place, then write its index. Nothing is
     /// addressable before the integrity has passed.
-    fn publish(&self, integrity: &str, index: Index, temp: &Path, repair: bool) -> Result<Arc<Index>> {
+    fn publish(&self, integrity: &str, mut index: Index, temp: &Path, repair: bool) -> Result<Arc<Index>> {
+        index.stamp = self.place(integrity, &index, temp, repair)?;
         let index = Arc::new(index);
-        self.place(integrity, &index, temp, repair)?;
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner).insert(integrity.to_string(), index.clone());
         Ok(index)
     }
 
-    /// `from` renamed into `pkg/`, then its index written.
-    fn place(&self, integrity: &str, index: &Index, from: &Path, repair: bool) -> Result<()> {
+    /// `from` renamed into `pkg/`, then its index written: the stamp it was written with. Stamped
+    /// as it is written, when every file there is in place: another process may have published
+    /// the same bytes first, or will rename its own over, with files written after this copy's
+    /// unpack. A stamp older than the files would have `--verify` take them for changed and
+    /// rebuild an entry other installs are linking from (eui's, in three installs at once).
+    fn place(&self, integrity: &str, index: &Index, from: &Path, repair: bool) -> Result<Option<u128>> {
         let dest = self.path_of(integrity)?;
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| Error::io(&e, format!("cannot create {}", parent.display())))?;
@@ -692,7 +701,9 @@ impl Store {
         {
             return Err(Error::io(&e, format!("cannot store {}", dest.display())));
         }
-        write_atomic(&self.index_path(integrity)?, index.render().as_bytes())
+        let stamp = Some(now_ns());
+        write_atomic(&self.index_path(integrity)?, index.render(stamp).as_bytes())?;
+        Ok(stamp)
     }
 
     /// The staged download of `integrity`, to move into a `links/` entry whole: the caller then
@@ -738,7 +749,7 @@ impl Store {
         }
         let index = self.loaded.lock().unwrap_or_else(PoisonError::into_inner).get(integrity).cloned();
         let index = index.ok_or_else(|| Error::new("ENOENT", format!("{integrity} is not in the store")))?;
-        write_atomic(&self.index_path(integrity)?, index.render().as_bytes())
+        write_atomic(&self.index_path(integrity)?, index.render(Some(now_ns())).as_bytes())
     }
 
     #[cfg(not(unix))]
@@ -751,7 +762,7 @@ impl Store {
     pub fn unclaim(&self, integrity: &str, dir: &Path) -> Result<()> {
         let index = self.loaded.lock().unwrap_or_else(PoisonError::into_inner).get(integrity).cloned();
         let placed = match index {
-            Some(index) => self.place(integrity, &index, dir, false),
+            Some(index) => self.place(integrity, &index, dir, false).map(|_| ()),
             None => Err(Error::new("ENOENT", format!("{integrity} is not in the store"))),
         };
         remove_tree(dir);
@@ -1437,6 +1448,31 @@ pub mod tests {
     }
 
     #[test]
+    fn stamps_an_index_when_its_files_are_in_place() {
+        // eui's `--verify`, three installs at once: two unpacked one tarball, and the copy
+        // unpacked first was renamed in last. Its index must not be older than the files there,
+        // or `--verify` takes them for changed and rebuilds an entry others are linking from.
+        let dir = scratch("stamp");
+        let store = Store::new(dir.join("store"), BTreeMap::new(), false, false);
+        let integrity = sha512(b"x");
+        let index = Index {
+            files: vec![FileEntry { path: "x.js".into(), size: 1, exec: false }],
+            unpacked_size: 1,
+            suffixed: SUFFIX_FILES,
+            stamp: Some(1),
+        };
+        for copy in ["first", "second"] {
+            let at = dir.join(copy);
+            fs::create_dir_all(&at).unwrap();
+            fs::write(at.join(index.stored("x.js")), "x").unwrap();
+            store.place(&integrity, &index, &at, false).unwrap();
+        }
+        let verify = Store::new(dir.join("store"), BTreeMap::new(), false, true);
+        assert!(verify.intact(&integrity, &verify.index(&integrity).unwrap()));
+        remove_tree(&dir);
+    }
+
+    #[test]
     fn stores_a_local_tarball() {
         let dir = scratch("store");
         let tgz = gzip(&build(&[
@@ -1457,7 +1493,7 @@ pub mod tests {
         let on_disk = store.pkg_dir(&integrity).unwrap().join("lib");
         assert_eq!(on_disk.join("x.js.jpm").is_file(), SUFFIX_FILES);
         assert_eq!(on_disk.join("x.js").is_file(), !SUFFIX_FILES);
-        assert_eq!(Index::parse(&index.render()).as_ref(), Some(&*index), "the index says which");
+        assert_eq!(Index::parse(&index.render(index.stamp)).as_ref(), Some(&*index), "the index says which");
         // A second read is the index on disk.
         let again = Store::new(dir.join("store"), BTreeMap::new(), true, false);
         assert_eq!(*again.ensure(&Tarball::Url("http://nowhere".into()), &integrity).unwrap(), *index);
@@ -1605,7 +1641,7 @@ pub mod tests {
             suffixed: false,
             stamp: Some(42),
         };
-        assert_eq!(Index::parse(&index.render()), Some(index));
+        assert_eq!(Index::parse(&index.render(index.stamp)), Some(index));
         // One from before stamps reads, and is held to sizes alone.
         assert_eq!(Index::parse("jpm-index 1 1\n- 1 a.js\n").unwrap().stamp, None);
         assert!(Index::parse("jpm-index 1 1 x\n- 1 a.js\n").is_none());
