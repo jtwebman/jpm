@@ -143,7 +143,67 @@ pub fn prefer(file: &str, text: &str) -> Result<Prefer> {
             }
         }
     }
+    prefer.ranges = top_ranges(file, text)?;
     Ok(prefer)
+}
+
+/// The version each range the root and the workspaces declare got: bun.lock nests a
+/// workspace's own copy under its name, pnpm-lock.yaml gives each importer's specifier its
+/// version. Without it a range takes the highest version the file names, which may be one only
+/// a package deep below uses (cline's @ai-sdk/anthropic), and a tag the registry's latest. A
+/// range two tops got different versions for is left out.
+fn top_ranges(file: &str, text: &str) -> Result<HashMap<String, String>> {
+    let mut got: Vec<(String, String)> = Vec::new();
+    match file {
+        "pnpm-lock.yaml" => {
+            let doc = pnpm_doc(text)?;
+            for (_, top) in doc.get("importers").and_then(Value::as_object).into_iter().flatten() {
+                for group in GROUPS {
+                    for (name, dep) in top.get(group).and_then(Value::as_object).into_iter().flatten() {
+                        let field = |f: &str| dep.get(f).and_then(Value::as_str);
+                        if let (Some(range), Some(version)) = (field("specifier"), field("version")) {
+                            got.push((format!("{name}@{range}"), strip_peers(version).to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        "bun.lock" => {
+            let doc = json::parse(&strip_trailing_commas(text))
+                .map_err(|e| fail(format!("bun.lock cannot be read: {}", e.message)))?;
+            let mut tree = Tree::default();
+            for (path, tuple) in doc.get("packages").and_then(Value::as_object).into_iter().flatten() {
+                tree.add(names(path).into_iter(), tuple);
+            }
+            for (path, top) in doc.get("workspaces").and_then(Value::as_object).into_iter().flatten() {
+                let name = top.get("name").and_then(Value::as_str).unwrap_or_default();
+                let from = if path.is_empty() { Some(0) } else { tree.find_at(0, name) };
+                let Some(from) = from.filter(|_| !tree.up.is_empty()) else { continue };
+                for (dep, range) in groups_of(Some(top)).iter().flatten() {
+                    if let Some(t) = tree.find(from, dep).and_then(bun_tuple).filter(|t| !t.bundled) {
+                        let (real, version) = split_id(t.id);
+                        if real == *dep {
+                            got.push((format!("{dep}@{range}"), version));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    let mut out = HashMap::new();
+    let mut twice = HashSet::new();
+    for (range, version) in got {
+        if !crate::semver::is_exact(&version) {
+            continue;
+        }
+        if out.get(&range).is_some_and(|v| *v != version) {
+            twice.insert(range.clone());
+        }
+        out.insert(range, version);
+    }
+    out.retain(|r, _| !twice.contains(r));
+    Ok(out)
 }
 
 /// yarn.lock, v1 or berry: each block is a list of `name@range` keys, then its fields, the one
@@ -1579,6 +1639,37 @@ mod tests {
 
     fn npmjs(_: &str) -> String {
         "https://registry.npmjs.org".to_string()
+    }
+
+    #[test]
+    fn keeps_what_each_importer_range_got() {
+        let text = "lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      a:
+        specifier: ^1.0.0
+        version: 1.0.0(p@1.0.0)
+      w:
+        specifier: workspace:*
+        version: link:w
+  w:
+    devDependencies:
+      a:
+        specifier: ^1.0.0
+        version: 1.0.0
+      b:
+        specifier: latest
+        version: 2.0.0
+  v:
+    dependencies:
+      b:
+        specifier: latest
+        version: 3.0.0
+";
+        let got = top_ranges("pnpm-lock.yaml", text).unwrap();
+        assert_eq!(got.get("a@^1.0.0").map(String::as_str), Some("1.0.0"));
+        assert_eq!(got.len(), 1, "a link is no version, and a range two tops differ on is left out: {got:?}");
     }
 
     /// package.json as an install reads it: its overrides read too.
