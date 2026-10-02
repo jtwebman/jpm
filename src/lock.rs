@@ -1017,13 +1017,16 @@ pub fn validate(lock: &Lockfile) -> Result<()> {
             continue;
         }
         // A directory is linked from a top, and from a package only as a peer the project
-        // provides, as pnpm links `(@nuxt/schema@packages+schema)`: a published package never
+        // provides, as pnpm links `(@nuxt/schema@packages+schema)`, or as the workspace of its
+        // name (npm's tree, pnpm's `linkWorkspacePackages: deep`): a published package never
         // names a path of its own.
         for (name, v) in e.dependencies.iter().chain(&e.optional_dependencies) {
             let peer = || e.peer_dependencies.contains_key(name) && known.contains(&format!("{name}@{v}"));
-            if v.starts_with("link:") && !peer() {
+            let workspace =
+                || v.strip_prefix("link:").is_some_and(|p| lock.workspaces.get(p).is_some_and(|w| w.name == *name));
+            if v.starts_with("link:") && !peer() && !workspace() {
                 return Err(fail(format!(
-                    "{at}.dependencies[{name:?}] is {v}: a package links a directory only for a peer, to the workspace of its name"
+                    "{at}.dependencies[{name:?}] is {v}: a package links a directory only to the workspace of its name"
                 )));
             }
             // A directory inside a package, only from that package's own tarball.

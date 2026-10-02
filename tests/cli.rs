@@ -2436,6 +2436,30 @@ fn hoists_to_the_root_as_the_projects_own_manager_would() {
 }
 
 #[test]
+fn a_dependency_takes_the_workspace_in_an_npm_project() {
+    // lit: npm puts every workspace at its root, so @open-wc's `lit: ^2 || ^3` is the workspace
+    // lit, not a second lit from the registry, whose types the starter's tests then mixed up.
+    let r = registry();
+    r.publish(pkg("lib", "1.0.0", json!({})));
+    r.publish(pkg("user", "1.0.0", json!({ "dependencies": { "lib": "^1.0.0" } })));
+    for (npm, store) in [(true, "--global-store"), (true, "--no-global-store"), (false, "--global-store")] {
+        let env = Env::new(&r);
+        let mut m = json!({ "name": "root", "workspaces": ["lib"], "dependencies": { "user": "1.0.0" } });
+        if npm {
+            m["packageManager"] = json!("npm@10.0.0");
+        }
+        env.manifest(m);
+        env.write("lib/package.json", r#"{ "name": "lib", "version": "1.0.0" }"#);
+        env.write("lib/index.js", "workspace");
+        env.ok(&["install", store]);
+        let edge = env.lock()["packages"]["user@1.0.0"]["dependencies"]["lib"].clone();
+        assert_eq!(edge == json!("link:lib"), npm, "{store}: {edge}");
+        assert_eq!(env.read("node_modules/user/../lib/index.js") == "workspace", npm, "{store}");
+        assert!(env.ok(&["install", "--frozen-lockfile", store]).contains("up to date"));
+    }
+}
+
+#[test]
 fn links_a_workspace_for_a_plain_range_only_where_the_manager_would() {
     // babel's .yarnrc.yml turns transparent workspaces off: its root's @babel/core ^8 comes from
     // the registry. pnpm 9 and later link only `workspace:` unless linkWorkspacePackages.

@@ -448,6 +448,13 @@ fn pnpm_9(dir: &Path, manifest: &RootManifest) -> bool {
     dir.join(rules::PNPM_WORKSPACE).exists() && !old
 }
 
+/// Whether npm made the project: its package-lock.json or npm-shrinkwrap.json, or packageManager
+/// naming npm.
+fn npm_project(dir: &Path, manifest: &RootManifest) -> bool {
+    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
+    pm.starts_with("npm@") || dir.join("package-lock.json").exists() || dir.join("npm-shrinkwrap.json").exists()
+}
+
 /// Whether yarn made the project: its yarn.lock or .yarnrc.yml, or packageManager naming yarn.
 fn yarn_project(dir: &Path, manifest: &RootManifest) -> bool {
     let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
@@ -1670,6 +1677,7 @@ fn resolve_lock(
             .link_workspaces
             .or(project.rules.link_workspaces)
             .unwrap_or_else(|| !pnpm_9(&project.dir, &project.manifest)),
+        link_deep: ctx.config().link_deep || project.rules.link_deep || npm_project(&project.dir, &project.manifest),
         dedupe_peers: project.rules.dedupe_peers,
         block_exotic: ctx.config().block_exotic_subdeps,
         threads: pool::resolve_threads(),
