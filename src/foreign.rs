@@ -244,19 +244,29 @@ fn read_yarn(text: &str) -> Prefer {
     let mut out = Prefer::default();
     let berry = text.lines().any(|l| l == "__metadata:");
     let mut keys: Vec<(String, String)> = Vec::new();
+    // The block's git keys, `name@spec` as package.json writes it.
+    let mut git: Vec<String> = Vec::new();
     for line in text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
         }
         if !line.starts_with(' ') {
-            keys = line
-                .trim_end_matches(':')
-                .split(',')
-                .filter_map(|d| yarn_key(d.trim().trim_matches('"'), berry))
-                .collect();
+            let all: Vec<&str> = line.trim_end_matches(':').split(',').map(|d| d.trim().trim_matches('"')).collect();
+            keys = all.iter().filter_map(|d| yarn_key(d, berry)).collect();
+            git = all.iter().filter(|d| yarn_git(d)).map(|d| d.to_string()).collect();
             continue;
         }
         let Some(field) = line.strip_prefix("  ").filter(|f| !f.starts_with(' ')) else { continue };
+        // The commit a git key was resolved to (babel/minify's `gulpjs/gulp#4.0`, a branch since
+        // deleted): `.../tar.gz/<commit>`, `#<commit>` or berry's `#commit=<commit>`.
+        if let Some(v) = field.strip_prefix("resolved").or_else(|| field.strip_prefix("resolution"))
+            && !git.is_empty()
+            && let Some(commit) = commit_in(v)
+        {
+            for key in git.drain(..) {
+                out.commits.insert(key, commit.clone());
+            }
+        }
         let Some(v) = field.strip_prefix("version") else { continue };
         let v = v.trim_start_matches(':').trim().trim_matches('"');
         if !crate::semver::is_exact(v) {
@@ -316,6 +326,19 @@ pub fn yarn_state(text: &str, at: &HashMap<String, Vec<String>>) -> String {
         }
     }
     out
+}
+
+/// A yarn.lock key naming a git source.
+fn yarn_git(key: &str) -> bool {
+    crate::graph::split_key(key)
+        .is_some_and(|(name, spec)| crate::spec::parse_dep(name, spec).is_ok_and(|s| s.kind == crate::spec::Kind::Git))
+}
+
+/// The commit id a resolved git source ends in: after `/`, `#` or `commit=`, all 40 hex digits.
+fn commit_in(resolved: &str) -> Option<String> {
+    let v = resolved.trim_start_matches(':').trim().trim_matches('"');
+    let tail = v.rsplit(['/', '#', '=']).next()?;
+    crate::spec::is_commit(tail).then(|| tail.to_ascii_lowercase())
 }
 
 /// A key as the resolver asks for it: registry name and range. Berry writes `name@npm:range`

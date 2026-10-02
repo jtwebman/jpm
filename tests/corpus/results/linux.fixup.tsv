@@ -10,7 +10,7 @@ apollographql/apollo-client	npm	pass		scripts call pnpm (1): use jpm; scripts ca
 atlassian/react-beautiful-dnd	yarn	fail	run	scripts call yarn (8): use jpm	2026-10-02
 axios/axios	npm	pass			2026-10-02
 babel/babel	yarn	fail	run	scripts call yarn (1): use jpm	2026-10-02
-BabylonJS/Babylon.js	npm	fail	install		2026-10-02
+BabylonJS/Babylon.js	npm	pass			2026-10-02
 backstage/backstage	yarn	pass		scripts call yarn (13): use jpm	2026-10-02
 better-auth/better-auth	pnpm	fail	run	scripts call pnpm (14): use jpm	2026-10-02
 bevry/getmac	npm	pass			2026-10-02
