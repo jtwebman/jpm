@@ -2199,7 +2199,11 @@ fn links_undeclared_types_linters_and_formatters_at_the_root() {
             json!({ "dependencies": { "@types/x": "1.0.0", "@s/eslint-plugin-y": "1.0.0", "prettier": "1.0.0", "other": "1.0.0" } }),
         ),
         pkg("@types/x", "1.0.0", json!({})),
-        pkg("@s/eslint-plugin-y", "1.0.0", json!({})),
+        pkg("@s/eslint-plugin-y", "1.0.0", json!({ "bin": { "lint-y": "cli.js" } })).file(
+            "cli.js",
+            0o755,
+            "#!/bin/sh\necho y\n",
+        ),
         pkg("prettier", "1.0.0", json!({})),
         pkg("prettier", "2.0.0", json!({})),
         pkg("other", "1.0.0", json!({})),
@@ -2217,6 +2221,8 @@ fn links_undeclared_types_linters_and_formatters_at_the_root() {
     env.ok(&["install"]);
     assert_eq!(at_root(&env), "@s/eslint-plugin-y @types/x prettier");
     assert!(env.read("node_modules/@types/x/index.js").contains("@types/x@1.0.0"));
+    // Its bins too, as pnpm links them: npm/cli's eslint is a peer of its eslint config.
+    assert!(env.exists("node_modules/.bin/lint-y"));
     assert!(env.ok(&["install"]).contains("up to date"));
     std::fs::remove_dir_all(env.path("node_modules")).unwrap();
     env.ok(&["ci"]);
