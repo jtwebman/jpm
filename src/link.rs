@@ -22,7 +22,8 @@
 //! finds it, as under pnpm's `.pnpm/node_modules`. Entries in the global store resolve from the
 //! store and cannot see it: for them, `.jpm/hoist.cjs` beside it lets `jpm run` and `jpm exec`
 //! point Node at it (see `run::hoist_env`).
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -1321,7 +1322,27 @@ impl Linker<'_> {
         };
         let root: HashSet<&str> =
             self.res.root.dependencies.iter().filter(|(n, v)| linked(n, v)).map(|(n, _)| n.as_str()).collect();
-        let rank = |e: &Entry| crate::semver::parse(&e.pkg.version);
+        // The copy nearest a top, then the highest, as npm's and pnpm's hoisting place the first
+        // found from the root: an undeclared import gets the version the project's own tree has
+        // there, not one a package deep below pins.
+        let mut depth: HashMap<&str, usize> = HashMap::new();
+        let mut queue: VecDeque<(String, usize)> =
+            self.res.root.dependencies.iter().map(|(n, v)| (format!("{n}@{v}"), 1)).collect();
+        queue.extend(self.res.packages.iter().filter(|(_, p)| p.local.is_some()).map(|(id, _)| (id.clone(), 0)));
+        while let Some((id, d)) = queue.pop_front() {
+            let Some((id, p)) = self.res.packages.get_key_value(&id) else { continue };
+            if depth.get(id.as_str()).is_some_and(|&have| have <= d) {
+                continue;
+            }
+            depth.insert(id, d);
+            queue.extend(p.all_deps().iter().map(|(n, v)| (format!("{n}@{v}"), d + 1)));
+        }
+        let rank = |e: &Entry| {
+            (
+                Reverse(depth.get(e.pkg.key().as_str()).copied().unwrap_or(usize::MAX)),
+                crate::semver::parse(&e.pkg.version),
+            )
+        };
         let mut pick: BTreeMap<&str, &Entry> = BTreeMap::new();
         for e in self.wanted.values().filter(|e| !root.contains(e.pkg.name.as_str())) {
             if !self.present(e) {

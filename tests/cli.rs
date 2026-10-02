@@ -3151,6 +3151,23 @@ fn looks_for_catalogs_no_higher_than_the_repository() {
 }
 
 #[test]
+fn hoists_the_copy_nearest_the_root() {
+    // tldraw's tree: a package deep below pins a newer copy than the one near the root, which
+    // npm's flat layout and pnpm's hoist give an undeclared import.
+    let r = Registry::start(vec![
+        pkg("near", "1.0.0", json!({ "dependencies": { "x": "1.0.0" } })),
+        pkg("far", "1.0.0", json!({ "dependencies": { "deep": "1.0.0" } })),
+        pkg("deep", "1.0.0", json!({ "dependencies": { "x": "2.0.0" } })),
+        pkg("x", "1.0.0", json!({})),
+        pkg("x", "2.0.0", json!({})),
+    ]);
+    let env = Env::new(&r);
+    env.manifest(json!({ "dependencies": { "near": "1.0.0", "far": "1.0.0" } }));
+    env.ok(&["install"]);
+    assert!(env.read("node_modules/.jpm/node_modules/x/index.js").contains("x@1.0.0"));
+}
+
+#[test]
 fn hoists_one_of_every_package_for_undeclared_imports() {
     let r = registry();
     let env = Env::new(&r);
