@@ -1132,6 +1132,11 @@ fn links_the_root_to_a_workspace_that_asks_for_it_by_workspace() {
     env.ok(&["install"]);
     assert_eq!(real(env.project().join("c/node_modules/c")), real(env.project().join("c")));
     assert!(env.ok(&["install"]).contains("up to date"));
+    // By its path, `workspace:.`, as each of DefinitelyTyped's packages has it.
+    env.write("c/package.json", r#"{ "name": "c", "devDependencies": { "c": "workspace:." } }"#);
+    env.ok(&["install"]);
+    assert_eq!(real(env.project().join("c/node_modules/c")), real(env.project().join("c")));
+    assert!(env.ok(&["install"]).contains("up to date"));
     // The root asking for itself links to the project, as pnpm links it (swr, msw).
     env.manifest(
         json!({ "name": "root", "version": "1.0.0", "workspaces": ["a"], "dependencies": { "root": "workspace:*" } }),
