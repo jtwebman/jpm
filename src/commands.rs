@@ -110,6 +110,25 @@ struct Ctx {
 /// project's hidden hoist provides.
 const PROJECT_LAYOUT: [&str; 2] = ["next", "nuxt"];
 
+/// Bundlers that resolve a package from its real path: under the global store, from inside the
+/// store, where an import the package does not declare finds nothing (docs/global-store.md).
+const BUNDLERS: [&str; 14] = [
+    "vite",
+    "webpack",
+    "rollup",
+    "rolldown",
+    "esbuild",
+    "parcel",
+    "@rspack/core",
+    "tsup",
+    "tsdown",
+    "unbuild",
+    "bunchee",
+    "microbundle",
+    "@vercel/ncc",
+    "@rsbuild/core",
+];
+
 struct Project {
     dir: PathBuf,
     manifest: RootManifest,
@@ -546,6 +565,18 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         info(&format!(
             "building packages in the project, not the global store: {f} needs them inside it (global-store=true overrides)"
         ));
+    }
+    // A bundler the project declares, under the global store it did not choose: said once an
+    // install, with what to do if a package it bundles cannot find an import it never declared.
+    if ctx.global_setting().is_none() && ctx.wants_global() {
+        let tops = std::iter::once(&project.manifest).chain(project.workspaces.iter().map(|w| &w.manifest));
+        let declared: HashSet<String> = tops.flat_map(|m| m.edges().into_iter().map(|(n, _, _)| n)).collect();
+        if let Some(b) = BUNDLERS.iter().find(|b| declared.contains(**b)) {
+            warn(&format!(
+                "{b} bundles from each package's real path, in the global store: if it cannot resolve a package another one \
+                 imports without declaring, set global-store=false (see https://github.com/jtwebman/jpm/blob/main/docs/global-store.md)"
+            ));
+        }
     }
     let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
     // A runtime package.json only asks for, checked against the system's: a warning, never a stop.
