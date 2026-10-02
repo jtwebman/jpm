@@ -3151,6 +3151,36 @@ fn looks_for_catalogs_no_higher_than_the_repository() {
 }
 
 #[test]
+fn the_hoist_hook_makes_way_for_the_projects_own_loader() {
+    // backstage: a module.register hook calls its .ts CommonJS, and pirates compiles .ts. With
+    // jpm's in-thread hook still in, Node took the .js handler and the .ts failed to parse.
+    let env = Env::new(&registry());
+    env.write("package.json", "{}");
+    env.write(
+        "setup.cjs",
+        r#"const Module = require('node:module');
+Module._extensions['.ts'] = (mod, filename) => mod._compile('module.exports = "transformed";', filename);
+Module.register('data:text/javascript,export async function resolve(s,c,n){const r=await n(s,c);return r.url.endsWith(".ts")?{...r,format:"commonjs"}:r}');
+"#,
+    );
+    env.write("a.ts", "import fs from 'node:fs';\nexport default 1;\n");
+    env.write("main.mjs", "import x from './a.ts'; console.log(x);\n");
+    let hook = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hoist.cjs");
+    let out = std::process::Command::new("node")
+        .args([
+            "--require".as_ref(),
+            hook.as_os_str(),
+            "--require".as_ref(),
+            "./setup.cjs".as_ref(),
+            "main.mjs".as_ref(),
+        ])
+        .current_dir(env.project())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "transformed", "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn hoists_the_copy_nearest_the_root() {
     // tldraw's tree: a package deep below pins a newer copy than the one near the root, which
     // npm's flat layout and pnpm's hoist give an undeclared import.

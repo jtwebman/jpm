@@ -6,8 +6,11 @@ const parentURL = require('node:url').pathToFileURL(__filename).href;
 const retry = (s, e) => e?.code === 'ERR_MODULE_NOT_FOUND' && !/^([./#]|[a-z][a-z\d+.-]*:)/i.test(s);
 // Node 22.15 and later: in-thread. Older Node's module.register runs hooks on a thread of their
 // own and costs about 20 ms per process, so it gets only the NODE_PATH half.
+// A loader of the project's own (module.register) takes the hook out first: with one in-thread,
+// Node loads a file the loader calls CommonJS by the .js handler, not its own extension's
+// (backstage's .ts through pirates).
 if (m.registerHooks) {
-  m.registerHooks({
+  const hooks = m.registerHooks({
     resolve(s, c, next) {
       try {
         return next(s, c);
@@ -17,4 +20,10 @@ if (m.registerHooks) {
       }
     },
   });
+  const register = m.register;
+  m.register = function (...args) {
+    m.register = register;
+    hooks.deregister?.();
+    return register.apply(this, args);
+  };
 }

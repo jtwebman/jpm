@@ -69,7 +69,9 @@ store resolve from the store and cannot reach it on their own, so under the glob
 project's `node_modules` (for `require`), and `NODE_OPTIONS` gets
 `--require node_modules/.jpm/hoist.cjs`, a resolve hook that retries a missing `import` from
 the project. The hook needs Node 22.15 or later; older Node gets only `NODE_PATH`, so an
-undeclared `require` works there and an undeclared `import` does not. Both add to what is
+undeclared `require` works there and an undeclared `import` does not. A process that registers
+a loader of its own (`module.register`) takes the hook out first, as Node would otherwise load
+what that loader calls CommonJS by the `.js` handler: there, too, only `NODE_PATH` is left. Both add to what is
 already set. Plain
 `node app.js`, outside jpm, gets neither: an undeclared import fails there unless the project
 is installed with `--no-global-store`.
