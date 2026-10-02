@@ -79,7 +79,8 @@ fn abbreviated(url: &str, short: &str, tmp: &Path, what: &str) -> Result<String>
     let work = tmp.join(temp_suffix());
     std::fs::create_dir_all(&work).map_err(|e| Error::io(&e, format!("cannot create {}", work.display())))?;
     let found = (|| {
-        run(git(&work, url).args(["init", "-q"]), what)?;
+        // Bare: no branch is checked out, so git lets the fetch write every one (`main` too).
+        run(git(&work, url).args(["init", "-q", "--bare"]), what)?;
         let refs = ["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"];
         run(git(&work, url).args(["fetch", "-q", "--filter=tree:0", "--", &remote(url)?]).args(refs), what)?;
         run(git(&work, url).args(["rev-parse", "--verify", "--quiet", &format!("{short}^{{commit}}")]), what)
@@ -132,7 +133,8 @@ pub fn fetch(source: &str, work: &Path, dest: &Path) -> Result<Index> {
 fn clone(url: &str, commit: &str, work: &Path, dest: &Path, source: &str) -> Result<Index> {
     let remote = remote(url)?;
     std::fs::create_dir_all(work).map_err(|e| Error::io(&e, format!("cannot create {}", work.display())))?;
-    run(git(work, url).args(["init", "-q"]), source)?;
+    // Bare: no branch is checked out, so git lets the fetch write every one (`main` too).
+    run(git(work, url).args(["init", "-q", "--bare"]), source)?;
     let fetch = |shallow: &[&str], refs: &[&str]| {
         let mut c = git(work, url);
         c.args(["fetch", "-q"]).args(shallow).args(["--", &remote]).args(refs);
