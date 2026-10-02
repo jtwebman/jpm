@@ -28,8 +28,9 @@ pub struct Patch {
     pub hash: String,
     /// The diff itself: what is hashed is what is applied.
     pub text: Vec<u8>,
-    /// Named by yarn (`patch:`, `resolutions`), which leaves one nothing takes alone: cal.com's
-    /// and eui's resolutions patch versions their trees no longer have. pnpm's is an error.
+    /// Named by yarn (`patch:`, `resolutions`) or bun (package.json's `patchedDependencies`),
+    /// which leave one nothing takes alone: cal.com's and eui's resolutions patch versions their
+    /// trees no longer have, tamagui a package its tree no longer has. pnpm's is an error.
     pub yarn: bool,
     /// Why a yarn patch's file could not be read (joplin's resolution names one that is gone):
     /// an error only if a package in the tree takes it, as yarn reads it only then.
@@ -155,7 +156,10 @@ pub fn select<'a>(
         return Err(Error::new("EPATCH", format!("no package in the tree is patched by {}", strict.join(", "))));
     }
     if !lenient.is_empty() {
-        crate::ui::warn(&format!("no package in the tree is patched by {}; yarn leaves it unused", lenient.join(", ")));
+        crate::ui::warn(&format!(
+            "no package in the tree is patched by {}; yarn and bun leave it unused",
+            lenient.join(", ")
+        ));
     }
     Ok(out)
 }

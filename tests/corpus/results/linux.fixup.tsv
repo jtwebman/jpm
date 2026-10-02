@@ -52,7 +52,7 @@ immich-app/immich	pnpm	pass		scripts call pnpm (21): use jpm	2026-10-02
 jaredpalmer/formik	yarn	expected	run	scripts call yarn (3): use jpm	2026-10-02
 jbilcke-hf/clapper	none	expected	run	scripts call bun (49): use jpm	2026-10-02
 jellyfin/jellyfin-web	npm	pass			2026-10-02
-jestjs/jest	yarn	fail	run	scripts call yarn (23): use jpm	2026-10-02
+jestjs/jest	yarn	pass		scripts call yarn (27): use jpm	2026-10-02
 jimmywarting/native-file-system-adapter	npm	pass			2026-10-02
 jmandel/health-skillz	bun	pass		scripts call bun (2): use jpm	2026-10-02
 jquery/jquery	npm	pass			2026-10-02

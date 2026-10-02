@@ -204,7 +204,7 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     let mut workspace_extensions = None;
     if let Some(y) = read_yaml(&dir.join(PNPM_WORKSPACE))? {
         workspace_extensions = y.get("packageExtensions").filter(|v| !v.is_null()).cloned();
-        rules.patched(y.get("patchedDependencies"), PNPM_WORKSPACE);
+        rules.patched(y.get("patchedDependencies"), PNPM_WORKSPACE, false);
         for key in UNREAD {
             if truthy(y.get(key)) {
                 ui::warn(&format!(
@@ -248,8 +248,8 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             }
         }
     }
-    rules.patched(pnpm.and_then(|p| p.get("patchedDependencies")), "package.json pnpm.patchedDependencies");
-    rules.patched(doc.get("patchedDependencies"), "package.json patchedDependencies");
+    rules.patched(pnpm.and_then(|p| p.get("patchedDependencies")), "package.json pnpm.patchedDependencies", false);
+    rules.patched(doc.get("patchedDependencies"), "package.json patchedDependencies", true);
     // yarn's `patch:` ranges; the root's only.
     for group in ["dependencies", "devDependencies", "optionalDependencies"] {
         for (name, range) in doc.get(group).and_then(Value::as_object).into_iter().flatten() {
@@ -345,12 +345,13 @@ fn pnpm_selector(s: &str) -> Option<Selector> {
 impl Rules {
     /// pnpm's `name`, `name@version` and `name@range` keys, bun's `name@version`, each naming a
     /// diff. A key given twice keeps its first file: pnpm-workspace.yaml's, then package.json's.
-    fn patched(&mut self, v: Option<&Value>, file: &str) {
+    /// `lenient`: bun's, unused left alone (see `Patch::yarn`).
+    fn patched(&mut self, v: Option<&Value>, file: &str, lenient: bool) {
         for (key, path) in v.and_then(Value::as_object).into_iter().flatten() {
             let (name, _) = name_range(key);
             match path.as_str() {
                 Some(path) if spec::check_name(&name, key).is_ok() => {
-                    self.add_patch(key.clone(), path.to_string(), false)
+                    self.add_patch(key.clone(), path.to_string(), lenient)
                 }
                 _ => ui::warn(&format!("{file}: patch {key} is not one jpm reads; it is ignored")),
             }
