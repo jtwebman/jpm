@@ -20,14 +20,13 @@ pub const PNPM_WORKSPACE: &str = "pnpm-workspace.yaml";
 const YARNRC: &str = ".yarnrc.yml";
 
 /// pnpm-workspace.yaml settings that change what pnpm installs, which jpm does not read.
-const UNREAD: [&str; 11] = [
+const UNREAD: [&str; 10] = [
     "hoistPattern",
     "hoistWorkspacePackages",
     "supportedArchitectures",
     "ignoredOptionalDependencies",
     "resolutionMode",
     "dedupePeerDependents",
-    "linkWorkspacePackages",
     "injectWorkspacePackages",
     "configDependencies",
     "dangerouslyAllowAllBuilds",
@@ -168,6 +167,10 @@ pub struct Rules {
     extended: crate::project::Extended,
     /// pnpm-workspace.yaml's `publicHoistPattern` (`shamefullyHoist: true` is `*`).
     pub public_hoist: Option<Vec<String>>,
+    /// Whether a top's plain range lands on a workspace of its name, or only `workspace:` does:
+    /// pnpm-workspace.yaml's `linkWorkspacePackages` (`deep` is on), .yarnrc.yml's
+    /// `enableTransparentWorkspaces`. `None` when neither says.
+    pub link_workspaces: Option<bool>,
 }
 
 fn read_yaml(file: &Path) -> Result<Option<Value>> {
@@ -210,6 +213,8 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
             ui::warn(&format!("{PNPM_WORKSPACE} sets autoInstallPeers to false; jpm installs missing peers"));
         }
         rules.pnpm(y.get("overrides"), PNPM_WORKSPACE);
+        rules.link_workspaces =
+            y.get("linkWorkspacePackages").filter(|v| !v.is_null()).map(|v| v != &Value::Bool(false));
         // `nodeLinker: hoisted` is npm's flat layout: every package at the root is jpm's nearest.
         let hoisted = y.get("nodeLinker").and_then(Value::as_str) == Some("hoisted");
         rules.public_hoist = if hoisted || y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
@@ -251,10 +256,15 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
     rules.pnpm(pnpm.and_then(|p| p.get("overrides")), "package.json pnpm.overrides");
     rules.npm(doc.get("overrides"));
     rules.yarn(doc.get("resolutions"));
-    // Read for its extensions alone: a .yarnrc.yml with none is left unparsed.
+    // Read for its extensions and workspace linking alone: a .yarnrc.yml with neither is left
+    // unparsed.
     let yarnrc_file = dir.join(YARNRC);
-    let has = std::fs::read_to_string(&yarnrc_file).is_ok_and(|t| t.contains("packageExtensions"));
+    let has = std::fs::read_to_string(&yarnrc_file)
+        .is_ok_and(|t| t.contains("packageExtensions") || t.contains("enableTransparentWorkspaces"));
     let yarnrc = if has { read_yaml(&yarnrc_file)? } else { None };
+    if let Some(Value::Bool(on)) = yarnrc.as_ref().and_then(|y| y.get("enableTransparentWorkspaces")) {
+        rules.link_workspaces = Some(*on);
+    }
     let manifest_extensions = pnpm.and_then(|p| p.get("packageExtensions")).filter(|v| !v.is_null());
     let yarn_extensions = yarnrc.as_ref().and_then(|y| y.get("packageExtensions")).filter(|v| !v.is_null());
     rules.extensions = read_extensions(workspace_extensions.as_ref(), manifest_extensions, yarn_extensions);

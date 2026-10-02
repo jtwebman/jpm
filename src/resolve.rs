@@ -46,6 +46,9 @@ pub struct Options<'a> {
     pub prefer: Option<&'a Prefer>,
     /// `legacy-peer-deps`: a peer is linked to what the tree has, and never added.
     pub legacy_peers: bool,
+    /// A top's plain range lands on a workspace of its name, as npm, bun and yarn link one;
+    /// else only `workspace:` does, as pnpm 9 and later (see `Rules::link_workspaces`).
+    pub link_workspaces: bool,
     /// pnpm's `block-exotic-subdeps`: only a top may take a git or tarball-url package.
     pub block_exotic: bool,
     pub threads: usize,
@@ -840,7 +843,9 @@ impl Walk<'_> {
             }
             return Ok(Some(found.clone()));
         }
-        let Some(found) = found.filter(|_| !own && spec.kind != Kind::Tag && spec.fetch_name == spec.name) else {
+        let Some(found) = found
+            .filter(|_| self.opts.link_workspaces && !own && spec.kind != Kind::Tag && spec.fetch_name == spec.name)
+        else {
             return Ok(None);
         };
         if fits(&found.version, &spec.fetch_spec) {

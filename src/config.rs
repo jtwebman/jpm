@@ -41,6 +41,8 @@ pub struct Config {
     pub block_exotic_subdeps: bool,
     /// `legacy-peer-deps`: install no peers; link one only to what the tree already has.
     pub legacy_peer_deps: bool,
+    /// pnpm's `link-workspace-packages` (`deep` is on): see `Rules::link_workspaces`.
+    pub link_workspaces: Option<bool>,
     /// `cafile`: a PEM file of certificates to trust in place of Mozilla's roots.
     pub cafile: Option<PathBuf>,
     /// `ca`: the same as PEM text, `\n` for its line breaks; `ca[]=` once per certificate.
@@ -279,6 +281,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         // On, as in pnpm 10.26 and later; the project's own `false` is taken out before this.
         block_exotic_subdeps: merged.get("block-exotic-subdeps").is_none_or(|v| v != "false"),
         legacy_peer_deps: merged.get("legacy-peer-deps").is_some_and(|v| v == "true"),
+        link_workspaces: merged.get("link-workspace-packages").map(|v| v != "false"),
         cafile: set("cafile").map(PathBuf::from),
         // npm's ini reads `\n` in a quoted value as a line break.
         ca: set("ca").map(|v| v.replace("\\n", "\n")),
