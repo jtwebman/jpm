@@ -2418,6 +2418,30 @@ fn hoists_to_the_root_as_the_projects_own_manager_would() {
 }
 
 #[test]
+fn links_a_workspace_for_a_plain_range_only_where_the_manager_would() {
+    // babel's .yarnrc.yml turns transparent workspaces off: its root's @babel/core ^8 comes from
+    // the registry. pnpm 9 and later link only `workspace:` unless linkWorkspacePackages.
+    let r = registry();
+    r.publish(pkg("lib", "1.0.0", json!({})));
+    let linked = |files: &[(&str, &str)]| {
+        let env = Env::new(&r);
+        env.manifest(json!({ "name": "root", "workspaces": ["lib"], "dependencies": { "lib": "^1.0.0" } }));
+        env.write("lib/package.json", r#"{ "name": "lib", "version": "1.0.0" }"#);
+        env.write("lib/index.js", "workspace");
+        for (file, text) in files {
+            env.write(file, text);
+        }
+        env.ok(&["install"]);
+        env.read("node_modules/lib/index.js") == "workspace"
+    };
+    assert!(linked(&[]), "npm and bun link it");
+    assert!(!linked(&[(".yarnrc.yml", "enableTransparentWorkspaces: false\n")]));
+    assert!(!linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\n")]));
+    assert!(linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\nlinkWorkspacePackages: true\n")]));
+    assert!(linked(&[("pnpm-workspace.yaml", "packages:\n  - lib\n"), (".npmrc", "link-workspace-packages=true\n")]));
+}
+
+#[test]
 fn reads_one_of_two_lockfiles() {
     // bun's before npm's, unless packageManager names npm: never a refusal to install.
     let r = registry();

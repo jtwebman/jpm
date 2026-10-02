@@ -440,6 +440,14 @@ impl Layout {
     }
 }
 
+/// A pnpm 9 or later project, which links a workspace only by `workspace:`: pnpm-workspace.yaml,
+/// and no packageManager naming an older pnpm.
+fn pnpm_9(dir: &Path, manifest: &RootManifest) -> bool {
+    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or_default();
+    let old = pm.strip_prefix("pnpm@").and_then(|v| v.split('.').next()?.parse::<u32>().ok()).is_some_and(|m| m < 9);
+    dir.join(rules::PNPM_WORKSPACE).exists() && !old
+}
+
 /// Whether yarn made the project: its yarn.lock or .yarnrc.yml, or packageManager naming yarn.
 fn yarn_project(dir: &Path, manifest: &RootManifest) -> bool {
     let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
@@ -1656,6 +1664,11 @@ fn resolve_lock(
         on_pick,
         prefer,
         legacy_peers: ctx.config().legacy_peer_deps || prefer.is_some_and(|p| p.legacy_peers),
+        link_workspaces: ctx
+            .config()
+            .link_workspaces
+            .or(project.rules.link_workspaces)
+            .unwrap_or_else(|| !pnpm_9(&project.dir, &project.manifest)),
         block_exotic: ctx.config().block_exotic_subdeps,
         threads: pool::resolve_threads(),
     };

@@ -18,8 +18,13 @@ Workspaces are read from package.json, or from `pnpm-workspace.yaml` when packag
 none. `catalog:` and `catalog:<name>` ranges are read from the root's `pnpm-workspace.yaml`,
 `.yarnrc.yml` or package.json (`catalog` and `catalogs`, at the top or under `workspaces`).
 
+A root or workspace range lands on a workspace of its name, as npm, yarn and bun link one, but
+in a pnpm 9 or later project (a `pnpm-workspace.yaml`) only a `workspace:` range does, unless
+`linkWorkspacePackages` (or `.npmrc`'s `link-workspace-packages`) is on. `.yarnrc.yml`'s
+`enableTransparentWorkspaces: false` does the same for yarn.
+
 `pnpm-workspace.yaml` settings that change what pnpm installs and jpm does not read, such as
-`publicHoistPattern` or `nodeLinker`, are named in a warning; the rest are left alone. Its
+`hoistPattern` or `dedupePeerDependents`, are named in a warning; the rest are left alone. Its
 `overrides`, `patchedDependencies`, `onlyBuiltDependencies`, `allowBuilds` and
 `packageExtensions` are read, and so is `.yarnrc.yml`'s `packageExtensions`
 ([package extensions](overrides.md#package-extensions)).
