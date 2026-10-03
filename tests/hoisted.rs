@@ -147,6 +147,31 @@ fn runs_install_scripts_where_the_package_is() {
 }
 
 #[test]
+fn keeps_what_stands_when_the_root_node_modules_is_deleted() {
+    // `rm -rf node_modules` at a monorepo's root leaves each workspace's: what is there and is
+    // what the install would place stays, as npm and bun keep it; anything else goes.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "node-linker=hoisted\n");
+    env.manifest(json!({ "name": "root", "workspaces": ["w"], "dependencies": { "b": "2.0.0" } }));
+    env.write("w/package.json", r#"{ "name": "w", "dependencies": { "b": "1.0.0" } }"#);
+    env.ok(&["install"]);
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    std::fs::create_dir_all(env.path("w/node_modules/stale")).unwrap();
+    let out = env.ok(&["install"]);
+    assert!(out.contains("(1 reused)"), "{out}");
+    assert!(env.read("w/node_modules/b/index.js").contains("b@1.0.0"));
+    assert!(!env.exists("w/node_modules/stale"));
+    // Another version where b goes is laid out again.
+    std::fs::remove_dir_all(env.path("node_modules")).unwrap();
+    std::fs::remove_file(env.path("w/node_modules/b/package.json")).unwrap();
+    std::fs::write(env.path("w/node_modules/b/package.json"), r#"{"name":"b","version":"9.9.9"}"#).unwrap();
+    let out = env.ok(&["install"]);
+    assert!(out.contains("(0 reused)"), "{out}");
+    assert!(env.read("w/node_modules/b/package.json").contains("1.0.0"));
+}
+
+#[test]
 fn patches_a_hoisted_package() {
     let r = registry();
     let env = Env::new(&r);

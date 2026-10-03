@@ -189,9 +189,9 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
         let stats = Stats { reused: prev.placed.len(), ..Stats::default() };
         return Ok(Outcome { up_to_date: true, stats, turn, ..Outcome::default() });
     }
-    // A tree another layout made, or none recorded: every top's node_modules from nothing, but
-    // the turn's file, which another install may be waiting on.
-    if previous.is_none() || opts.clean {
+    // `jpm ci`: every top's node_modules from nothing, but the turn's file, which another
+    // install may be waiting on.
+    if opts.clean {
         for top in &tops {
             for e in fs::read_dir(&top.nm).into_iter().flatten().flatten() {
                 if e.file_name() != TURN {
@@ -221,7 +221,11 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     // What was placed before and stands as it is: the same package, nothing above it moved, and
     // one whose scripts now run already built there. One not yet built goes again, as a copy
     // its scripts may write to.
-    let (old, was_built) = previous.map(|s| (s.placed, s.built)).unwrap_or_default();
+    let (old, was_built) = match previous {
+        Some(s) => (s.placed, s.built),
+        None if opts.clean => Default::default(),
+        None => (sweep_unrecorded(opts, &real_root, &tops, res, &placed), Vec::new()),
+    };
     let unbuilt = |at: &String, id: &String| opts.built.contains(id) && !was_built.contains(at);
     // Under `--verify`, what stands is checked as the isolated layout's entries are: only a
     // package whose files are no longer the store's is laid out again, not the whole tree.
@@ -472,6 +476,76 @@ fn intact(opts: &Options, at: &str, pkg: &Package) -> bool {
     let Ok((index, _)) = files_of(opts, pkg) else { return false };
     let dir = opts.dir.join(at);
     index.files.iter().all(|f| fs::metadata(dir.join(&f.path)).is_ok_and(|m| index.unchanged(f, &m)))
+}
+
+/// With nothing recorded (the root's node_modules deleted, or a tree another layout made), what
+/// stands is kept where it is what the install would place, as npm and bun keep it: laying
+/// cline's workspaces out again whole took twice bun's time. Anything else in a top's
+/// node_modules, or in a kept package's own, goes, but the turn's file. What was kept.
+fn sweep_unrecorded(
+    opts: &Options,
+    real_root: &Path,
+    tops: &[Top],
+    res: &Resolution,
+    placed: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let here: Vec<(&String, &String)> = placed.iter().collect();
+    let kept: BTreeMap<String, String> = pool::map(pool::disk_threads(), here, |(at, id)| {
+        found(opts, real_root, at, &res.packages[id]).then(|| (at.clone(), id.clone()))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    let sweep = |nm: &Path, rel: &str| {
+        match fs::symlink_metadata(nm) {
+            Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
+            Ok(_) => return drop(remove_link(nm)),
+            Err(_) => return,
+        }
+        for e in fs::read_dir(nm).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name == TURN {
+                continue;
+            }
+            if name.starts_with('@') && e.file_type().is_ok_and(|t| t.is_dir()) {
+                for s in fs::read_dir(e.path()).into_iter().flatten().flatten() {
+                    if !kept.contains_key(&format!("{rel}/{name}/{}", s.file_name().to_string_lossy())) {
+                        let _ = remove_link(&s.path());
+                    }
+                }
+            } else if !kept.contains_key(&format!("{rel}/{name}")) {
+                let _ = remove_link(&e.path());
+            }
+        }
+    };
+    for top in tops {
+        sweep(
+            &top.nm,
+            &if top.path.is_empty() { "node_modules".to_string() } else { format!("{}/node_modules", top.path) },
+        );
+    }
+    for at in kept.keys() {
+        sweep(&opts.dir.join(at).join("node_modules"), &format!("{at}/node_modules"));
+    }
+    kept
+}
+
+/// A package found where it goes, with nothing recorded, is the one the install would place: a
+/// real directory inside the project whose package.json is the store's, byte for byte, and whose
+/// files are the store's (`intact`). A patched or built copy's files are its own: never kept.
+fn found(opts: &Options, real_root: &Path, at: &str, pkg: &Package) -> bool {
+    if pkg.local.is_some() || opts.built.contains(&pkg.key()) || pkg.patch.is_some() {
+        return false;
+    }
+    let dir = opts.dir.join(at);
+    if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        || !fs::canonicalize(&dir).is_ok_and(|r| r.starts_with(real_root))
+    {
+        return false;
+    }
+    let Ok((index, src)) = files_of(opts, pkg) else { return false };
+    let manifest = fs::read(src.join(index.stored("package.json"))).ok();
+    manifest.is_some() && fs::read(dir.join("package.json")).ok() == manifest && intact(opts, at, pkg)
 }
 
 /// The `.bin` of `nm_rel`, from the packages placed in it (`here`); a top's own dependencies'
