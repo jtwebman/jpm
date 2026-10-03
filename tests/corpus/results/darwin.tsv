@@ -1,167 +1,167 @@
 repo	lock	status	step	calls	date
-afrokick/muonlinejs	bun	pass		scripts call bun (1): use jpm	2026-10-01
-airbnb/visx	yarn	pass		scripts call yarn (23): use jpm	2026-10-01
-amaar-mc/wit	bun	pass		scripts call bun (1): use jpm	2026-10-01
-AmanVarshney01/create-better-t-stack	bun	pass		scripts call bun (11): use jpm	2026-10-01
-angular/angular	pnpm	pass		scripts call pnpm (23): use jpm	2026-10-01
-anomalyco/opencode	bun	pass		scripts call bun (10): use jpm	2026-10-01
-apache/echarts	npm	pass			2026-10-01
-apollographql/apollo-client	npm	pass		scripts call pnpm (1): use jpm; scripts call yarn (2): use jpm	2026-10-01
-atlassian/react-beautiful-dnd	yarn	pass		scripts call yarn (8): use jpm	2026-10-01
-axios/axios	npm	pass			2026-10-01
-babel/babel	yarn	pass		scripts call yarn (1): use jpm	2026-10-01
-BabylonJS/Babylon.js	npm	pass			2026-10-01
-backstage/backstage	yarn	pass		scripts call yarn (13): use jpm	2026-10-01
-better-auth/better-auth	pnpm	pass		scripts call pnpm (14): use jpm	2026-10-01
-bevry/getmac	npm	pass			2026-10-01
-bitwarden/clients	npm	pass			2026-10-01
-bluesky-social/social-app	pnpm	pass		scripts call pnpm (13): use jpm; scripts call yarn (1): use jpm	2026-10-01
-calcom/cal.diy	yarn	pass		scripts call yarn (86): use jpm	2026-10-01
-chartjs/Chart.js	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-01
-cline/cline	bun	pass		scripts call bun (62): use jpm	2026-10-01
-colinhacks/zod	pnpm	pass			2026-10-01
-continuedev/continue	npm	pass			2026-10-01
-date-fns/date-fns	pnpm	pass			2026-10-01
-directus/directus	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-01
-discordjs/discord.js	pnpm	pass		scripts call pnpm (61): use jpm	2026-10-01
-documenso/documenso	npm	pass			2026-10-01
-donvito/ai-backends	bun	pass			2026-10-01
-drizzle-team/drizzle-orm	pnpm	pass		scripts call pnpm (11): use jpm	2026-10-01
-elastic/eui	yarn	pass		scripts call yarn (39): use jpm	2026-10-01
-element-plus/element-plus	pnpm	pass		scripts call pnpm (20): use jpm	2026-10-01
-elysiajs/eden	bun	pass		scripts call bun (1): use jpm	2026-10-01
-elysiajs/elysia	bun	pass		scripts call bun (5): use jpm	2026-10-01
-EvHaus/google-redesigned	bun	pass			2026-10-01
-excalidraw/excalidraw	yarn	pass		scripts call yarn (41): use jpm	2026-10-01
-facebook/docusaurus	pnpm	pass		scripts call pnpm (49): use jpm	2026-10-01
-facebook/relay	yarn	pass		scripts call yarn (4): use jpm	2026-10-01
-ForetagInc/tanstack-db-surrealdb	bun	pass			2026-10-01
-freeCodeCamp/freeCodeCamp	pnpm	pass		scripts call pnpm (27): use jpm	2026-10-01
-FreezingMoon/AncientBeast	bun	pass			2026-10-01
-funnycups/Luker	npm	pass			2026-10-01
-gatsbyjs/gatsby	yarn	pass		scripts call yarn (14): use jpm	2026-10-01
-GoogleChrome/workbox	npm	pass			2026-10-01
-grafana/grafana	yarn	pass		scripts call yarn (31): use jpm	2026-10-01
-graphql/graphql-js	npm	pass			2026-10-01
-highlightjs/highlight.js	npm	pass			2026-10-01
-honojs/hono	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-01
-honojs/middleware	pnpm	pass		scripts call pnpm (84): use jpm	2026-10-01
-hoppscotch/hoppscotch	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (63): use jpm	2026-10-01
-huozhi/html2any	bun	pass		scripts call bun (1): use jpm	2026-10-01
-immich-app/immich	pnpm	pass		scripts call pnpm (21): use jpm	2026-10-01
-jaredpalmer/formik	yarn	with		scripts call yarn (3): use jpm	2026-10-01
-jbilcke-hf/clapper	none	with		scripts call bun (49): use jpm	2026-10-01
-jellyfin/jellyfin-web	npm	pass			2026-10-01
-jestjs/jest	yarn	pass		scripts call yarn (23): use jpm	2026-10-01
-jimmywarting/native-file-system-adapter	npm	pass			2026-10-01
-jmandel/health-skillz	bun	pass		scripts call bun (2): use jpm	2026-10-01
-jquery/jquery	npm	pass			2026-10-01
-jupyterlab/jupyterlab	yarn	pass			2026-10-01
-kirkwat/portfolio-blog	bun	pass		scripts call bun (2): use jpm	2026-10-01
-Kong/insomnia	npm	pass			2026-10-01
-langchain-ai/langchainjs	pnpm	pass		scripts call bun (1): use jpm; scripts call pnpm (59): use jpm	2026-10-01
-Leaflet/Leaflet	npm	pass			2026-10-01
-lissy93/domain-locker	npm	pass			2026-10-01
-lit/lit	npm	pass			2026-10-01
-lmammino/financial	pnpm	pass		scripts call bun (1): use jpm	2026-10-01
-lobehub/lobehub	none	pass		scripts call bun (20): use jpm; scripts call pnpm (12): use jpm	2026-10-01
-lodash/lodash	npm	pass			2026-10-01
-logseq/logseq	pnpm	pass		scripts call pnpm (27): use jpm	2026-10-01
-louislam/uptime-kuma	npm	pass			2026-10-01
-markedjs/marked	npm	with			2026-10-01
-mastodon/mastodon	yarn	pass		scripts call yarn (3): use jpm	2026-10-01
-mastra-ai/mastra	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (217): use jpm	2026-10-01
-mckaywrigley/chatbot-ui	npm	pass			2026-10-01
-medusajs/medusa	yarn	pass		scripts call yarn (269): use jpm	2026-10-01
-mermaid-js/mermaid	pnpm	pass		scripts call pnpm (30): use jpm	2026-10-01
-microsoft/fluentui	yarn	pass		scripts call yarn (335): use jpm	2026-10-01
-microsoft/monaco-editor	npm	pass		scripts call yarn (3): use jpm	2026-10-01
-microsoft/playwright	npm	pass			2026-10-01
-microsoft/TypeScript	npm	pass			2026-10-01
-microsoft/vscode	npm	pass			2026-10-01
-midday-ai/midday	bun	with		scripts call bun (6): use jpm	2026-10-01
-mochajs/mocha	npm	pass			2026-10-01
-moji2002/1st-pouf	bun	pass		scripts call bun (6): use jpm	2026-10-01
-moment/moment	pnpm	pass			2026-10-01
-mozilla/pdf.js	npm	pass			2026-10-01
-mrdoob/three.js	npm	pass			2026-10-01
-mrousavy/react-native-data-scanner	bun	pass		scripts call bun (15): use jpm	2026-10-01
-mui/material-ui	pnpm	pass		preinstall allows only @1.2.2; scripts call pnpm (83): use jpm	2026-10-01
-n4bb12/vercel-github-oauth-proxy	bun	pass		scripts call bun (2): use jpm	2026-10-01
-n8n-io/n8n	pnpm	pass		preinstall allows only its own manager; scripts call pnpm (124): use jpm	2026-10-01
-navyabijoy/invisible-notes	bun	pass			2026-10-01
-nestjs/nest	npm	pass			2026-10-01
-nitrojs/nitro	pnpm	pass		scripts call pnpm (5): use jpm	2026-10-01
-NobleMajo/bun-route	bun	pass			2026-10-01
-node-red/node-red	npm	pass			2026-10-01
-nodemailer/nodemailer	npm	pass			2026-10-01
-npm/cli	npm	pass		scripts call yarn (15): use jpm	2026-10-01
-nuxt/nuxt	pnpm	pass		scripts call pnpm (14): use jpm	2026-10-01
-nuxt/ui	pnpm	pass		scripts call pnpm (8): use jpm	2026-10-01
-open-webui/open-webui	npm	pass			2026-10-01
-openlayers/openlayers	npm	pass			2026-10-01
-outline/outline	yarn	pass		scripts call yarn (6): use jpm	2026-10-01
-oven-sh/bun	bun	pass		scripts call bun (30): use jpm; scripts call yarn (3): use jpm	2026-10-01
-parse-community/parse-server	npm	pass			2026-10-01
-paulmillr/noble-curves	npm	pass			2026-10-01
-paulmillr/noble-post-quantum	npm	pass			2026-10-01
-payloadcms/payload	pnpm	pass		scripts call pnpm (212): use jpm	2026-10-01
-phaserjs/phaser	npm	pass			2026-10-01
-pixijs/pixijs	npm	pass			2026-10-01
-pmndrs/react-three-fiber	yarn	pass		scripts call yarn (6): use jpm	2026-10-01
-pnpm/pnpm	pnpm	pass		scripts call pnpm (15): use jpm	2026-10-01
-preactjs/preact	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-01
-prettier/prettier	yarn	pass		scripts call yarn (8): use jpm	2026-10-01
-prisma/orm	pnpm	pass		scripts call pnpm (31): use jpm	2026-10-01
-puppeteer/puppeteer	npm	pass			2026-10-01
-react/react	yarn	pass		scripts call yarn (64): use jpm	2026-10-01
-react/react-native	yarn	pass		scripts call yarn (9): use jpm	2026-10-01
-reactjs/react.dev	yarn	pass		scripts call yarn (4): use jpm	2026-10-01
-reduxjs/redux-toolkit	pnpm	pass		scripts call pnpm (22): use jpm	2026-10-01
-redwoodjs/graphql	yarn	pass		scripts call yarn (178): use jpm	2026-10-01
-remix-run/react-router	pnpm	pass		scripts call pnpm (14): use jpm	2026-10-01
-RiskyMH/EmailThing	bun	pass		scripts call bun (6): use jpm	2026-10-01
-rollup/rollup	npm	pass			2026-10-01
-Semantic-Org/Semantic-UI-React	yarn	pass		scripts call yarn (8): use jpm	2026-10-01
-sequelize/sequelize	yarn	pass		scripts call yarn (22): use jpm	2026-10-01
-shadcn-ui/ui	pnpm	pass		scripts call pnpm (24): use jpm	2026-10-01
-slidevjs/slidev	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-01
-socketio/socket.io	npm	pass			2026-10-01
-storybookjs/storybook	yarn	pass		scripts call yarn (28): use jpm	2026-10-01
-strapi/strapi	yarn	pass		scripts call yarn (13): use jpm	2026-10-01
-supabase-community/postgres-language-server	bun	pass		scripts call bun (3): use jpm	2026-10-01
-supabase/supabase	pnpm	pass		preinstall allows only pnpm; scripts call bun (1): use jpm; scripts call pnpm (46): use jpm	2026-10-01
-sveltejs/kit	pnpm	pass		scripts call pnpm (87): use jpm	2026-10-01
-sveltejs/svelte	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-01
-SylvanFranklin/installma	bun	pass		scripts call bun (1): use jpm	2026-10-01
-tailwindlabs/tailwindcss	pnpm	pass		scripts call pnpm (12): use jpm	2026-10-01
-TanStack/query	pnpm	pass		scripts call pnpm (37): use jpm	2026-10-01
-thednp/bootstrap.native	pnpm	pass		scripts call pnpm (5): use jpm	2026-10-01
-thednp/kute.js	pnpm	pass		scripts call pnpm (2): use jpm	2026-10-01
-thisuxhq/sveltednd	bun	pass		scripts call bun (3): use jpm	2026-10-01
-tldraw/tldraw	pnpm	pass		scripts call pnpm (290): use jpm	2026-10-01
-TriliumNext/Trilium	pnpm	pass		scripts call pnpm (52): use jpm	2026-10-01
-trpc/trpc	pnpm	pass		scripts call pnpm (24): use jpm	2026-10-01
-TryGhost/Ghost	pnpm	pass		scripts call pnpm (132): use jpm; scripts call yarn (2): use jpm	2026-10-01
-twentyhq/twenty	yarn	pass		scripts call yarn (7): use jpm	2026-10-01
-typeorm/typeorm	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-01
-typescript-eslint/typescript-eslint	pnpm	pass		scripts call pnpm (127): use jpm	2026-10-01
-ueberdosis/tiptap	pnpm	pass		scripts call pnpm (2): use jpm	2026-10-01
-univeous/Pixel-Extractor	bun	pass			2026-10-01
-unjs/unbuild	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-01
-upsetdev/dns-profile-generator	bun	pass			2026-10-01
-vercel-community/deno	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-01
-vercel/hyper	pnpm	pass		scripts call pnpm (5): use jpm	2026-10-01
-vercel/next.js	pnpm	pass		scripts call pnpm (45): use jpm; scripts call yarn (16): use jpm	2026-10-01
-vitejs/vite	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (12): use jpm	2026-10-01
-vitest-dev/vitest	pnpm	pass		scripts call pnpm (22): use jpm	2026-10-01
-vuejs/core	pnpm	pass		preinstall allows only pnpm	2026-10-01
-vuejs/vitepress	pnpm	pass		scripts call pnpm (19): use jpm	2026-10-01
-vueuse/vueuse	pnpm	pass		scripts call pnpm (11): use jpm	2026-10-01
-webpack/webpack	yarn	pass		scripts call yarn (40): use jpm	2026-10-01
-wellwelwel/poku	npm	pass			2026-10-01
-withastro/astro	pnpm	pass		scripts call pnpm (34): use jpm	2026-10-01
-withastro/starlight	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-01
-WordPress/gutenberg	npm	pass			2026-10-01
-xcatliu/pagic	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-01
-Xiongdaxz/shenbi-maliang-gpt-image-workbench	bun	pass			2026-10-01
+afrokick/muonlinejs	bun	pass			2026-10-03
+airbnb/visx	yarn	pass		scripts call yarn (23): use jpm	2026-10-03
+amaar-mc/wit	bun	pass		scripts call bun (1): use jpm	2026-10-03
+AmanVarshney01/create-better-t-stack	bun	pass		scripts call bun (11): use jpm	2026-10-03
+angular/angular	pnpm	pass		scripts call pnpm (23): use jpm	2026-10-03
+anomalyco/opencode	bun	pass		scripts call bun (9): use jpm	2026-10-03
+apache/echarts	npm	pass			2026-10-03
+apollographql/apollo-client	npm	pass		scripts call pnpm (1): use jpm; scripts call yarn (2): use jpm	2026-10-03
+atlassian/react-beautiful-dnd	yarn	pass		scripts call yarn (9): use jpm	2026-10-03
+axios/axios	npm	pass			2026-10-03
+babel/babel	yarn	pass		scripts call yarn (1): use jpm	2026-10-03
+BabylonJS/Babylon.js	npm	pass			2026-10-03
+backstage/backstage	yarn	pass		scripts call yarn (15): use jpm	2026-10-03
+better-auth/better-auth	pnpm	pass		scripts call pnpm (14): use jpm	2026-10-03
+bevry/getmac	npm	pass			2026-10-03
+bitwarden/clients	npm	pass			2026-10-03
+bluesky-social/social-app	pnpm	pass		scripts call pnpm (14): use jpm; scripts call yarn (1): use jpm	2026-10-03
+calcom/cal.diy	yarn	pass		scripts call yarn (97): use jpm	2026-10-03
+chartjs/Chart.js	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-03
+cline/cline	bun	pass		scripts call bun (60): use jpm	2026-10-03
+colinhacks/zod	pnpm	pass			2026-10-03
+continuedev/continue	npm	pass			2026-10-03
+date-fns/date-fns	pnpm	pass			2026-10-03
+directus/directus	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-03
+discordjs/discord.js	pnpm	pass		scripts call pnpm (64): use jpm	2026-10-03
+documenso/documenso	npm	pass			2026-10-03
+donvito/ai-backends	bun	pass			2026-10-03
+drizzle-team/drizzle-orm	pnpm	pass		scripts call pnpm (11): use jpm	2026-10-03
+elastic/eui	yarn	pass		scripts call yarn (39): use jpm	2026-10-03
+element-plus/element-plus	pnpm	pass		scripts call pnpm (21): use jpm	2026-10-03
+elysiajs/eden	bun	pass			2026-10-03
+elysiajs/elysia	bun	pass		scripts call bun (4): use jpm	2026-10-03
+EvHaus/google-redesigned	bun	pass			2026-10-03
+excalidraw/excalidraw	yarn	pass		scripts call yarn (41): use jpm	2026-10-03
+facebook/docusaurus	pnpm	pass		scripts call pnpm (59): use jpm	2026-10-03
+facebook/relay	yarn	pass		scripts call yarn (4): use jpm	2026-10-03
+ForetagInc/tanstack-db-surrealdb	bun	pass			2026-10-03
+freeCodeCamp/freeCodeCamp	pnpm	pass		scripts call pnpm (28): use jpm	2026-10-03
+FreezingMoon/AncientBeast	bun	pass			2026-10-03
+funnycups/Luker	npm	pass			2026-10-03
+gatsbyjs/gatsby	yarn	pass		scripts call yarn (15): use jpm	2026-10-03
+GoogleChrome/workbox	npm	pass			2026-10-03
+grafana/grafana	yarn	pass		scripts call yarn (34): use jpm	2026-10-03
+graphql/graphql-js	npm	pass			2026-10-03
+highlightjs/highlight.js	npm	pass			2026-10-03
+honojs/hono	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-03
+honojs/middleware	pnpm	pass		scripts call pnpm (84): use jpm	2026-10-03
+hoppscotch/hoppscotch	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (68): use jpm	2026-10-03
+huozhi/html2any	bun	pass		scripts call bun (1): use jpm	2026-10-03
+immich-app/immich	pnpm	pass		scripts call pnpm (21): use jpm	2026-10-03
+jaredpalmer/formik	yarn	with		scripts call yarn (3): use jpm	2026-10-03
+jbilcke-hf/clapper	none	with		scripts call bun (49): use jpm	2026-10-03
+jellyfin/jellyfin-web	npm	pass			2026-10-03
+jestjs/jest	yarn	pass		scripts call yarn (27): use jpm	2026-10-03
+jimmywarting/native-file-system-adapter	npm	pass			2026-10-03
+jmandel/health-skillz	bun	pass		scripts call bun (1): use jpm	2026-10-03
+jquery/jquery	npm	pass			2026-10-03
+jupyterlab/jupyterlab	yarn	pass			2026-10-03
+kirkwat/portfolio-blog	bun	pass		scripts call bun (2): use jpm	2026-10-03
+Kong/insomnia	npm	pass			2026-10-03
+langchain-ai/langchainjs	pnpm	pass		scripts call bun (1): use jpm; scripts call pnpm (62): use jpm	2026-10-03
+Leaflet/Leaflet	npm	pass			2026-10-03
+lissy93/domain-locker	npm	pass			2026-10-03
+lit/lit	npm	pass			2026-10-03
+lmammino/financial	pnpm	pass		scripts call bun (1): use jpm	2026-10-03
+lobehub/lobehub	none	pass		scripts call bun (22): use jpm; scripts call pnpm (15): use jpm	2026-10-03
+lodash/lodash	npm	pass			2026-10-03
+logseq/logseq	pnpm	pass		scripts call pnpm (27): use jpm	2026-10-03
+louislam/uptime-kuma	npm	pass			2026-10-03
+markedjs/marked	npm	with			2026-10-03
+mastodon/mastodon	yarn	pass		scripts call yarn (3): use jpm	2026-10-03
+mastra-ai/mastra	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (217): use jpm	2026-10-03
+mckaywrigley/chatbot-ui	npm	pass			2026-10-03
+medusajs/medusa	yarn	pass		scripts call yarn (280): use jpm	2026-10-03
+mermaid-js/mermaid	pnpm	pass		scripts call pnpm (31): use jpm	2026-10-03
+microsoft/fluentui	yarn	pass		scripts call yarn (335): use jpm	2026-10-03
+microsoft/monaco-editor	npm	pass		scripts call yarn (3): use jpm	2026-10-03
+microsoft/playwright	npm	pass			2026-10-03
+microsoft/TypeScript	npm	pass			2026-10-03
+microsoft/vscode	npm	pass			2026-10-03
+midday-ai/midday	bun	with		scripts call bun (5): use jpm	2026-10-03
+mochajs/mocha	npm	pass			2026-10-03
+moji2002/1st-pouf	bun	pass		scripts call bun (6): use jpm	2026-10-03
+moment/moment	pnpm	pass			2026-10-03
+mozilla/pdf.js	npm	pass			2026-10-03
+mrdoob/three.js	npm	pass			2026-10-03
+mrousavy/react-native-data-scanner	bun	pass		scripts call bun (14): use jpm	2026-10-03
+mui/material-ui	pnpm	pass		preinstall allows only @1.2.2; scripts call pnpm (89): use jpm	2026-10-03
+n4bb12/vercel-github-oauth-proxy	bun	pass		scripts call bun (2): use jpm	2026-10-03
+n8n-io/n8n	pnpm	pass		preinstall allows only its own manager; scripts call pnpm (124): use jpm	2026-10-03
+navyabijoy/invisible-notes	bun	pass			2026-10-03
+nestjs/nest	npm	pass			2026-10-03
+nitrojs/nitro	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-03
+NobleMajo/bun-route	bun	pass			2026-10-03
+node-red/node-red	npm	pass			2026-10-03
+nodemailer/nodemailer	npm	pass			2026-10-03
+npm/cli	npm	pass		scripts call yarn (15): use jpm	2026-10-03
+nuxt/nuxt	pnpm	pass		scripts call pnpm (15): use jpm	2026-10-03
+nuxt/ui	pnpm	pass		scripts call pnpm (8): use jpm	2026-10-03
+open-webui/open-webui	npm	pass			2026-10-03
+openlayers/openlayers	npm	pass			2026-10-03
+outline/outline	yarn	pass		scripts call yarn (8): use jpm	2026-10-03
+oven-sh/bun	bun	pass		scripts call bun (29): use jpm; scripts call yarn (3): use jpm	2026-10-03
+parse-community/parse-server	npm	pass			2026-10-03
+paulmillr/noble-curves	npm	pass			2026-10-03
+paulmillr/noble-post-quantum	npm	pass			2026-10-03
+payloadcms/payload	pnpm	pass		scripts call pnpm (220): use jpm	2026-10-03
+phaserjs/phaser	npm	pass			2026-10-03
+pixijs/pixijs	npm	pass			2026-10-03
+pmndrs/react-three-fiber	yarn	pass		scripts call yarn (6): use jpm	2026-10-03
+pnpm/pnpm	pnpm	pass		scripts call pnpm (479): use jpm	2026-10-03
+preactjs/preact	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-03
+prettier/prettier	yarn	pass		scripts call yarn (17): use jpm	2026-10-03
+prisma/orm	pnpm	pass		scripts call pnpm (31): use jpm	2026-10-03
+puppeteer/puppeteer	npm	pass			2026-10-03
+react/react	yarn	pass		scripts call yarn (64): use jpm	2026-10-03
+react/react-native	yarn	pass		scripts call yarn (9): use jpm	2026-10-03
+reactjs/react.dev	yarn	pass		scripts call yarn (4): use jpm	2026-10-03
+reduxjs/redux-toolkit	pnpm	pass		scripts call pnpm (23): use jpm	2026-10-03
+redwoodjs/graphql	yarn	pass		scripts call yarn (239): use jpm	2026-10-03
+remix-run/react-router	pnpm	pass		scripts call pnpm (14): use jpm	2026-10-03
+RiskyMH/EmailThing	bun	pass		scripts call bun (5): use jpm	2026-10-03
+rollup/rollup	npm	pass			2026-10-03
+Semantic-Org/Semantic-UI-React	yarn	pass		scripts call yarn (9): use jpm	2026-10-03
+sequelize/sequelize	yarn	pass		scripts call yarn (58): use jpm	2026-10-03
+shadcn-ui/ui	pnpm	pass		scripts call pnpm (24): use jpm	2026-10-03
+slidevjs/slidev	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-03
+socketio/socket.io	npm	pass			2026-10-03
+storybookjs/storybook	yarn	pass		scripts call yarn (30): use jpm	2026-10-03
+strapi/strapi	yarn	pass		scripts call yarn (13): use jpm	2026-10-03
+supabase-community/postgres-language-server	bun	pass		scripts call bun (3): use jpm	2026-10-03
+supabase/supabase	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (50): use jpm	2026-10-03
+sveltejs/kit	pnpm	pass		scripts call pnpm (88): use jpm	2026-10-03
+sveltejs/svelte	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-03
+SylvanFranklin/installma	bun	pass		scripts call bun (1): use jpm	2026-10-03
+tailwindlabs/tailwindcss	pnpm	pass		scripts call pnpm (12): use jpm	2026-10-03
+TanStack/query	pnpm	pass		scripts call pnpm (37): use jpm	2026-10-03
+thednp/bootstrap.native	pnpm	pass		scripts call pnpm (5): use jpm	2026-10-03
+thednp/kute.js	pnpm	pass		scripts call pnpm (2): use jpm	2026-10-03
+thisuxhq/sveltednd	bun	pass		scripts call bun (3): use jpm	2026-10-03
+tldraw/tldraw	pnpm	pass		scripts call pnpm (304): use jpm	2026-10-03
+TriliumNext/Trilium	pnpm	pass		scripts call pnpm (53): use jpm	2026-10-03
+trpc/trpc	pnpm	pass		scripts call pnpm (24): use jpm	2026-10-03
+TryGhost/Ghost	pnpm	pass		scripts call pnpm (150): use jpm; scripts call yarn (2): use jpm	2026-10-03
+twentyhq/twenty	yarn	pass		scripts call yarn (7): use jpm	2026-10-03
+typeorm/typeorm	pnpm	pass		scripts call pnpm (9): use jpm	2026-10-03
+typescript-eslint/typescript-eslint	pnpm	pass		scripts call pnpm (127): use jpm	2026-10-03
+ueberdosis/tiptap	pnpm	pass		scripts call pnpm (2): use jpm	2026-10-03
+univeous/Pixel-Extractor	bun	pass			2026-10-03
+unjs/unbuild	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-03
+upsetdev/dns-profile-generator	bun	pass			2026-10-03
+vercel-community/deno	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-03
+vercel/hyper	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-03
+vercel/next.js	pnpm	pass		scripts call pnpm (46): use jpm; scripts call yarn (16): use jpm	2026-10-03
+vitejs/vite	pnpm	pass		preinstall allows only pnpm; scripts call pnpm (12): use jpm	2026-10-03
+vitest-dev/vitest	pnpm	pass		scripts call pnpm (32): use jpm	2026-10-03
+vuejs/core	pnpm	pass		preinstall allows only pnpm	2026-10-03
+vuejs/vitepress	pnpm	pass		scripts call pnpm (22): use jpm	2026-10-03
+vueuse/vueuse	pnpm	pass		scripts call pnpm (11): use jpm	2026-10-03
+webpack/webpack	yarn	pass		scripts call yarn (41): use jpm	2026-10-03
+wellwelwel/poku	npm	pass			2026-10-03
+withastro/astro	pnpm	pass		scripts call pnpm (34): use jpm	2026-10-03
+withastro/starlight	pnpm	pass		scripts call pnpm (7): use jpm	2026-10-03
+WordPress/gutenberg	npm	pass			2026-10-03
+xcatliu/pagic	pnpm	pass		scripts call pnpm (1): use jpm	2026-10-03
+Xiongdaxz/shenbi-maliang-gpt-image-workbench	bun	pass			2026-10-03
