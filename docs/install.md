@@ -15,7 +15,8 @@ The script downloads the binary for your platform from the
 [latest release](https://github.com/jtwebman/jpm/releases/latest), checks its SHA-256, and
 puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v1.0.0-rc.1` picks a release and `JPM_INSTALL`
 another directory. A release candidate is a pre-release, never the latest: the script installs
-one only when `JPM_VERSION` names it. The SHA-256 comes from the `SHA256SUMS` of the same release, so it catches a
+one only when `JPM_VERSION` names it. Neither script changes your `PATH` or your shell's files:
+where the directory is not on `PATH`, they say how to add it. The SHA-256 comes from the `SHA256SUMS` of the same release, so it catches a
 download cut short or corrupted, not a release whose files were replaced: for that, see
 [Verifying a release](#verifying-a-release). Each platform has its own build:
 
