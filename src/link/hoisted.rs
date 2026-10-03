@@ -74,8 +74,9 @@ type Edges = Vec<(String, String)>;
 
 /// Which copy of each name the root's `node_modules` holds when the root does not depend on
 /// it: the one the project's lockfile put there, else the one most packages depend on (the
-/// newest of a tie), as npm's and yarn's hoisting leave it. Any other copy nests under what
-/// needs it, however early the walk meets it.
+/// newest of a tie, then the last by id: copies of one version with other peers tie on both),
+/// as npm's and yarn's hoisting leave it. Any other copy nests under what needs it, however
+/// early the walk meets it.
 fn root_choice(res: &Resolution, tops: &[Top], lockfile_root: &HashMap<String, String>) -> HashMap<String, String> {
     let mut uses: HashMap<String, usize> = HashMap::new();
     let edges =
@@ -89,7 +90,7 @@ fn root_choice(res: &Resolution, tops: &[Top], lockfile_root: &HashMap<String, S
         let name =
             crate::graph::split_key(crate::graph::split_peers(&id).0).map_or(p.name.clone(), |(n, _)| n.to_string());
         let rank = (n, crate::semver::parse(&p.version), id.clone());
-        if best.get(&name).is_none_or(|b| (rank.0, &rank.1) > (b.0, &b.1)) {
+        if best.get(&name).is_none_or(|b| rank > *b) {
             best.insert(name, rank);
         }
     }
@@ -571,6 +572,34 @@ mod tests {
         let placed = plan(&res, &tops_of(Path::new("/p"), &res), &HashSet::new(), &lock);
         resolves_as_the_graph_says(&res, &placed);
         assert_eq!(placed.get("node_modules/x").map(String::as_str), Some("x@1.0.0"));
+    }
+
+    #[test]
+    fn picks_the_same_root_copy_every_time() {
+        // x@1.0.0 with two sets of peers, each used once: a tie on uses and version, once
+        // settled by the order a HashMap gave them, which differs from one run to the next
+        // (elastic/eui laid out 7,208 packages, then 7,203 from the same lockfile).
+        let x = |peer: &str| {
+            let p = Package { name: "x".into(), version: "1.0.0".into(), ..Package::default() };
+            (format!("x@1.0.0(p@{peer})"), p)
+        };
+        let res = graph(
+            vec![
+                pkg("u", "1.0.0", &[("x", "1.0.0(p@1.0.0)"), ("p", "1.0.0")]),
+                pkg("v", "1.0.0", &[("x", "1.0.0(p@2.0.0)"), ("p", "2.0.0")]),
+                pkg("p", "1.0.0", &[]),
+                pkg("p", "2.0.0", &[]),
+                x("1.0.0"),
+                x("2.0.0"),
+            ],
+            &[("u", "1.0.0"), ("v", "1.0.0")],
+        );
+        let tops = tops_of(Path::new("/p"), &res);
+        let first = plan(&res, &tops, &HashSet::new(), &HashMap::new());
+        resolves_as_the_graph_says(&res, &first);
+        for _ in 0..32 {
+            assert_eq!(plan(&res, &tops, &HashSet::new(), &HashMap::new()), first);
+        }
     }
 
     #[test]
