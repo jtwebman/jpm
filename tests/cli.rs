@@ -323,6 +323,23 @@ fn links_bins_and_runs_scripts() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("missing script"));
 }
 
+#[test]
+fn exec_says_when_a_bin_is_made_by_install_scripts() {
+    // npm's `node` package has no Node in it: its preinstall fetches one, and exec runs no
+    // install scripts. Said so, with what to run instead, rather than the shell's "not found".
+    let r = Registry::start(vec![pkg(
+        "node",
+        "22.0.0",
+        json!({ "bin": { "node": "bin/node" }, "scripts": { "preinstall": "node installArchSpecificPackage" } }),
+    )]);
+    let env = Env::new(&r);
+    let out = env.jpm(&["exec", "node", "-v"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(err.contains("node@22.0.0's bin node is bin/node, which is not there"), "{err}");
+    assert!(err.contains("install scripts make it") && err.contains("run `node` without exec"), "{err}");
+}
+
 /// Scripts run in the system's shell: a dependency's bin named `sh` is on the PATH the script
 /// gets, and is never what runs the script.
 #[cfg(unix)]
