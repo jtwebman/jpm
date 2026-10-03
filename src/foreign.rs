@@ -2842,14 +2842,29 @@ snapshots:
 
     #[test]
     fn reads_a_big_yaml_map_in_linear_time() {
-        let mut text = String::from("packages:\n");
-        for i in 0..10_000 {
-            text.push_str(&format!("  p{i}@1.0.0:\n    resolution: {{integrity: sha512-x}}\n"));
-        }
-        text.push_str("  p0@1.0.0: {}\n");
-        let start = std::time::Instant::now();
+        let map = |n: usize| {
+            let mut text = String::from("packages:\n");
+            for i in 0..n {
+                text.push_str(&format!("  p{i}@1.0.0:\n    resolution: {{integrity: sha512-x}}\n"));
+            }
+            text + "  p0@1.0.0: {}\n"
+        };
+        // Four times the keys take about four times as long, where a quadratic read takes 16: a
+        // ratio of the best of three, which a busy CI runner's slow moment does not tip.
+        let time = |text: &str| {
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    yaml(text).unwrap();
+                    start.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let (quarter, text) = (map(2_500), map(10_000));
+        let (small, whole) = (time(&quarter), time(&text));
+        assert!(whole < small * 10, "{small:?} for 2,500 keys, {whole:?} for 10,000");
         let doc = yaml(&text).unwrap();
-        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
         let packages = doc.get("packages").and_then(|p| p.as_object()).unwrap();
         assert_eq!(packages.len(), 10_000);
         // A key given twice keeps its first place and its last value.
