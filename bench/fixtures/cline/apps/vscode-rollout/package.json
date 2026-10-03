@@ -1,0 +1,12 @@
+{
+  "name": "@cline/vscode-rollout",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "20.x",
+    "@types/vscode": "1.84.0",
+    "esbuild": "^0.25.0",
+    "node-machine-id": "^1.1.12",
+    "typescript": "^5.4.5"
+  }
+}

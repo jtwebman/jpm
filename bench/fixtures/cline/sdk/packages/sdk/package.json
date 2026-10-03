@@ -1,0 +1,8 @@
+{
+  "name": "@cline/sdk",
+  "version": "0.0.90",
+  "private": false,
+  "dependencies": {
+    "@cline/core": "*"
+  }
+}

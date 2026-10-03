@@ -1,0 +1,13 @@
+{
+  "name": "examples",
+  "private": true,
+  "dependencies": {
+    "@cline/core": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

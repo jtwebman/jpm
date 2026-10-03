@@ -1,0 +1,16 @@
+{
+  "name": "@cline/menubar",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@cline/core": "*",
+    "@cline/shared": "*"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
