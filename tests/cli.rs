@@ -1286,6 +1286,37 @@ fn verify_finds_a_file_edited_in_place_at_its_size() {
     }
 }
 
+#[test]
+fn caps_an_entry_name_as_pnpm_does() {
+    // pnpm's virtual-store-dir-max-length (60 on Windows, 120 elsewhere): a name past it is cut
+    // short, its version kept; two names cut to one are told apart by their digest.
+    let long = "@scope/a-package-name-that-goes-on-and-on-and-on";
+    let twin = "@scope/a-package-name-that-goes-on-and-on-and-off";
+    let r = Registry::start(vec![
+        pkg(long, "1.0.0", json!({ "dependencies": { (twin): "1.0.0" } })),
+        pkg(twin, "1.0.0", json!({})),
+    ]);
+    for flag in ["--no-global-store", "--global-store"] {
+        let env = Env::new(&r);
+        env.write(
+            ".npmrc",
+            "virtual-store-dir-max-length=40
+",
+        );
+        env.manifest(json!({ "dependencies": { (long): "1.0.0" } }));
+        env.ok(&["install", flag]);
+        assert!(env.read(&format!("node_modules/{long}/index.js")).contains("1.0.0"), "{flag}");
+        let real = std::fs::canonicalize(env.path(&format!("node_modules/{long}"))).unwrap();
+        let entry = real.parent().unwrap().parent().unwrap().parent().unwrap();
+        let name = entry.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.len() <= 40 && name.contains("@1.0.0"), "{flag}: {name}");
+        let below = std::fs::read_to_string(real.join("node_modules").join(twin).join("index.js"));
+        let beside = std::fs::read_to_string(entry.join("node_modules").join(twin).join("index.js"));
+        assert!(below.or(beside).is_ok_and(|t| t.contains("1.0.0")), "{flag}: the twin resolves");
+        assert!(env.ok(&["install", flag]).contains("up to date"), "{flag}");
+    }
+}
+
 /// An install killed midway leaves entries part built, under their own names where Windows builds
 /// them in place, and no state: the next install finds each one not intact and builds it again.
 #[test]

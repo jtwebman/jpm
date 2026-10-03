@@ -168,6 +168,8 @@ pub struct Rules {
     pub public_hoist: Option<Vec<String>>,
     /// pnpm-workspace.yaml's `nodeLinker`.
     pub node_linker: Option<String>,
+    /// pnpm-workspace.yaml's `virtualStoreDirMaxLength`.
+    pub virtual_store_max: Option<usize>,
     /// Whether a top's plain range lands on a workspace of its name, or only `workspace:` does:
     /// pnpm-workspace.yaml's `linkWorkspacePackages` (`deep` is on), .yarnrc.yml's
     /// `enableTransparentWorkspaces`. `None` when neither says.
@@ -223,6 +225,10 @@ pub fn read(dir: &Path, root: &RootManifest) -> Result<Rules> {
         rules.link_deep = y.get("linkWorkspacePackages").and_then(Value::as_str) == Some("deep");
         rules.dedupe_peers = y.get("dedupePeerDependents") != Some(&Value::Bool(false));
         rules.node_linker = y.get("nodeLinker").and_then(Value::as_str).map(str::to_string);
+        rules.virtual_store_max = match y.get("virtualStoreDirMaxLength") {
+            Some(Value::Number(n) | Value::String(n)) => n.parse().ok(),
+            _ => None,
+        };
         rules.public_hoist = if y.get("shamefullyHoist") == Some(&Value::Bool(true)) {
             Some(vec!["*".to_string()])
         } else {

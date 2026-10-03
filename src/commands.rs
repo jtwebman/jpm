@@ -343,6 +343,8 @@ impl Ctx {
             salt.into(),
             // What the root links of the hidden hoist (`public-hoist-pattern`, `shamefully-hoist`).
             c.public_hoist.as_ref().map_or(Value::Null, |l| l.join(",").into()),
+            // How long an entry's name may be (`virtual-store-dir-max-length`).
+            c.virtual_store_max.map_or(Value::Null, |n| n.to_string().into()),
             // A new jpm may lay the same tree out otherwise: it links once before it trusts a state.
             env!("CARGO_PKG_VERSION").into(),
         ]))
@@ -697,7 +699,13 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     if global.is_some() {
         resolution = types_beside_peers(resolution);
     }
-    let keys = keys.unwrap_or_else(|| crate::keys::store_keys(&resolution.packages));
+    // Each entry's name capped as pnpm caps its virtual store's: 60 bytes on Windows, 120 elsewhere.
+    let max = ctx.config().virtual_store_max.or(project.rules.virtual_store_max).unwrap_or(VIRTUAL_STORE_MAX);
+    let keys: HashMap<String, String> = keys
+        .unwrap_or_else(|| crate::keys::store_keys(&resolution.packages))
+        .into_iter()
+        .map(|(id, key)| (id, crate::keys::cap(&key, max)))
+        .collect();
     // A runtime package.json only asks for, checked against the system's: a warning, never a stop.
     let tops = std::iter::once((String::new(), &project.manifest))
         .chain(project.workspaces.iter().map(|w| (format!("{}/", w.path), &w.manifest)));
@@ -736,10 +744,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ctx.opts.production,
         &store.dir,
         &salt,
-        match (ctx.hoisted, global.is_some()) {
-            (true, _) => "hoisted",
-            (false, true) => "global",
-            (false, false) => "isolated",
+        // The entries' names are capped at `max`: another cap is another tree.
+        &match (ctx.hoisted, global.is_some()) {
+            (true, _) => "hoisted".to_string(),
+            (false, true) => format!("global:{max}"),
+            (false, false) => format!("isolated:{max}"),
         },
         &platform,
         &public_hoist,
@@ -822,7 +831,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         }
         own
     });
-    let keys = if global.is_none() { short_keys(keys, &resolution, &chosen) } else { keys };
+    let keys = if global.is_none() { short_keys(keys, &resolution, &chosen, max) } else { keys };
     let build_keys: HashMap<String, String> =
         chosen.iter().filter_map(|id| Some((id.clone(), keys.get(id)?.clone()))).collect();
     let options = link::Options {
@@ -1017,21 +1026,30 @@ pub fn approve(names: &[String], opts: Opts) -> Result<Approved> {
     Ok(Approved { approved, pending: install.unbuilt.clone(), install: Some(install) })
 }
 
+/// pnpm's `virtual-store-dir-max-length` default: 60 on Windows, where a path stops at 260
+/// characters, 120 elsewhere.
+const VIRTUAL_STORE_MAX: usize = if cfg!(windows) { 60 } else { 120 };
+
 /// Entries built in the project are named `<name>@<version>`, and a copy for other peers by the
 /// peers as well, `<name>@<version>(<peer>@<version>)`, not by their subgraph's hash: every link
 /// to an entry spells its name, and a link of up to 59 bytes fits in its inode, where a longer
 /// one takes a block of its own. A package built by its scripts or patched keeps the hash: a
 /// standing entry's files are not checked against the store, so a change to the patch or the
 /// approval must change the name. So does a name that would be longer than the hashed one, one
-/// a path could not hold, and one two entries would share.
-fn short_keys(keys: HashMap<String, String>, res: &Resolution, built: &HashSet<String>) -> HashMap<String, String> {
+/// a path could not hold, and one two entries would share, once capped to `max` (`keys::cap`).
+fn short_keys(
+    keys: HashMap<String, String>,
+    res: &Resolution,
+    built: &HashSet<String>,
+    max: usize,
+) -> HashMap<String, String> {
     let name_of = |id: &String| -> Option<String> {
         let p = res.packages.get(id)?;
         if built.contains(id) || p.patch.is_some() {
             return None;
         }
         let peers = id.find('(').map_or("", |at| &id[at..]);
-        let name = format!("{}@{}{peers}", p.dir_name(), p.version).replace('/', "+");
+        let name = crate::keys::cap(&format!("{}@{}{peers}", p.dir_name(), p.version).replace('/', "+"), max);
         let safe = !name.starts_with('.') && !name.contains(['\\', '\0', ':', '/']) && peers.len() <= 23;
         safe.then_some(name)
     };
