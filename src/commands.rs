@@ -3186,9 +3186,12 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     }
     let bin = match &own {
         Some(s) => {
-            let file = dir.join("node_modules").join(&s.name).join("package.json");
-            let doc = json::parse(&std::fs::read_to_string(&file).unwrap_or_default()).unwrap_or(Value::Null);
-            pick_bin(&doc, &s.fetch_name)?
+            let pkg_dir = dir.join("node_modules").join(&s.name);
+            let doc = json::parse(&std::fs::read_to_string(pkg_dir.join("package.json")).unwrap_or_default())
+                .unwrap_or(Value::Null);
+            let bin = pick_bin(&doc, &s.fetch_name)?;
+            bin_there(&doc, &pkg_dir, &bin)?;
+            bin
         }
         None => command.to_string(),
     };
@@ -3331,6 +3334,21 @@ fn pick_bin(doc: &Value, name: &str) -> Result<String> {
         format!("has bins {} and none is {short}", bins.keys().cloned().collect::<Vec<_>>().join(", "))
     };
     Err(fail("ENOBIN", format!("{name} {why}")))
+}
+
+/// The bin's file is in the package. One that install scripts make is not, as exec runs none:
+/// npm's `node` package fetches Node in its preinstall, and `jpm exec node` would otherwise fail
+/// with the shell's "cannot find the path".
+fn bin_there(doc: &Value, pkg_dir: &Path, bin: &str) -> Result<()> {
+    let name = doc.get("name").and_then(Value::as_str).unwrap_or_default();
+    let bins = crate::bin::normalize(Some(name), doc.get("bin"));
+    let Some(target) = bins.get(bin).filter(|t| !pkg_dir.join(t).is_file()) else { return Ok(()) };
+    let version = doc.get("version").and_then(Value::as_str).unwrap_or_default();
+    let scripts = doc.get("scripts").and_then(Value::as_object);
+    let made = scripts.is_some_and(|s| ["preinstall", "install", "postinstall"].iter().any(|k| s.contains_key(k)));
+    let why = if made { "its install scripts make it, and exec runs none" } else { "the package does not have it" };
+    let hint = if name == "node" { "; to run Node itself, run `node` without exec" } else { "" };
+    Err(fail("ENOBIN", format!("{name}@{version}'s bin {bin} is {target}, which is not there: {why}{hint}")))
 }
 
 /// Whether `jpm <name>` names a bin installed above `dir`.
