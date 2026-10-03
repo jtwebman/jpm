@@ -298,7 +298,42 @@ pub fn script_env(command: &mut Command, file: &Path, name: &str, script: &str, 
         .env("npm_package_json", file)
         .env("npm_package_name", pkg_name)
         .env("npm_package_version", pkg_version)
-        .env("npm_execpath", std::env::current_exe().unwrap_or_default());
+        .env("npm_execpath", execpath());
+}
+
+/// What `npm_execpath` names: a JS file that runs this jpm, as npm's, yarn's and pnpm's are JS.
+/// Tools run it with Node (webpack's `node $npm_execpath run …`), which a native binary would
+/// fail. Written once per jpm binary under `~/.jpm/execpath`; the binary itself where it cannot
+/// be.
+fn execpath() -> PathBuf {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let exe = std::env::current_exe().unwrap_or_default();
+        let mut quoted = String::new();
+        crate::json::quote(&mut quoted, &exe.to_string_lossy());
+        let text = format!(
+            "#!/usr/bin/env node\n// npm_execpath for jpm: runs it with these arguments.\n\
+             const r = require(\"node:child_process\").spawnSync({quoted}, process.argv.slice(2), {{ stdio: \"inherit\" }});\n\
+             process.exit(r.status ?? 1);\n"
+        );
+        let file = crate::config::home()
+            .join(".jpm")
+            .join("execpath")
+            .join(format!("jpm-{}.cjs", crate::util::short_hash(&exe.to_string_lossy())));
+        let written = std::fs::read_to_string(&file).is_ok_and(|t| t == text)
+            || file.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+                && crate::util::write_atomic(&file, text.as_bytes()).is_ok();
+        if !written {
+            return exe;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755));
+        }
+        file
+    })
+    .clone()
 }
 
 // --- pnpm's `run /regex/` --------------------------------------------------------------------
