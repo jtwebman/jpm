@@ -77,6 +77,11 @@ A project that depends on `electron` gets `hoisted` unless `node-linker` says ot
 note: an Electron app packs `node_modules` into itself, rebuilds native modules for Electron in
 place, and its tools walk npm's directories.
 
+An entry's directory name is at most `virtual-store-dir-max-length` bytes, in `.npmrc` or as
+`virtualStoreDirMaxLength` in `pnpm-workspace.yaml`: 60 on Windows, where a path stops at 260
+characters, and 120 elsewhere, as in pnpm. A longer package name is cut short; its version and
+the entry's digest stay.
+
 Every project also gets a hidden hoist, `node_modules/.jpm/node_modules`: one version
 of every package the root does not link itself (the version the project's package-lock.json or
 bun.lock has at its root, else the first copy a walk from the root finds, a level at a time), which Node reaches when a package imports
