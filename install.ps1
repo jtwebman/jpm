@@ -1,5 +1,6 @@
 # Install jpm: irm https://getjpm.sh/install.ps1 | iex
-# $env:JPM_VERSION picks a release (default: latest); $env:JPM_INSTALL moves it (default: ~\.jpm\bin).
+# $env:JPM_VERSION picks a release (default: latest); $env:JPM_INSTALL moves it (default: ~\.jpm\bin);
+# $env:JPM_NO_MODIFY_PATH=1 leaves the user's PATH as it is.
 # In a script block: `iex` runs in the caller's session, which should keep its own preferences.
 & {
   $ErrorActionPreference = "Stop"
@@ -41,13 +42,29 @@
     Copy-Item -Force "$dir\jpm.exe" "$dir\jpx.exe"
     Write-Host "jpm: installed $(& "$dir\jpm.exe" --version) to $dir\jpm.exe"
 
-    # The PATH is the user's to change, as install.sh leaves it: said how, where the directory is
-    # on neither this terminal's PATH nor the user's. Not with setx or [Environment]: both write
-    # back the user's PATH expanded, its `%USERPROFILE%` entries made plain text.
-    $user = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ((@($env:Path -split ";") + @("$user" -split ";")) -notcontains $dir) {
-      Write-Host "jpm: add $dir to your PATH: for this terminal, `$env:Path = `"$dir;`$env:Path`""
-      Write-Host "jpm: and for good, under your user's Path in: rundll32 sysdm.cpl,EditEnvironmentVariables"
+    # On the PATH of every new terminal, the user's in the registry, and of this one, unless
+    # JPM_NO_MODIFY_PATH says to leave it (a test or CI install), where it says how instead.
+    # The raw value, `%USERPROFILE%` and all: [Environment]'s and setx would come back expanded
+    # and be written back as plain text.
+    $key = Get-Item HKCU:\Environment
+    $path = $key.GetValue("Path", "", "DoNotExpandEnvironmentNames")
+    $entries = @($path -split ";" | Where-Object { $_ })
+    if ($env:JPM_NO_MODIFY_PATH) {
+      if ((@($env:Path -split ";") + $entries) -notcontains $dir) {
+        Write-Host "jpm: add $dir to your PATH: for this terminal, `$env:Path = `"$dir;`$env:Path`""
+        Write-Host "jpm: and for good, under your user's Path in: rundll32 sysdm.cpl,EditEnvironmentVariables"
+      }
+    } else {
+      if ($entries -notcontains $dir) {
+        $kind = if ($path) { $key.GetValueKind("Path") } else { "ExpandString" }
+        Set-ItemProperty HKCU:\Environment -Name Path -Type $kind -Value ((@($dir) + $entries) -join ";")
+        # Tell running programs (Explorer, so new terminals) that the environment changed.
+        [Environment]::SetEnvironmentVariable("JPM_INSTALL_TMP", "1", "User")
+        [Environment]::SetEnvironmentVariable("JPM_INSTALL_TMP", $null, "User")
+        Write-Host "jpm: added $dir to your user PATH"
+      }
+      # `iex` runs this in the caller's process: jpm works in this terminal too, without a new one.
+      if (@($env:Path -split ";") -notcontains $dir) { $env:Path = "$dir;$env:Path" }
     }
   } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
