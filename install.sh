@@ -97,7 +97,15 @@ main() {
     mkdir -p "$(dirname "$rc")"
     printf '\n# jpm\n%s\n' "$line" >> "$rc"
   fi
-  echo "jpm: added $dir to your PATH in $rc; open a new terminal, or run: $line"
+  # bash too, where the user has a file for it: a zsh user still opens bash now and then.
+  if [ "$os" = darwin ]; then bashrc="$HOME/.bash_profile"; else bashrc="$HOME/.bashrc"; fi
+  also=""
+  bash_line="export PATH=\"$dir:\$PATH\""
+  if [ "$bashrc" != "$rc" ] && [ -f "$bashrc" ]; then
+    grep -qsF "$bash_line" "$bashrc" || printf '\n# jpm\n%s\n' "$bash_line" >> "$bashrc"
+    also=" and $bashrc"
+  fi
+  echo "jpm: added $dir to your PATH in $rc$also; open a new terminal, or run: $line"
 }
 
 main "$@"
