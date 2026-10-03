@@ -36,7 +36,7 @@ the table's *after changes* column. jpm and jpx are on `PATH` for every script.
 
 Each step runs in a process group of its own, and the group goes when the step ends: a dev
 server, a watcher or a build daemon a script left behind does not outlive it (turbo's and nx's
-daemons are off). A step whose processes pass 6 GB together is stopped (`CORPUS_MAX_RSS_MB`), and
+daemons are off). A step whose processes pass 12 GB together is stopped (`CORPUS_MAX_RSS_MB`), and
 a step waits to start while the machine has under 4 GB free (`CORPUS_MIN_FREE_MB`). `--run` and
 `--fixup` build 2 projects at a time, `-j` says otherwise.
 
