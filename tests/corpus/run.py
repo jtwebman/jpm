@@ -334,6 +334,9 @@ def summary(results, todo):
 def report(listing):
     """A Markdown table: each project's lockfile, result on each platform, and the settings it needs."""
     marks = {"pass": "✅", "with": "⚙️", "fail": "❌", "expected": "➖"}
+    # UTF-8 whatever the console's code page: on Windows, output sent to a file was cp1252, which
+    # has no ✅, and the report stopped at the first row.
+    sys.stdout.reconfigure(encoding="utf-8")
     seen = {}
     for plat, _ in PLATFORMS:
         path = os.path.join(RESULTS, f"{plat}.tsv")
