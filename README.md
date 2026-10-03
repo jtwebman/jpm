@@ -2,6 +2,18 @@
 
 A fast, small, secure-by-default package manager for JavaScript, written in Rust.
 
+```sh
+curl -fsSL https://getjpm.sh | sh                  # macOS and Linux
+```
+
+```powershell
+irm https://getjpm.sh/install.ps1 | iex              # Windows
+```
+
+Then `jpm install` in any npm, pnpm, yarn or bun project: it reads your lockfile and keeps its
+versions. One ~2 MB binary, [benchmarks](#where-it-stands), and 166 real projects installing on
+Linux, macOS and Windows. More at [getjpm.sh](https://getjpm.sh).
+
 **I didn't write a line of jpm.** Claude Code, running Claude Opus 5.5, wrote every one of
 them, including its own TLS and crypto: the two things every engineer knows you never write
 yourself.
@@ -64,8 +76,10 @@ else's tests:
 - **pnpm:** its registry-mock scenarios, diffed against what pnpm itself installs.
 - **yarn:** berry's acceptance scenarios, the "dragon tests" included.
 - **bun:** its install tests and lockfiles.
-- **Real projects:** 98 large ones, installed on Windows from both cmd and PowerShell. 92
-  install, and the other six fail on purpose or would fail with any package manager.
+- **Real projects:** 166 large ones, with npm, pnpm, yarn and bun lockfiles, on Linux, macOS
+  and Windows. All 166 install on all three, four with a setting their own dependencies need:
+  each one installed, again as a no-op, from its lockfile alone, from nothing, and verified
+  ([the corpus](tests/corpus/README.md)).
 
 None of the speed is mine either. It came from reading the code that great engineers shared
 with the world (upm, pnpm, bun and aube) and asking how they did it.
