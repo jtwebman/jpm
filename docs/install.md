@@ -13,7 +13,7 @@ Where security software stops a script piped into `iex`, download it and run it 
 
 The script downloads the binary for your platform from the
 [latest release](https://github.com/jtwebman/jpm/releases/latest), checks its SHA-256, and
-puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v1.0.0-rc.1` picks a release and `JPM_INSTALL`
+puts `jpm` and `jpx` in `~/.jpm/bin`. `JPM_VERSION=v1.0.0` picks a release and `JPM_INSTALL`
 another directory. A release candidate is a pre-release, never the latest: the script installs
 one only when `JPM_VERSION` names it. Neither script changes your `PATH` or your shell's files:
 where the directory is not on `PATH`, they say how to add it. The SHA-256 comes from the `SHA256SUMS` of the same release, so it catches a
@@ -77,7 +77,7 @@ for your platform (the table above):
 Linux:
 
 ```sh
-gh release download v1.0.0-rc.1 --repo jtwebman/jpm --pattern jpm-linux-x64
+gh release download v1.0.0 --repo jtwebman/jpm --pattern jpm-linux-x64
 gh attestation verify jpm-linux-x64 --repo jtwebman/jpm
 chmod +x jpm-linux-x64 && mkdir -p ~/.jpm/bin && mv jpm-linux-x64 ~/.jpm/bin/jpm
 ln -sf jpm ~/.jpm/bin/jpx
@@ -86,7 +86,7 @@ ln -sf jpm ~/.jpm/bin/jpx
 macOS:
 
 ```sh
-gh release download v1.0.0-rc.1 --repo jtwebman/jpm --pattern jpm-darwin-arm64
+gh release download v1.0.0 --repo jtwebman/jpm --pattern jpm-darwin-arm64
 gh attestation verify jpm-darwin-arm64 --repo jtwebman/jpm
 chmod +x jpm-darwin-arm64 && mkdir -p ~/.jpm/bin && mv jpm-darwin-arm64 ~/.jpm/bin/jpm
 ln -sf jpm ~/.jpm/bin/jpx
@@ -99,7 +99,7 @@ the mark off once you have checked the file as above.
 Windows (PowerShell):
 
 ```powershell
-gh release download v1.0.0-rc.1 --repo jtwebman/jpm --pattern jpm-windows-x64.exe
+gh release download v1.0.0 --repo jtwebman/jpm --pattern jpm-windows-x64.exe
 gh attestation verify jpm-windows-x64.exe --repo jtwebman/jpm
 New-Item -ItemType Directory -Force "$HOME\.jpm\bin" | Out-Null; Move-Item -Force jpm-windows-x64.exe "$HOME\.jpm\bin\jpm.exe"
 ```
@@ -119,6 +119,6 @@ gh attestation verify install.ps1 --repo jtwebman/jpm; if ($?) { powershell -Exe
 `gh attestation verify` exits non-zero, and prints why, when a file has no attestation from
 `jtwebman/jpm` or its signature does not check out; don't run a file that fails. To also require
 the release workflow and the tag you meant, add
-`--signer-workflow jtwebman/jpm/.github/workflows/release.yml --source-ref refs/tags/v1.0.0-rc.1`.
+`--signer-workflow jtwebman/jpm/.github/workflows/release.yml --source-ref refs/tags/v1.0.0`.
 `SHA256SUMS` is attested too: once it verifies, the sums in it vouch for every other file of the
 release.

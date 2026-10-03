@@ -14,7 +14,7 @@
   $cpu = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "arm64" } else { "x64" }
   $asset = "jpm-windows-$cpu.exe"
   # A tag's name: no `/` to lead the url to another repository's release.
-  if ($env:JPM_VERSION -and $env:JPM_VERSION -notmatch '^[A-Za-z0-9._+-]+$') { throw "jpm: JPM_VERSION must be a release tag, such as v1.0.0-rc.1, not $env:JPM_VERSION" }
+  if ($env:JPM_VERSION -and $env:JPM_VERSION -notmatch '^[A-Za-z0-9._+-]+$') { throw "jpm: JPM_VERSION must be a release tag, such as v1.0.0, not $env:JPM_VERSION" }
   $base = if ($env:JPM_VERSION) { "https://github.com/$repo/releases/download/$env:JPM_VERSION" } else { "https://github.com/$repo/releases/latest/download" }
 
   $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
