@@ -190,10 +190,17 @@ def sweep(work):
 
 
 def one(name, expect, extra, a, env):
+    work = os.path.join(a.work, "repos", name.replace("/", "__"))
+    r = None
     try:
-        return _one(name, expect, extra, a, env)
+        r = _one(name, expect, extra, a, env)
+        return r
     finally:
-        sweep(os.path.join(a.work, "repos", name.replace("/", "__")))
+        sweep(work)
+        # A repository that passed goes back to its checkout: its node_modules and builds would
+        # only be deleted by the next run, and over a run they take the disk. A failure's stay.
+        if r and r["steps"] and all(s["rc"] == 0 for s in r["steps"].values()):
+            subprocess.run([*GIT, "clean", "-fdxq"], cwd=work)
 
 
 def _one(name, expect, extra, a, env):
@@ -295,6 +302,8 @@ def main():
         key, s = next((k, s) for k, s in r["steps"].items() if s["rc"] != 0)
         print(f"  {r['repo']}: {key} {'(expected: ' + r['expect'] + ')' if r['expect'] else ''}\n    {s['last']}")
     print(f"results: {out}")
+    # The store keeps only what the projects left installed use: those that failed.
+    subprocess.run([a.jpm, "prune"], cwd=a.work, env=env, capture_output=True)
     summary(results, todo)
     sys.exit(1 if any(not r["expect"] for r in fails) else 0)
 
