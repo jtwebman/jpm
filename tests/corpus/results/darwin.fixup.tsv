@@ -1,0 +1,7 @@
+repo	lock	status	step	calls	date
+calcom/cal.diy	yarn	fail	run	scripts call yarn (97): use jpm	2026-10-03
+documenso/documenso	npm	pass			2026-10-03
+medusajs/medusa	yarn	pass		scripts call yarn (280): use jpm	2026-10-03
+TriliumNext/Trilium	pnpm	pass		scripts call pnpm (53): use jpm	2026-10-03
+vercel/hyper	pnpm	pass		scripts call pnpm (6): use jpm	2026-10-03
+webpack/webpack	yarn	pass		scripts call yarn (41): use jpm	2026-10-03
