@@ -18,7 +18,8 @@ another directory. A release candidate is a pre-release, never the latest: the s
 one only when `JPM_VERSION` names it. Each script puts the directory on your `PATH`: on Windows
 in your user `PATH`, for new terminals and the one it ran in; on macOS and Linux with a line in
 your shell's startup file (`~/.zshrc`, `~/.bashrc`, `~/.bash_profile` on macOS, `~/.profile`, or
-fish's `conf.d/jpm.fish`), added once. `JPM_NO_MODIFY_PATH=1` leaves both alone and says how
+fish's `conf.d/jpm.fish`), added once, and in `~/.bashrc` (`~/.bash_profile` on macOS) too
+where you have one. `JPM_NO_MODIFY_PATH=1` leaves both alone and says how
 to add it instead. The SHA-256 comes from the `SHA256SUMS` of the same release, so it catches a
 download cut short or corrupted, not a release whose files were replaced: for that, see
 [Verifying a release](#verifying-a-release). Each platform has its own build:
