@@ -410,7 +410,20 @@ fn place(
     }
     let (index, src) = files_of(opts, pkg)?;
     let copy = opts.built.contains(&pkg.key()) || pkg.patch.is_some();
-    place_files(counts, copy_only, &index, &src, &path, copy)?;
+    // A Mac clones the package whole, in one call, as the isolated layout's entries are: one
+    // link per file is most of a big tree's install (cline's 250,000). Never a store entry that
+    // is a link (Linux moves files into global entries): the clone would be the link.
+    let cloned = !copy
+        && pkg.runtime.is_none()
+        && !index.suffixed
+        && fs::symlink_metadata(&src).is_ok_and(|m| m.is_dir())
+        && sys::clone_dir(&src, &path)
+            .map_err(|e| Error::io(&e, format!("cannot copy {}", src.display())).with_code("ELINK"))?;
+    if cloned {
+        Counts::add(&counts.cloned, 1);
+    } else {
+        place_files(counts, copy_only, &index, &src, &path, copy)?;
+    }
     if let Some(hash) = &pkg.patch {
         let patch = opts.patches.iter().find(|p| p.hash == *hash).ok_or_else(|| {
             Error::new(
