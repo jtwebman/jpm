@@ -4204,3 +4204,21 @@ fn prunes_an_entry_that_holds_what_another_project_uses() {
     ok_in(&env, &again, &["install"]);
     assert!(read_in(&again, "node_modules/a/../b/index.js").contains("b@1.1.0"));
 }
+
+/// npm_execpath is a JS file, as npm's, yarn's and pnpm's are: webpack's tooling runs
+/// `node $npm_execpath run <script>`, which a native binary there would fail.
+#[cfg(unix)]
+#[test]
+fn npm_execpath_runs_with_node() {
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        return;
+    }
+    let r = registry();
+    let env = Env::new(&r);
+    env.manifest(json!({ "scripts": { "outer": "node \"$npm_execpath\" run inner", "inner": "echo inner-ran" } }));
+    let out = env.ok(&["run", "outer"]);
+    assert!(out.contains("inner-ran"), "{out}");
+    // Run as it is, too, by its `#!`.
+    env.manifest(json!({ "scripts": { "outer": "\"$npm_execpath\" run inner", "inner": "echo inner-ran" } }));
+    assert!(env.ok(&["run", "outer"]).contains("inner-ran"));
+}
