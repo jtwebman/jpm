@@ -1,7 +1,8 @@
 #!/bin/sh
 # Install jpm: curl -fsSL https://getjpm.sh | sh
 # JPM_VERSION picks a release (default: latest); JPM_INSTALL moves it (default: ~/.jpm/bin);
-# JPM_LIBC=glibc or musl picks the Linux build (default: the system's).
+# JPM_LIBC=glibc or musl picks the Linux build (default: the system's); JPM_NO_MODIFY_PATH=1
+# leaves the shell's startup file as it is.
 set -eu
 
 # All in a function called on the last line: a download cut short runs nothing.
@@ -75,19 +76,28 @@ main() {
   ln -sf jpm "$dir/jpx"
   echo "jpm: installed $("$dir/jpm" --version) to $dir/jpm"
 
-  # The file the user's shell reads: zsh, macOS's own, never reads ~/.profile, and a login bash
-  # on macOS reads ~/.bash_profile.
+  # On the PATH of every new shell: a line in the file the user's shell reads, once, unless
+  # JPM_NO_MODIFY_PATH says to leave it (a test or CI install), where it says how instead. zsh,
+  # macOS's own, never reads ~/.profile, and a login bash on macOS reads ~/.bash_profile.
   case ":$PATH:" in
-    *":$dir:"*) ;;
-    *)
-      case "${SHELL##*/}" in
-        fish) echo "jpm: add $dir to your PATH, for example: fish_add_path $dir"; return ;;
-        zsh) rc="~/.zshrc" ;;
-        bash) if [ "$os" = darwin ]; then rc="~/.bash_profile"; else rc="~/.bashrc"; fi ;;
-        *) rc="~/.profile" ;;
-      esac
-      echo "jpm: add $dir to your PATH, for example: echo 'export PATH=\"$dir:\$PATH\"' >> $rc" ;;
+    *":$dir:"*) return ;;
   esac
+  line="export PATH=\"$dir:\$PATH\""
+  case "${SHELL##*/}" in
+    fish) rc="$HOME/.config/fish/conf.d/jpm.fish"; line="fish_add_path \"$dir\"" ;;
+    zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) if [ "$os" = darwin ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+    *) rc="$HOME/.profile" ;;
+  esac
+  if [ -n "${JPM_NO_MODIFY_PATH:-}" ]; then
+    echo "jpm: add $dir to your PATH, for example: echo '$line' >> $rc"
+    return
+  fi
+  if ! grep -qsF "$line" "$rc"; then
+    mkdir -p "$(dirname "$rc")"
+    printf '\n# jpm\n%s\n' "$line" >> "$rc"
+  fi
+  echo "jpm: added $dir to your PATH in $rc; open a new terminal, or run: $line"
 }
 
 main "$@"
