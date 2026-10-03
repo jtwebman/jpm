@@ -108,7 +108,7 @@ def fixup(work):
 # step ends what it started goes with it (a dev server, a watcher, a build left running by a
 # timeout). One left behind per repository took a 36 GB machine's memory over a --fixup run. A
 # step starts only while the machine has MIN_FREE_MB free.
-MAX_RSS_MB = int(os.environ.get("CORPUS_MAX_RSS_MB", "6144"))
+MAX_RSS_MB = int(os.environ.get("CORPUS_MAX_RSS_MB", "12288"))
 MIN_FREE_MB = int(os.environ.get("CORPUS_MIN_FREE_MB", "4096"))
 TAIL = 64 * 1024
 
