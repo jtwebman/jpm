@@ -18,6 +18,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+# Windows: a checkout's paths, and those of the node_modules it cleans, pass 260 characters.
+GIT = ["git", "-c", "core.longpaths=true"]
 LOCKS = [("bun.lock", "bun"), ("pnpm-lock.yaml", "pnpm"), ("package-lock.json", "npm"),
          ("npm-shrinkwrap.json", "npm"), ("yarn.lock", "yarn")]
 
@@ -206,9 +208,9 @@ def _one(name, expect, extra, a, env):
         return s
 
     if os.path.isdir(os.path.join(work, ".git")):
-        subprocess.run(["git", "checkout", "-q", "."], cwd=work)
-        subprocess.run(["git", "clean", "-fdxq"], cwd=work)
-    elif step("clone", ["git", "clone", "-q", "--depth", "1", f"https://github.com/{name}.git", work],
+        subprocess.run([*GIT, "checkout", "-q", "."], cwd=work)
+        subprocess.run([*GIT, "clean", "-fdxq"], cwd=work)
+    elif step("clone", [*GIT, "clone", "-q", "--depth", "1", f"https://github.com/{name}.git", work],
               cwd=a.work, timeout=900)["rc"] != 0:
         return r
     r["lock"] = next((k for f, k in LOCKS if os.path.exists(os.path.join(work, f))), "none")
@@ -226,7 +228,7 @@ def _one(name, expect, extra, a, env):
     if again["rc"] == 0 and "up to date" not in again["out"]:
         r["steps"]["again"]["rc"] = "not a no-op"
     step("frozen", [*jpm, "--frozen-lockfile"])
-    subprocess.run(["git", "clean", "-fdXq"], cwd=work)  # ignored files only: tracked node_modules stay
+    subprocess.run([*GIT, "clean", "-fdXq"], cwd=work)  # ignored files only: tracked node_modules stay
     step("reinstall", jpm)
     step("verify", [*jpm, "--verify"])
     if a.run:
