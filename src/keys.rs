@@ -18,6 +18,24 @@ pub fn store_keys(packages: &BTreeMap<String, Package>) -> HashMap<String, Strin
         .collect()
 }
 
+/// An entry's name no longer than `max` bytes, as pnpm keeps its virtual store's
+/// (`virtual-store-dir-max-length`): the package name is cut short, and its version and what
+/// follows it, the digest or the peers, are kept. A path under `node_modules/.jpm` repeats the
+/// package's name below its entry, and Windows stops at 260 characters, where git without
+/// `core.longpaths` cannot delete what is past them. A name too short to cut stays whole.
+pub fn cap(key: &str, max: usize) -> String {
+    let Some(at) = crate::graph::name_end(key).filter(|_| key.len() > max) else { return key.to_string() };
+    let tail = &key[at..];
+    let mut end = max.saturating_sub(tail.len()).min(at);
+    while !key.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end < 2 {
+        return key.to_string();
+    }
+    format!("{}{tail}", &key[..end])
+}
+
 /// Every registry or tarball package's subgraph digest in full, 43 characters of SHA-256 where
 /// `store_keys` keeps 22: a global entry's name shows the start of it, and the entry holds it
 /// whole (see `link`), so no two subgraphs ever pass for one.
@@ -260,5 +278,21 @@ mod tests {
         assert_eq!(name_version("@babel+core@7.29.7-PEUj-xSY3KB71f6RKBUtQw"), Some(("@babel/core".into(), "7.29.7")));
         assert_eq!(name_version("a@1.0.0-short"), None);
         assert_eq!(name_version(".hoist"), None);
+    }
+
+    #[test]
+    fn caps_a_long_name_keeping_its_version_and_digest() {
+        let long = "@babel+plugin-bugfix-safari-id-destructuring-collision-in-function-expression@7.29.7";
+        assert_eq!(cap(long, 60), "@babel+plugin-bugfix-safari-id-destructuring-collisio@7.29.7");
+        assert_eq!(cap(long, 60).len(), 60);
+        let hashed = format!("{long}-PEUj-xSY3KB71f6RKBUtQw");
+        let capped = cap(&hashed, 60);
+        assert_eq!(capped.len(), 60);
+        assert!(capped.ends_with("@7.29.7-PEUj-xSY3KB71f6RKBUtQw"), "{capped}");
+        assert_eq!(name_version(&capped).map(|(_, v)| v), Some("7.29.7"));
+        // Short enough already, or nothing of the name left to keep: as it was.
+        assert_eq!(cap("a@1.0.0", 60), "a@1.0.0");
+        let peers = format!("ab@1.0.0({})", "x".repeat(60));
+        assert_eq!(cap(&peers, 60), peers);
     }
 }
