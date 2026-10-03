@@ -1,0 +1,11 @@
+{
+  "name": "@cline/example-cline-core-cli-agent",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@cline/sdk": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

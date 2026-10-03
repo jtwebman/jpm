@@ -14,6 +14,7 @@ MIN_FREE=3
 KEEP=0
 DRY=0
 INSTALLED=0
+HOISTED=0
 BINS=""
 W=${BENCH_WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/jpm-bench}
 
@@ -28,6 +29,8 @@ usage: bench/bench-mac.sh [options]
       --phases a,b      cold, warm, ci, repeat (default: all four)
       --bin name=path   use this binary for a runner (repeatable)
       --installed       use the managers on PATH instead of fetching the latest
+      --hoisted         npm's layout for all: node-linker=hoisted for jpm and pnpm,
+                        --linker hoisted for bun (runners: jpm,npm,pnpm,bun,yarn)
       --min-free GB     stop when the work dir has less free space (default: 3)
       --keep            keep the projects and caches afterwards
       --dry-run         print what would run
@@ -54,6 +57,7 @@ while [ $# -gt 0 ]; do
 	--min-free) MIN_FREE=${2:?}; shift ;;
 	--keep) KEEP=1 ;;
 	--installed) INSTALLED=1 ;;
+	--hoisted) HOISTED=1 ;;
 	--dry-run) DRY=1 ;;
 	--report) exec "$BENCH/bench.sh" --report "${2:?}" ;;
 	-h | --help) usage; exit ;;
@@ -61,6 +65,8 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+# deno, aube and upm keep layouts of their own.
+[ $HOISTED = 0 ] || [ "$RUNNERS" != "$ALL" ] || RUNNERS="jpm npm pnpm bun yarn"
 
 case $SAMPLES$MIN_FREE in *[!0-9]*) die "-n and --min-free take whole numbers" ;; esac
 case $W in /*[!/]*) ;; *) die "BENCH_WORK must be an absolute path below /: $W" ;; esac
@@ -75,7 +81,8 @@ given() { for b in $BINS; do case $b in "$1"=*) echo "${b#*=}"; return ;; esac; 
 # Arguments for an install.
 args() {
 	case $1 in
-	jpm | aube | upm | bun) echo "install --ignore-scripts" ;;
+	jpm | aube | upm) echo "install --ignore-scripts" ;;
+	bun) echo "install --ignore-scripts$([ $HOISTED = 0 ] || echo " --linker hoisted")" ;;
 	npm) echo "install --ignore-scripts --no-audit --no-fund" ;;
 	pnpm) echo "install --ignore-scripts --no-frozen-lockfile" ;;
 	yarn) echo "install" ;;
@@ -101,6 +108,7 @@ envs() {
 		"YARN_NODE_LINKER=node-modules YARN_ENABLE_IMMUTABLE_INSTALLS=false" ;;
 	deno) echo "DENO_DIR=$h/deno DENO_NO_UPDATE_CHECK=1" ;;
 	esac
+	case $1 in jpm | pnpm) [ $HOISTED = 0 ] || echo "npm_config_node_linker=hoisted pnpm_config_node_linker=hoisted" ;; esac
 }
 
 # Microseconds since the epoch: macOS's date has no %N.
