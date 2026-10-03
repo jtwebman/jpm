@@ -64,7 +64,7 @@ Leaflet/Leaflet	npm	pass			2026-10-03
 lissy93/domain-locker	npm	pass			2026-10-03
 lit/lit	npm	pass			2026-10-03
 lmammino/financial	pnpm	pass		scripts call bun (1): use jpm	2026-10-03
-lobehub/lobehub	none	expected	verify	scripts call bun (22): use jpm; scripts call pnpm (15): use jpm	2026-10-03
+lobehub/lobehub	none	pass		scripts call bun (22): use jpm; scripts call pnpm (15): use jpm	2026-10-03
 lodash/lodash	npm	pass			2026-10-03
 logseq/logseq	pnpm	pass		scripts call pnpm (27): use jpm	2026-10-03
 louislam/uptime-kuma	npm	pass			2026-10-03
