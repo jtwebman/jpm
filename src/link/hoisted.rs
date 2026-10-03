@@ -172,8 +172,7 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     // and cal.com's postinstall start one in each workspace at once.
     fs::create_dir_all(&nm).map_err(|e| Error::io(&e, format!("cannot create {}", nm.display())))?;
     let turn = Turn::take(&nm);
-    // Under `--verify`, nothing found is trusted: laid out again from the store.
-    let previous = state::read(opts.dir).filter(|s| s.hoisted && !opts.verify);
+    let previous = state::read(opts.dir).filter(|s| s.hoisted);
     if let Some(prev) = previous.as_ref().filter(|s| !opts.verify && s.hash == opts.hash && s.complete)
         && placed_standing(opts.dir, &prev.placed)
     {
@@ -224,8 +223,22 @@ pub(super) fn link(res: &Resolution, opts: &Options) -> Result<Outcome> {
     // its scripts may write to.
     let (old, was_built) = previous.map(|s| (s.placed, s.built)).unwrap_or_default();
     let unbuilt = |at: &String, id: &String| opts.built.contains(id) && !was_built.contains(at);
-    let mut gone: Vec<&String> =
-        old.iter().filter(|(at, id)| placed.get(*at) != Some(id) || unbuilt(at, id)).map(|(at, _)| at).collect();
+    // Under `--verify`, what stands is checked as the isolated layout's entries are: only a
+    // package whose files are no longer the store's is laid out again, not the whole tree.
+    let broken: HashSet<String> = if opts.verify {
+        let standing: Vec<(&String, &String)> = old.iter().filter(|(at, id)| placed.get(*at) == Some(id)).collect();
+        pool::map(pool::disk_threads(), standing, |(at, id)| (!intact(opts, at, &res.packages[id])).then(|| at.clone()))
+            .into_iter()
+            .flatten()
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let mut gone: Vec<&String> = old
+        .iter()
+        .filter(|(at, id)| placed.get(*at) != Some(id) || unbuilt(at, id) || broken.contains(*at))
+        .map(|(at, _)| at)
+        .collect();
     gone.sort_by_key(|at| Reverse(at.len()));
     let counts = Counts::default();
     for at in &gone {
@@ -395,22 +408,7 @@ fn place(
     if let Some(fetch) = opts.fetch {
         fetch(pkg)?;
     }
-    let index = opts
-        .store
-        .index(&pkg.integrity)
-        .ok_or_else(|| fail(format!("{} is not in the store at {}", pkg.key(), opts.store.dir.display())))?;
-    let src = opts.store.pkg_dir(&pkg.integrity)?;
-    let (index, src) = match (pkg.runtime.is_some(), pkg.within()) {
-        // A runtime is its binary alone (see `Linker::index`).
-        (true, _) => {
-            let files: Vec<FileEntry> =
-                index.files.iter().filter(|f| pkg.bin.values().any(|b| *b == f.path)).cloned().collect();
-            let unpacked_size = files.iter().map(|f| f.size).sum();
-            (std::sync::Arc::new(Index { files, unpacked_size, suffixed: index.suffixed, stamp: index.stamp }), src)
-        }
-        (false, Some((_, under))) => (std::sync::Arc::new(index.under(under)), src.join(under)),
-        (false, None) => (index, src),
-    };
+    let (index, src) = files_of(opts, pkg)?;
     let copy = opts.built.contains(&pkg.key()) || pkg.patch.is_some();
     place_files(counts, copy_only, &index, &src, &path, copy)?;
     if let Some(hash) = &pkg.patch {
@@ -425,6 +423,42 @@ fn place(
         })?;
     }
     Ok(())
+}
+
+/// A package's files in the store, and where they are: a runtime is its binary alone (see
+/// `Linker::index`), a directory inside a package its files there.
+fn files_of(opts: &Options, pkg: &Package) -> Result<(std::sync::Arc<Index>, PathBuf)> {
+    let index = opts
+        .store
+        .index(&pkg.integrity)
+        .ok_or_else(|| fail(format!("{} is not in the store at {}", pkg.key(), opts.store.dir.display())))?;
+    let src = opts.store.pkg_dir(&pkg.integrity)?;
+    Ok(match (pkg.runtime.is_some(), pkg.within()) {
+        (true, _) => {
+            let files: Vec<FileEntry> =
+                index.files.iter().filter(|f| pkg.bin.values().any(|b| *b == f.path)).cloned().collect();
+            let unpacked_size = files.iter().map(|f| f.size).sum();
+            (std::sync::Arc::new(Index { files, unpacked_size, suffixed: index.suffixed, stamp: index.stamp }), src)
+        }
+        (false, Some((_, under))) => (std::sync::Arc::new(index.under(under)), src.join(under)),
+        (false, None) => (index, src),
+    })
+}
+
+/// Under `--verify`, a package placed before still holds the store's files: each at its size and
+/// unchanged since the store's stamp, as `Linker::intact` checks an entry, and the store did not
+/// fetch it again (a file changed through a link changed the store's too). A workspace's link
+/// is `kept`'s to check; a built or patched copy's files are its own.
+fn intact(opts: &Options, at: &str, pkg: &Package) -> bool {
+    if pkg.local.is_some() || opts.built.contains(&pkg.key()) || pkg.patch.is_some() {
+        return true;
+    }
+    if opts.fetch.is_some_and(|fetch| fetch(pkg).is_err()) || opts.store.was_fetched(&pkg.integrity) {
+        return false;
+    }
+    let Ok((index, _)) = files_of(opts, pkg) else { return false };
+    let dir = opts.dir.join(at);
+    index.files.iter().all(|f| fs::metadata(dir.join(&f.path)).is_ok_and(|m| index.unchanged(f, &m)))
 }
 
 /// The `.bin` of `nm_rel`, from the packages placed in it (`here`); a top's own dependencies'

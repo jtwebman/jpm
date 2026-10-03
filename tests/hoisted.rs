@@ -65,6 +65,28 @@ fn lays_out_node_modules_as_npm_does() {
 }
 
 #[test]
+fn verify_lays_out_again_only_what_changed() {
+    // Each package placed is checked as the isolated layout checks an entry, and only one whose
+    // files are not the store's is laid out again: on Windows, laying out all of cal.com's
+    // 325,000 files again took longer than the install did.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(
+        ".npmrc",
+        "node-linker=hoisted
+",
+    );
+    env.manifest(json!({ "dependencies": { "a": "1.0.0", "b": "2.0.0", "cli": "1.0.0" } }));
+    env.ok(&["install"]);
+    std::fs::remove_file(env.path("node_modules/a/node_modules/b/index.js")).unwrap();
+    let out = env.ok(&["install", "--verify"]);
+    assert!(out.contains("1 entries (3 reused)"), "{out}");
+    assert!(env.read("node_modules/a/node_modules/b/index.js").contains("b@1.0.0"));
+    let out = env.ok(&["install", "--verify"]);
+    assert!(out.contains("0 entries (4 reused)"), "{out}");
+}
+
+#[test]
 fn links_every_workspace_at_the_root() {
     let r = registry();
     let env = Env::new(&r);
