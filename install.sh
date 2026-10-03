@@ -45,7 +45,7 @@ main() {
   if [ -n "${JPM_VERSION:-}" ]; then
     # A tag's name: no `/` to lead the url to another repository's release.
     case "$JPM_VERSION" in
-      *[!A-Za-z0-9._+-]*) echo "jpm: JPM_VERSION must be a release tag, such as v1.0.0-rc.1, not $JPM_VERSION" >&2; exit 1 ;;
+      *[!A-Za-z0-9._+-]*) echo "jpm: JPM_VERSION must be a release tag, such as v1.0.0, not $JPM_VERSION" >&2; exit 1 ;;
     esac
     base="https://github.com/$repo/releases/download/$JPM_VERSION"
   else
