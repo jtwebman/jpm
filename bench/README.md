@@ -61,11 +61,13 @@ quoting results.
 
 ```
 -r, --runners a,b     package managers (default: all)
--f, --fixtures a,b    fixtures (default: nitro,nuxt,next; tiny also exists)
+-f, --fixtures a,b    fixtures (default: nitro,nuxt,next; tiny and cline also exist)
 -n, --samples N       runs per phase (default: 3)
     --phases a,b      cold, warm, repeat (default: all three)
     --bin name=path   use this binary for a runner (repeatable)
     --installed       use the managers on PATH instead of fetching the latest
+    --hoisted         npm's layout for all: node-linker=hoisted for jpm and pnpm,
+                      --linker hoisted for bun (runners: jpm,npm,pnpm,bun,yarn)
     --min-free GB     stop when the work dir has less free space (default: 3)
     --keep            keep the projects and caches afterwards
     --dry-run         print what would run
@@ -74,6 +76,11 @@ quoting results.
 
 The work dir is `$BENCH_WORK`, by default `~/.cache/jpm-bench`. Logs of every run are kept
 in its `logs/`.
+
+`cline` is cline's monorepo, its 25 package.json files alone (2,400 packages, about 250,000
+files): what a big workspace costs to lay out. Its `workspace:` specs are `*`, so npm, yarn and
+bun link the workspaces too, and its overrides are given to pnpm and yarn as well. npm cannot
+install it: its peers conflict, as they do in the project, which bun installs.
 
 ## Results
 
