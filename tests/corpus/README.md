@@ -40,7 +40,9 @@ daemons are off). A step whose processes pass 12 GB together is stopped (`CORPUS
 a step waits to start while the machine has under 4 GB free (`CORPUS_MIN_FREE_MB`). `--run` and
 `--fixup` build 2 projects at a time, `-j` says otherwise.
 
-All projects share one store under the work dir. Logs of every step are kept in its `logs/`,
+All projects share one store under the work dir. A project that passes goes back to its checkout
+as soon as it is done (`git clean -fdx`), and the run ends with `jpm prune`, so the store keeps
+only what the failures left installed use. Logs of every step are kept in its `logs/`,
 and the results in `results-<stamp>.json`. A line's `# expect: <reason>` marks a failure by
 design (a published package taking a git or tarball dependency, which `block-exotic-subdeps`
 refuses) or one any manager would have; the run reports those apart, and exits 1 only for the
