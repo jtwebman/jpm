@@ -86,6 +86,21 @@ fn verify_lays_out_again_only_what_changed() {
     assert!(out.contains("0 entries (4 reused)"), "{out}");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn clones_each_package_on_a_mac() {
+    // One clone a package, as the isolated layout's entries are, not one link a file: cline's
+    // 250,000 links took most of its install.
+    use std::os::unix::fs::MetadataExt;
+    let r = registry();
+    let env = Env::new(&r);
+    env.write(".npmrc", "node-linker=hoisted\n");
+    env.manifest(json!({ "dependencies": { "a": "1.0.0" } }));
+    env.ok(&["install"]);
+    let file = std::fs::metadata(env.path("node_modules/a/index.js")).unwrap();
+    assert_eq!(file.nlink(), 1, "a clone, not a link to the store's file");
+}
+
 #[test]
 fn links_every_workspace_at_the_root() {
     let r = registry();
