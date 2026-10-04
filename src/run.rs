@@ -183,11 +183,26 @@ fn npm_node_gyp(path: &std::ffi::OsStr) -> Option<(PathBuf, PathBuf)> {
     if which_in(path, "node-gyp").is_some() {
         return None;
     }
-    let npm = std::fs::canonicalize(which_in(path, "npm")?).ok()?;
-    let bin = npm.parent()?;
-    let js = bin.parent()?.join("node_modules/node-gyp/bin/node-gyp.js");
-    let dir = bin.join("node-gyp-bin");
-    (dir.is_dir() && js.is_file()).then_some((dir, js))
+    let npm = which_in(path, "npm")?;
+    // On Unix `npm` is a link into npm's own directory: followed. Windows' npm.cmd is a file, and
+    // its canonical name a `\\?\` path, which node-gyp would hand on to Python and MSBuild.
+    let npm = if cfg!(windows) { npm } else { std::fs::canonicalize(npm).ok()? };
+    node_gyp_of(&npm)
+}
+
+/// npm's node-gyp shim directory and node-gyp.js, from the `npm` found on the PATH. On Unix that
+/// is a link to `<npm>/bin/npm-cli.js`; on Windows `npm.cmd` sits beside node.exe, and npm is in
+/// `node_modules\npm` there. Either way, npm's directory holds both.
+fn node_gyp_of(npm: &Path) -> Option<(PathBuf, PathBuf)> {
+    let beside = npm.parent()?;
+    [beside.parent().map(Path::to_path_buf), Some(beside.join("node_modules").join("npm"))]
+        .into_iter()
+        .flatten()
+        .find_map(|npm_dir| {
+            let dir = npm_dir.join("bin").join("node-gyp-bin");
+            let js = npm_dir.join("node_modules").join("node-gyp").join("bin").join("node-gyp.js");
+            (dir.is_dir() && js.is_file()).then_some((dir, js))
+        })
 }
 
 /// With no `node` on PATH, a project with a bun runtime gets bun by that name, last on PATH, as
@@ -614,6 +629,32 @@ fn emit(re: &Re, p: &mut Vec<Inst>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_npms_node_gyp_on_unix_and_on_windows() {
+        let root = crate::store::tests::scratch("node-gyp");
+        let npm_dir = |at: &Path| {
+            std::fs::create_dir_all(at.join("bin/node-gyp-bin")).unwrap();
+            std::fs::create_dir_all(at.join("node_modules/node-gyp/bin")).unwrap();
+            std::fs::write(at.join("node_modules/node-gyp/bin/node-gyp.js"), "").unwrap();
+        };
+        // Unix: `npm` on the PATH is a link to <prefix>/lib/node_modules/npm/bin/npm-cli.js.
+        let unix = root.join("lib/node_modules/npm");
+        npm_dir(&unix);
+        let (dir, js) = node_gyp_of(&unix.join("bin/npm-cli.js")).unwrap();
+        assert_eq!(
+            (dir, js),
+            (unix.join("bin").join("node-gyp-bin"), unix.join("node_modules/node-gyp/bin/node-gyp.js"))
+        );
+        // Windows: npm.cmd beside node.exe, npm in node_modules\npm there (as the zip and the
+        // installer lay Node out); the lookup above found nothing there.
+        let node = root.join("nodejs");
+        npm_dir(&node.join("node_modules/npm"));
+        let (dir, _) = node_gyp_of(&node.join("npm.cmd")).unwrap();
+        assert_eq!(dir, node.join("node_modules").join("npm").join("bin").join("node-gyp-bin"));
+        assert!(node_gyp_of(&root.join("elsewhere/npm.cmd")).is_none());
+        crate::store::remove_tree(&root);
+    }
 
     #[test]
     fn quotes_for_sh() {
