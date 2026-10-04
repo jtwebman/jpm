@@ -170,12 +170,15 @@ jobs:
           sh packaging/apt.sh "$t/repo" "$version" dist
           mkdir -p "$t/repo/pool/main/j/jpm"
           cp dist/jpm_"$version"_*.deb "$t/repo/pool/main/j/jpm/"
-          echo "deb [signed-by=$t/key.gpg] file://$t/repo stable main" | sudo tee /etc/apt/sources.list.d/jpm-ci.list
+          # apt reads the key and the repository as its own _apt user: where it can, as a user's are.
+          sudo install -m 0644 "$t/key.gpg" /usr/share/keyrings/jpm-ci.gpg
+          chmod 0755 "$t" && chmod -R a+rX "$t/repo"
+          echo "deb [signed-by=/usr/share/keyrings/jpm-ci.gpg] file://$t/repo stable main" | sudo tee /etc/apt/sources.list.d/jpm-ci.list
           sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/jpm-ci.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
           sudo apt-get install -y jpm
           [ "$(jpm --version)" = "$version" ]
           sudo apt-get remove -y jpm
-          sudo rm /etc/apt/sources.list.d/jpm-ci.list
+          sudo rm /etc/apt/sources.list.d/jpm-ci.list /usr/share/keyrings/jpm-ci.gpg
       - run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           cp install.sh install.ps1 LICENSE THIRD_PARTY_NOTICES.md dist/
