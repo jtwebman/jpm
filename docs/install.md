@@ -47,8 +47,18 @@ and macOS arm64.
 
 ### Debian and Ubuntu
 
-Each release also has a `.deb` of the glibc build for `amd64`, `arm64` and `armhf`
-(`jpm_<version>_<arch>.deb`), which puts `jpm` and `jpx` in `/usr/bin`:
+jpm's apt repository, for `amd64`, `arm64` and `armhf`, puts `jpm` and `jpx` in `/usr/bin`, and
+`apt upgrade` keeps them up to date:
+
+```sh
+curl -fsSL https://getjpm.sh/apt/jpm.gpg | sudo tee /usr/share/keyrings/jpm.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/jpm.gpg] https://getjpm.sh/apt stable main" | sudo tee /etc/apt/sources.list.d/jpm.list
+sudo apt update && sudo apt install jpm
+```
+
+Its index is signed with the key in [`packaging/apt/jpm.asc`](../packaging/apt/jpm.asc),
+`6FFE A00B A32B 6232 0912 A689 2E2F EC89 6159 4F71`, and its packages are each release's `.deb`
+files. A release's `.deb` installs on its own too, without the repository:
 
 ```sh
 curl -fsSLO https://github.com/jtwebman/jpm/releases/download/v1.0.1/jpm_1.0.1_amd64.deb
