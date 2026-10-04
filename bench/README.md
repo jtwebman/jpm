@@ -44,7 +44,8 @@ On macOS run `bench/bench-mac.sh`, which takes the same options. It needs nothin
 system's own tools: BSD `/usr/bin/time -l` for CPU time and peak RSS, and Perl's clock for wall
 time. `du` counts an APFS clone (jpm, pnpm and bun copy files that way on a Mac) at its full size,
 so the disk column there overstates what cloned files take. It keeps the Mac awake for the run
-(`caffeinate -i`): an idle Mac sleeps, and a wall time would count the sleep. Spotlight and any antivirus scan the
+(`caffeinate -i -s`): an idle Mac sleeps, a closed one on AC power too, and a wall time would
+count the sleep. Spotlight and any antivirus scan the
 files an install writes; say whether real-time protection was on when quoting results.
 
 On Windows it runs under Git Bash, which brings the shell, coreutils, curl and unzip.
