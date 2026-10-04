@@ -17,6 +17,12 @@ INSTALLED=0
 HOISTED=0
 BINS=""
 W=${BENCH_WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/jpm-bench}
+# An idle Mac sleeps, and a wall time would count the sleep (an install timed at 33 minutes that
+# took 88 s): the whole run is kept awake.
+if [ -z "${BENCH_AWAKE:-}" ] && command -v caffeinate >/dev/null; then
+	export BENCH_AWAKE=1
+	exec caffeinate -i "$0" "$@"
+fi
 
 usage() {
 	cat <<EOF
