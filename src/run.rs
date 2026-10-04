@@ -299,6 +299,10 @@ pub fn script_env(command: &mut Command, file: &Path, name: &str, script: &str, 
         .env("npm_package_name", pkg_name)
         .env("npm_package_version", pkg_version)
         .env("npm_execpath", execpath());
+    // npm's settings, as npm gives them to a script (`config::script_vars`).
+    for (key, value) in crate::config::script_env() {
+        command.env(key, value);
+    }
 }
 
 /// What `npm_execpath` names: a JS file that runs this jpm, as npm's, yarn's and pnpm's are JS.
