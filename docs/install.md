@@ -45,7 +45,19 @@ install.sh takes the glibc build where `getconf` reports glibc 2.17 or later and
 otherwise; `JPM_LIBC=musl` or `JPM_LIBC=glibc` picks one. Tests run on Linux x64, Windows x64
 and macOS arm64.
 
-Or build it:
+### Debian and Ubuntu
+
+Each release also has a `.deb` of the glibc build for `amd64`, `arm64` and `armhf`
+(`jpm_<version>_<arch>.deb`), which puts `jpm` and `jpx` in `/usr/bin`:
+
+```sh
+curl -fsSLO https://github.com/jtwebman/jpm/releases/download/v1.0.1/jpm_1.0.1_amd64.deb
+sudo apt install ./jpm_1.0.1_amd64.deb
+```
+
+`sudo apt remove jpm` takes it out again. Its only dependency is `libc6` 2.17 or later.
+
+### Building it
 
 ```sh
 cargo build --release    # target/release/jpm
@@ -53,7 +65,7 @@ cargo build --release    # target/release/jpm
 
 ## Verifying a release
 
-Every file of a release (each binary, `install.sh`, `install.ps1`, `LICENSE`,
+Every file of a release (each binary and `.deb`, `install.sh`, `install.ps1`, `LICENSE`,
 `THIRD_PARTY_NOTICES.md` and `SHA256SUMS`) has a signed
 [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations):
 a record, signed through Sigstore with a certificate GitHub Actions issues and logged in Sigstore's
