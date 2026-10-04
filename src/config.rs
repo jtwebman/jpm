@@ -64,6 +64,8 @@ pub struct Config {
     /// `verify-node-signature`: check a Node release's SHASUMS256.txt against Node's release
     /// keys. On unless `false`.
     pub verify_node_signature: bool,
+    /// The settings as a script gets them (`script_vars`).
+    pub script_env: Vec<(String, String)>,
 }
 
 /// What the command line says, over every file.
@@ -209,6 +211,34 @@ fn normalize_key(key: &str) -> String {
     }
 }
 
+/// Every setting the layers add up to as a script gets it from npm: `npm_config_<key>`, a `-` in
+/// the key as `_`, and `false` as empty. node-gyp reads its from there: an Electron app's
+/// `runtime=electron`, `target` and `disturl` in .npmrc build its native modules against
+/// Electron's headers, not Node's. Never a credential, a registry's own setting (`//host/:…`), a
+/// proxy or a client key: a dependency's scripts are someone else's code (see build.rs's
+/// `without_credentials`, which takes the same out of what jpm itself was given).
+fn script_vars(merged: &Layer) -> Vec<(String, String)> {
+    let secret = |key: &str| {
+        ["auth", "token", "password"].iter().any(|w| key.contains(w))
+            || ["proxy", "https-proxy", "http-proxy", "key", "cert", "certfile", "keyfile"].contains(&key)
+    };
+    merged
+        .iter()
+        .filter(|(key, _)| !key.starts_with("//") && !secret(key))
+        .map(|(key, value)| {
+            let value = if value == "false" { String::new() } else { value.clone() };
+            (format!("npm_config_{}", key.replace('-', "_")), value)
+        })
+        .collect()
+}
+
+static SCRIPT_ENV: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// The settings scripts get (`script_vars`), from the project's config once read; none before.
+pub fn script_env() -> &'static [(String, String)] {
+    SCRIPT_ENV.get().map_or(&[], Vec::as_slice)
+}
+
 /// The config the layers add up to, the last layer winning per key.
 pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
     let mut merged = Layer::new();
@@ -298,6 +328,7 @@ pub fn to_config(layers: &[Layer], registry: Option<&str>) -> Result<Config> {
         node_mirror: set("node-mirror:release")
             .or_else(|| std::env::var("NODEJS_ORG_MIRROR").ok().filter(|m| !m.is_empty())),
         verify_node_signature: merged.get("verify-node-signature").is_none_or(|v| v != "false"),
+        script_env: script_vars(&merged),
     })
 }
 
@@ -431,6 +462,7 @@ pub fn read_config(dir: &Path, flags: &Flags) -> Result<Config> {
     config.cafile = config.cafile.map(|f| path(&f.to_string_lossy()));
     crate::http::configure(&config)?;
     crate::runtime::configure(config.node_mirror.as_deref(), config.verify_node_signature);
+    let _ = SCRIPT_ENV.set(config.script_env.clone());
     Ok(config)
 }
 

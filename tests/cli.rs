@@ -4253,6 +4253,48 @@ fn prunes_an_entry_that_holds_what_another_project_uses() {
     assert!(read_in(&again, "node_modules/a/../b/index.js").contains("b@1.1.0"));
 }
 
+#[test]
+fn scripts_get_the_npmrc_settings_as_npm_gives_them() {
+    // node-gyp reads npm_config_runtime, _target and _disturl: an Electron app's .npmrc (VS Code's)
+    // builds its native modules against Electron's headers that way, not Node's. A token never
+    // goes with them.
+    let dump = |file: &str| {
+        format!(
+            "node -e \"require('fs').writeFileSync('{file}', JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => /^npm_config_/i.test(k)))))\""
+        )
+    };
+    let r = Registry::start(vec![pkg("gyp", "1.0.0", json!({ "scripts": { "install": dump("env.json") } }))]);
+    let env = Env::new(&r);
+    let host = r.url.trim_start_matches("http://").to_string();
+    env.write(
+        ".npmrc",
+        &format!(
+            "disturl=\"https://electronjs.org/headers\"
+target=\"43.7.5\"
+runtime=\"electron\"
+build_from_source=\"true\"
+ignore-scripts=false
+//{host}/:_authToken=SECRET
+"
+        ),
+    );
+    env.manifest(json!({ "dependencies": { "gyp": "1.0.0" }, "scripts": { "show": dump("root.json") } }));
+    env.ok(&["install"]);
+    env.ok(&["approve", "gyp"]);
+    env.ok(&["run", "show"]);
+    for file in ["node_modules/gyp/env.json", "root.json"] {
+        let got: serde_json::Value = serde_json::from_str(&env.read(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let var = |k: &str| got.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        assert_eq!(var("npm_config_runtime").as_deref(), Some("electron"), "{file}: {got}");
+        assert_eq!(var("npm_config_target").as_deref(), Some("43.7.5"), "{file}");
+        assert_eq!(var("npm_config_disturl").as_deref(), Some("https://electronjs.org/headers"), "{file}");
+        assert_eq!(var("npm_config_build_from_source").as_deref(), Some("true"), "{file}");
+        assert_eq!(var("npm_config_ignore_scripts").as_deref(), Some(""), "{file}: false is empty, as npm has it");
+        let text = got.to_string();
+        assert!(!text.contains("SECRET") && !text.to_lowercase().contains("authtoken"), "{file}: {text}");
+    }
+}
+
 /// npm_execpath is a JS file, as npm's, yarn's and pnpm's are: webpack's tooling runs
 /// `node $npm_execpath run <script>`, which a native binary there would fail.
 #[cfg(unix)]
