@@ -1,0 +1,36 @@
+Architectures: amd64 arm64 armhf
+Codename: stable
+Components: main
+Date: Mon, 05 Oct 2026 21:59:31 +0000
+Description: jpm, a package manager for JavaScript (getjpm.sh)
+Label: jpm
+Origin: jpm
+Suite: stable
+MD5Sum:
+ a971c9ed33ac199d40dd63601355e446              713 main/binary-amd64/Packages
+ 0a5feab7516712bc4d8385e9ed014e2f              503 main/binary-amd64/Packages.gz
+ bfb85f263c747d9e870c9f852e1e8dcd              713 main/binary-arm64/Packages
+ 813ffd157a2d25df6899ba5e44b0d767              501 main/binary-arm64/Packages.gz
+ 9eb32343dec4ec848e2903295da228e4              713 main/binary-armhf/Packages
+ 4bbad191085b749f74c3f8e0551a3de4              505 main/binary-armhf/Packages.gz
+SHA1:
+ adc7ac6a1320f7825f91c8217d43ebc23045b32c              713 main/binary-amd64/Packages
+ 4f85774c5ec3e3ee7d2fd7d2de987839e4d3fc11              503 main/binary-amd64/Packages.gz
+ 42b9d1d5a5cddc3d5727e9934786c4a2a217947c              713 main/binary-arm64/Packages
+ 92de9c81790b1296970c4f92207ba10891644e62              501 main/binary-arm64/Packages.gz
+ dabfa7c0f2799da446d268420fc075dea6f53df1              713 main/binary-armhf/Packages
+ d8c8be94cee1ba6f02a21fc0c1ebe9a5ed404459              505 main/binary-armhf/Packages.gz
+SHA256:
+ f5931f8accb704cf3a7ec2f766c027e2c5c0c017b0323996b5116bea62d8fcfe              713 main/binary-amd64/Packages
+ d46039060b55e23d558454b56a91c37c2de96173e81118017359d95baf9d6fc2              503 main/binary-amd64/Packages.gz
+ 4172547c141ecdea67d78be12fff2b69c10f78ed5e6fe359e031dcc638c58839              713 main/binary-arm64/Packages
+ 9bca615409c7c3302e1cc35e97b91893d2dcf835bfafb01a39cdce7027d7c5c3              501 main/binary-arm64/Packages.gz
+ 913bebdb4e9e2bcd87f1782413cf0dcd9b2b5be1f054793af16ce14637827ebf              713 main/binary-armhf/Packages
+ 8cfffeb7a3795cda3e478ac9c47b4db9aa5bcaba86d8d405c8c71381dacd8b8b              505 main/binary-armhf/Packages.gz
+SHA512:
+ b32088c54d0d69dc1fe7af2c6f76eb095c008aa84e99722e242c7fdf56b7b54be60435bb1008a4f6fef9201669f9bd765a5b609f15ec7aed04199164551878f4              713 main/binary-amd64/Packages
+ aaa5768137a8b5380ebb0256e71edd3d376599497308b910df2efdd4a56c07d5f3ab8cba915c7dea8dff69f5529ba3374291f802c22b31a120aa44872cf5ec86              503 main/binary-amd64/Packages.gz
+ 08719c8405624177420c431ca37610514fa903d6d107e3823f402250163bc13da32c5d5fbde97cc1f90ea7ad5890b9839ab31f1f045c5746bdd41158448bcb3d              713 main/binary-arm64/Packages
+ ce04c091b566456f4ab8e457b2e99df4ab4264b71c45a499c0f65f7d18205d8ced191b8b707edf388412a744042176dbf46ef40d817ebf29239dbc6faa3215f8              501 main/binary-arm64/Packages.gz
+ 44798225ea062aa2a4c3669ee897448a8d1f4ef98f52cfdfe6398d1ee76995d07e4468e43d5e3e5e139c548ccf30d3784d62c2761f83ef7d7c9073618b24e047              713 main/binary-armhf/Packages
+ 9cd84ea6017fabdd5f8e4f44a203c8ae416f2c3a7da2b697e83f13a6f5168b66313c4484bbcebad12c19f01251f81dedc7d80cd8ae2068910b68643dfb7a934b              505 main/binary-armhf/Packages.gz

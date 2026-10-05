@@ -1,0 +1,19 @@
+Package: jpm
+Version: 1.0.1
+Architecture: armhf
+Maintainer: JT Turner <jtwebman@gmail.com>
+Installed-Size: 2076
+Depends: libc6 (>= 2.17)
+Filename: pool/main/j/jpm/jpm_1.0.1_armhf.deb
+Size: 844932
+MD5sum: eb17f3fe1f32a56d1a726015723797b1
+SHA1: 4a64f3d8aa4bd49753d36cc588862fb6f6457cfa
+SHA256: a259f7a894bec2f14bac60e55ceb586ad17db344e2a73f7038355b8c83aadc8e
+Section: devel
+Priority: optional
+Homepage: https://getjpm.sh
+Description: fast, small, secure-by-default package manager for JavaScript
+ jpm installs packages from the npm registry, from one binary. It reads
+ package-lock.json, pnpm-lock.yaml, yarn.lock and bun.lock and keeps their
+ versions, and runs a dependency's install scripts only once approved.
+

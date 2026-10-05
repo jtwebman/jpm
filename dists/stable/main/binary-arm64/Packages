@@ -1,0 +1,19 @@
+Package: jpm
+Version: 1.0.1
+Architecture: arm64
+Maintainer: JT Turner <jtwebman@gmail.com>
+Installed-Size: 2036
+Depends: libc6 (>= 2.17)
+Filename: pool/main/j/jpm/jpm_1.0.1_arm64.deb
+Size: 879444
+MD5sum: 084cd431e3ebbfce755976833e724cee
+SHA1: eb43c0c3101aff413aa70738a2594fcf5498e26f
+SHA256: 720310509f4132ce585ec26c61a7122e405db50a6f5eade63cc8b13fd9debfcc
+Section: devel
+Priority: optional
+Homepage: https://getjpm.sh
+Description: fast, small, secure-by-default package manager for JavaScript
+ jpm installs packages from the npm registry, from one binary. It reads
+ package-lock.json, pnpm-lock.yaml, yarn.lock and bun.lock and keeps their
+ versions, and runs a dependency's install scripts only once approved.
+
