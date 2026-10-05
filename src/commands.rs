@@ -916,7 +916,8 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         resolution.packages.get(id).is_some_and(|p| !(ctx.opts.production && p.dev) && ships(p))
             && !outcome.dropped.iter().any(|d| d == id)
     };
-    let mut unbuilt = build::skipped(&resolution, &chosen, &installed);
+    // With scripts off, none run and approving would not change that.
+    let mut unbuilt = if scripts { build::skipped(&resolution, &chosen, &installed) } else { Vec::new() };
     // pnpm-workspace.yaml's `allowBuilds: { name: false }` says no already.
     let denied =
         |id: &String| crate::graph::split_key(id).is_some_and(|(n, _)| project.rules.builds.get(n) == Some(&false));

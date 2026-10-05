@@ -2240,8 +2240,9 @@ fn runs_install_scripts_only_when_approved() {
 
     // --ignore-scripts runs nothing, approved or not.
     std::fs::remove_dir_all(env.project().join("node_modules")).unwrap();
-    env.ok(&["install", "--ignore-scripts"]);
+    let out = env.ok(&["install", "--ignore-scripts"]);
     assert!(!env.exists("node_modules/bld/count.txt"));
+    assert!(!out.contains("not run for"), "approving would not run it: {out}");
 }
 
 #[cfg(unix)]
