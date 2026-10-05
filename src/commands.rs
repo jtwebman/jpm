@@ -569,7 +569,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
     };
     ctx.framework = framework_of(&project);
     let linker = ctx.config().node_linker.clone().or_else(|| project.rules.node_linker.clone());
-    let electron = first_of(&project, &HOISTED_FOR);
+    // A pnpm project's own manager links it isolated unless nodeLinker says otherwise, and its
+    // Electron apps that need npm's layout say so (Trilium, hyper): one workspace's electron
+    // does not change the layout of all the others.
+    let electron =
+        first_of(&project, &HOISTED_FOR).filter(|_| Layout::of(&project.dir, &project.manifest) != Layout::Strict);
     ctx.hoisted = match linker.as_deref() {
         Some(l) => l == "hoisted",
         None => ctx.keep_hoisted.unwrap_or(electron.is_some()),

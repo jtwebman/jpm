@@ -71,4 +71,4 @@ pnpm's.
 - **Electron apps** pack `node_modules` into the app, rebuild native modules for Electron in
   place, and some of their tools follow `require` from a link's path rather than its target
   (hyper's V8 snapshot builder, electron-link). A project that depends on `electron` gets
-  `node-linker=hoisted` unless it sets `node-linker` itself.
+  `node-linker=hoisted` unless it sets `node-linker` itself or pnpm made it, as pnpm does.
