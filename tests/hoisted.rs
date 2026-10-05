@@ -129,6 +129,16 @@ fn an_electron_app_is_hoisted_unless_set_otherwise() {
     env.write(".npmrc", "node-linker=isolated\n");
     env.ok(&["install"]);
     assert!(env.exists("node_modules/.jpm") && !real_dir(&env, "node_modules/a"));
+
+    // pnpm links an Electron app isolated unless nodeLinker says otherwise, and so does jpm.
+    std::fs::remove_file(env.project().join(".npmrc")).unwrap();
+    env.manifest(json!({
+        "packageManager": "pnpm@10.0.0",
+        "dependencies": { "a": "1.0.0" },
+        "devDependencies": { "electron": "1.0.0" }
+    }));
+    let out = env.ok(&["install"]);
+    assert!(!out.contains("as npm does") && !real_dir(&env, "node_modules/a"), "{out}");
 }
 
 #[cfg(unix)]

@@ -55,7 +55,7 @@ Entries are then built in the project's own `node_modules/.jpm`, where everythin
 the project. It is already off for projects that depend on `next` or `nuxt`, inside
 containers, and when the store cannot be written. `global-store=true` turns it back on. It is
 always off with `node-linker=hoisted`, npm's layout, which a project that depends on `electron`
-gets by default ([configuration](configuration.md)).
+gets by default, unless pnpm made it ([configuration](configuration.md)).
 
 ## Do you still need a bundler?
 

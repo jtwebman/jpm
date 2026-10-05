@@ -75,7 +75,8 @@ project declares a bundler under it.
 
 A project that depends on `electron` gets `hoisted` unless `node-linker` says otherwise, with a
 note: an Electron app packs `node_modules` into itself, rebuilds native modules for Electron in
-place, and its tools walk npm's directories.
+place, and its tools walk npm's directories. A pnpm project does not: pnpm links it isolated
+unless `nodeLinker` says `hoisted`, and its Electron apps that need npm's layout say so.
 
 An entry's directory name is at most `virtual-store-dir-max-length` bytes, in `.npmrc` or as
 `virtualStoreDirMaxLength` in `pnpm-workspace.yaml`: 60 on Windows, where a path stops at 260
