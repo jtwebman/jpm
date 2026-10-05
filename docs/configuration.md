@@ -57,7 +57,10 @@ The global virtual store is on by default. Turn it off with `global-store=false`
 `/run/.containerenv`), where a mounted project would not see the store, and when the store
 cannot be written. It is also off, with a note, for a project that depends on `next` or `nuxt`:
 Next's Turbopack compiles nothing outside the project, and Nuxt imports packages it does not
-declare. `global-store=true` overrides that. Why it is on, what it cannot do, and when a
+declare. It is off, with a note, for a project pnpm made (`pnpm-lock.yaml`,
+`pnpm-workspace.yaml` or `packageManager` naming pnpm): pnpm puts every package within reach
+from inside the project, and its projects come to import what they do not declare.
+`global-store=true` overrides both. Why it is on, what it cannot do, and when a
 project still needs a bundler: [global-store.md](global-store.md). An install warns when the
 project declares a bundler under it.
 
