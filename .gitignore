@@ -1,3 +1,4 @@
 target/
 .claude/*
 !.claude/settings.json
+__pycache__/
