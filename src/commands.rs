@@ -101,6 +101,9 @@ struct Ctx {
     /// A framework the tree depends on that needs every package inside the project, found
     /// from the project the install reads.
     framework: Option<&'static str>,
+    /// pnpm made the project (`pnpm_project`), whose packages can import what they do not
+    /// declare: pnpm puts every package in reach from inside the project.
+    pnpm: bool,
     /// `node-linker=hoisted`: npm's layout, never in the global store (see `link::hoisted`).
     hoisted: bool,
     /// The layout to keep where nothing names one (`install_first`: the last install's).
@@ -172,6 +175,7 @@ impl Ctx {
             scriptless: false,
             stamped: Mutex::default(),
             framework: None,
+            pnpm: false,
             hoisted: false,
             keep_hoisted: None,
             patched: String::new(),
@@ -361,6 +365,7 @@ impl Ctx {
         !self.hoisted
             && self.global_setting().unwrap_or_else(|| {
                 self.framework.is_none()
+                    && !self.pnpm
                     && !Path::new("/.dockerenv").exists()
                     && !Path::new("/run/.containerenv").exists()
             })
@@ -463,6 +468,13 @@ fn pnpm_9(dir: &Path, manifest: &RootManifest) -> bool {
     let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or_default();
     let old = pm.strip_prefix("pnpm@").and_then(|v| v.split('.').next()?.parse::<u32>().ok()).is_some_and(|m| m < 9);
     dir.join(rules::PNPM_WORKSPACE).exists() && !old
+}
+
+/// Whether pnpm made the project: its pnpm-lock.yaml or pnpm-workspace.yaml, or packageManager
+/// naming pnpm. pnpm-workspace.yaml stays when jpm.lock has replaced pnpm-lock.yaml.
+fn pnpm_project(dir: &Path, manifest: &RootManifest) -> bool {
+    let pm = manifest.doc.get("packageManager").and_then(Value::as_str).unwrap_or("");
+    pm.starts_with("pnpm@") || dir.join("pnpm-lock.yaml").exists() || dir.join(rules::PNPM_WORKSPACE).exists()
 }
 
 /// Whether npm made the project: its package-lock.json or npm-shrinkwrap.json, or packageManager
@@ -568,6 +580,7 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         ),
     };
     ctx.framework = framework_of(&project);
+    ctx.pnpm = pnpm_project(&project.dir, &project.manifest);
     let linker = ctx.config().node_linker.clone().or_else(|| project.rules.node_linker.clone());
     // A pnpm project's own manager links it isolated unless nodeLinker says otherwise, and its
     // Electron apps that need npm's layout say so (Trilium, hyper): one workspace's electron
@@ -687,6 +700,11 @@ fn install_tree(ctx: &mut Ctx, edit: Option<Edit>, loaded: Option<Project>) -> R
         info(&format!(
             "building packages in the project, not the global store: {f} needs them inside it (global-store=true overrides)"
         ));
+    } else if ctx.global_setting().is_none() && ctx.pnpm && !ctx.hoisted {
+        info(
+            "building packages in the project, not the global store, as pnpm does: a package of a pnpm project \
+             can import what it does not declare (global-store=true overrides)",
+        );
     }
     // A bundler the project declares, under the global store it did not choose: said once an
     // install, with what to do if a package it bundles cannot find an import it never declared.

@@ -1576,6 +1576,24 @@ fn shares_entries_through_the_global_store() {
 }
 
 #[test]
+fn builds_a_pnpm_projects_entries_in_the_project() {
+    // pnpm puts every package within reach from inside the project, and its projects come to
+    // rely on it: a package importing what it does not declare finds it there, never in the store.
+    let r = registry();
+    let env = Env::new(&r);
+    env.write("pnpm-workspace.yaml", "packages: []\n");
+    env.manifest(json!({ "dependencies": { "a": "1.1.0" } }));
+    let out = env.ok(&["install"]);
+    assert!(out.contains("not the global store, as pnpm does"), "{out}");
+    assert_eq!(entries(&env.project()).len(), 2);
+    env.write(".npmrc", "global-store=true\n");
+    let out = env.ok(&["install"]);
+    assert!(!out.contains("as pnpm does"), "{out}");
+    let links = env.store().join("v1/links");
+    assert!(std::path::Path::new(&link_of(&env.project(), "a")).starts_with(&links));
+}
+
+#[test]
 fn names_global_entries_by_the_start_of_their_digest_and_never_trusts_the_name() {
     let r = registry();
     let env = Env::new(&r);
