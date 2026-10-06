@@ -17,3 +17,22 @@ Description: fast, small, secure-by-default package manager for JavaScript
  package-lock.json, pnpm-lock.yaml, yarn.lock and bun.lock and keeps their
  versions, and runs a dependency's install scripts only once approved.
 
+Package: jpm
+Version: 1.0.2
+Architecture: arm64
+Maintainer: JT Turner <jtwebman@gmail.com>
+Installed-Size: 2040
+Depends: libc6 (>= 2.17)
+Filename: pool/main/j/jpm/jpm_1.0.2_arm64.deb
+Size: 882352
+MD5sum: f1aca203d04feda64e6a7876b3b83174
+SHA1: c52f26c052a3654c08011765a2bf773ad64e1b53
+SHA256: 8387e82f5a7e6b9efbdbd080c5f021cb9af24dff8391ec411247535e69f5c997
+Section: devel
+Priority: optional
+Homepage: https://getjpm.sh
+Description: fast, small, secure-by-default package manager for JavaScript
+ jpm installs packages from the npm registry, from one binary. It reads
+ package-lock.json, pnpm-lock.yaml, yarn.lock and bun.lock and keeps their
+ versions, and runs a dependency's install scripts only once approved.
+
