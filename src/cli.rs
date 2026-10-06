@@ -148,6 +148,8 @@ Notes
   run installs the tree first (a no-op when it is current), then runs the script in a shell
   with local and parent bins on PATH; no pre/post scripts. jpm flags go before the script.
   exec uses local bins, else installs into the root's node_modules/.jpm/.exec (or ~/.jpm/exec).
+  Without Node on PATH, a bin that is a Node launcher for a program in a package per platform
+  (@sentry/cli, esbuild, turbo) runs that program itself.
 
   npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
   (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:

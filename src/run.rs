@@ -20,6 +20,11 @@ pub fn which(name: &str) -> Option<PathBuf> {
     which_in(&std::env::var_os("PATH")?, name)
 }
 
+/// `which` on PATH with `dirs` first.
+pub fn which_with(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
+    which_in(&with_path(dirs).1, name)
+}
+
 /// `which` on a PATH of its own.
 fn which_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
     let exts: Vec<String> = if cfg!(windows) {
