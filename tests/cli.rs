@@ -323,6 +323,41 @@ fn links_bins_and_runs_scripts() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("missing script"));
 }
 
+#[cfg(unix)]
+#[test]
+fn exec_runs_a_launchers_program_itself_without_node() {
+    // @sentry/cli's bin is a Node script that starts the program in a package per platform.
+    // Without Node, exec starts that program itself; with Node, the package's own launcher.
+    let program = std::fs::read("/bin/echo").unwrap();
+    let mut native = pkg("launch-native", "1.0.0", json!({}));
+    native.files.push(("bin/launch".into(), 0o755, program));
+    let r = Registry::start(vec![
+        pkg(
+            "launch",
+            "1.0.0",
+            json!({ "bin": { "launch": "bin/launch.js" }, "optionalDependencies": { "launch-native": "1.0.0" } }),
+        )
+        .file("bin/launch.js", 0o755, "#!/usr/bin/env node\nconsole.log('from node')\n"),
+        native,
+    ]);
+    let env = Env::new(&r);
+    let empty = env.root.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let out = env.command(&["exec", "launch", "hi"]).env("PATH", &empty).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("running launch-native's launch itself") && text.contains("hi\n"), "{text}");
+
+    // A `node` on the PATH runs the launcher, as the package means.
+    let node = env.root.join("fake-node");
+    std::fs::create_dir_all(&node).unwrap();
+    std::fs::write(node.join("node"), "#!/bin/sh\necho launcher-ran\n").unwrap();
+    std::fs::set_permissions(node.join("node"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let out = env.command(&["exec", "launch", "hi"]).env("PATH", &node).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("launcher-ran") && !text.contains("itself"), "{text}");
+}
+
 #[test]
 fn exec_says_when_a_bin_is_made_by_install_scripts() {
     // npm's `node` package has no Node in it: its preinstall fetches one, and exec runs no

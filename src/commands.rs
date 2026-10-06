@@ -3214,11 +3214,65 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
                 .unwrap_or(Value::Null);
             let bin = pick_bin(&doc, &s.fetch_name)?;
             bin_there(&doc, &pkg_dir, &bin)?;
+            if let Some((from, native)) = native_bin(&doc, &pkg_dir, &bin, &bins(Some(&dir))) {
+                info(&format!("node is not on PATH: running {from}'s {bin} itself, not {}'s node launcher", s.name));
+                return spawn(&[native.to_string_lossy().into_owned()], Some(&dir));
+            }
             bin
         }
         None => command.to_string(),
     };
     spawn(&[bin], Some(&dir))
+}
+
+/// The program a package's Node launcher starts, for a machine without Node. @sentry/cli, esbuild,
+/// biome and turbo ship a small Node script as their bin and the program itself in a package per
+/// platform, among their optionalDependencies; only this platform's is installed. Used only where
+/// Node is not on the PATH, and only an executable named as the bin in such a package.
+fn native_bin(doc: &Value, pkg_dir: &Path, bin: &str, dirs: &[PathBuf]) -> Option<(String, PathBuf)> {
+    let bins = crate::bin::normalize(doc.get("name").and_then(Value::as_str), doc.get("bin"));
+    if !node_script(&pkg_dir.join(bins.get(bin)?)) || run::which_with(dirs, "node").is_some() {
+        return None;
+    }
+    let real = std::fs::canonicalize(pkg_dir).ok()?;
+    let exe = if cfg!(windows) { format!("{bin}.exe") } else { bin.to_string() };
+    let optional = doc.get("optionalDependencies")?.as_object()?;
+    optional.keys().find_map(|dep| {
+        let dir = node_resolve(&real, dep)?;
+        let file = [dir.join("bin").join(&exe), dir.join(&exe)].into_iter().find(|f| native_executable(f))?;
+        Some((dep.clone(), file))
+    })
+}
+
+/// A script Node runs: a `#!` line naming node, or a JavaScript file.
+fn node_script(file: &Path) -> bool {
+    let js = file.extension().is_some_and(|e| e == "js" || e == "cjs" || e == "mjs");
+    let mut head = [0u8; 128];
+    let n = std::fs::File::open(file).and_then(|mut f| std::io::Read::read(&mut f, &mut head)).unwrap_or(0);
+    let first = String::from_utf8_lossy(&head[..n]);
+    js || first.lines().next().is_some_and(|l| l.starts_with("#!") && l.contains("node"))
+}
+
+/// An ELF, Mach-O or PE file, by its first bytes.
+fn native_executable(file: &Path) -> bool {
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(file).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head));
+    read.is_ok()
+        && (head == *b"\x7fELF"
+            || matches!(
+                head,
+                [0xfe, 0xed, 0xfa, 0xce | 0xcf] | [0xce | 0xcf, 0xfa, 0xed, 0xfe] | [0xca, 0xfe, 0xba, 0xbe]
+            )
+            || head.starts_with(b"MZ"))
+}
+
+/// Where Node's `require` finds package `name` from directory `from`: the `node_modules` of
+/// each directory above it.
+fn node_resolve(from: &Path, name: &str) -> Option<PathBuf> {
+    from.ancestors()
+        .filter(|d| d.file_name().is_none_or(|n| n != "node_modules"))
+        .map(|d| d.join("node_modules").join(name))
+        .find(|d| d.join("package.json").is_file())
 }
 
 /// Where the specs install, made the context's root; the config stays the one already read.
