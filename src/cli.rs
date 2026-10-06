@@ -43,6 +43,8 @@ Usage
 
 Options
   -c, --call <line>    exec: run a shell line with -p packages on PATH
+  --node, --bun        exec: install Node.js LTS (or the latest Bun, which also answers to
+                       `node`) with the command, first on its PATH
   -D, --dev            add: save to devDependencies
   --before <date>      pick only versions published before this date
   --dir <path>         project directory (default: nearest package.json or workspace root)
@@ -149,7 +151,8 @@ Notes
   with local and parent bins on PATH; no pre/post scripts. jpm flags go before the script.
   exec uses local bins, else installs into the root's node_modules/.jpm/.exec (or ~/.jpm/exec).
   Without Node on PATH, a bin that is a Node launcher for a program in a package per platform
-  (@sentry/cli, esbuild, turbo) runs that program itself.
+  (@sentry/cli, esbuild, turbo) runs that program itself. -p node@runtime:<range> (bun@,
+  deno@) installs a runtime with the command, as --node and --bun do.
 
   npm's spellings work too: --save-dev, --save-optional, --save-exact, --omit=dev
   (--production; --include=dev undoes it), --prefix and -C (--dir). Accepted and ignored:
@@ -196,6 +199,8 @@ struct Cli {
     include_root: bool,
     if_present: bool,
     yes: bool,
+    /// exec's `--node` or `--bun`: the runtime to install with the command.
+    runtime: Option<&'static str>,
     call: Option<String>,
     packages: Option<Vec<String>>,
     before: Option<String>,
@@ -228,7 +233,7 @@ const COMMANDS: [&str; 14] = [
     "workspaces",
 ];
 const INSTALLS: [&str; 4] = ["install", "add", "remove", "dedupe"];
-const NOOPS: [&str; 16] = [
+const NOOPS: [&str; 15] = [
     "--no-audit",
     "--no-fund",
     "--force",
@@ -247,8 +252,6 @@ const NOOPS: [&str; 16] = [
     // yarn's run -T, a bin of the root: a workspace's run finds the root's bins already.
     "-T",
     "--top-level",
-    // bun's --bun, which runs a bin's node shebang under bun: the bin's own runtime is kept.
-    "--bun",
 ];
 const LOG_LEVELS: [&str; 8] = ["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"];
 
@@ -376,6 +379,10 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
                     cli.quiet = true;
                 }
             }
+            // exec's runtime for a bin that needs one. Elsewhere `--bun` is bun's for `bun run`,
+            // which runs a bin's node shebang under bun: there the bin's own runtime is kept.
+            "--node" => cli.runtime = Some("node@runtime:lts"),
+            "--bun" => cli.runtime = Some("bun@runtime:latest"),
             _ if NOOPS.contains(&arg.as_str()) => {}
             "-s" | "--silent" | "-q" | "--quiet" => cli.quiet = true,
             "--no-progress" => cli.no_progress = true,
@@ -564,7 +571,7 @@ pub fn main(argv0: &str, args: Vec<String>) -> i32 {
 fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option<String> {
     let selects = cli.workspace.is_some() || cli.workspaces;
     let patch = matches!(command, "patch" | "patch-commit");
-    let rules: [(bool, String); 20] = [
+    let rules: [(bool, String); 21] = [
         (patch && cli.specs.len() > 1, format!("{command} takes one package")),
         (cli.edit_dir.is_some() && command != "patch", "--edit-dir only applies to patch".into()),
         (command == "exec" && cli.call.is_none() && cli.specs.is_empty(), "exec needs a command or --call".into()),
@@ -577,6 +584,7 @@ fn check(cli: &Cli, command: &str, installs: bool, from_project: bool) -> Option
             "--package, --call and --yes only apply to exec".into(),
         ),
         (cli.json && command == "exec", "--json does not apply to exec".into()),
+        (cli.runtime == Some("node@runtime:lts") && command != "exec", "--node only applies to exec".into()),
         (
             !from_project && !matches!(command, "run" | "exec" | "approve") && cli.specs.is_empty(),
             format!("{command} needs at least one {}", if command == "remove" { "name" } else { "spec" }),
@@ -985,7 +993,13 @@ fn exec_with(cli: &Cli, specs: &[String]) -> Result<i32, Error> {
     };
     commands::exec(
         &command,
-        ExecOpts { opts: opts(cli), args, packages: cli.packages.clone(), call: cli.call.is_some() },
+        ExecOpts {
+            opts: opts(cli),
+            args,
+            packages: cli.packages.clone(),
+            call: cli.call.is_some(),
+            runtime: cli.runtime.map(str::to_string),
+        },
     )
 }
 

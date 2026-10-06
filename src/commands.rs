@@ -3104,7 +3104,14 @@ pub struct ExecOpts {
     pub packages: Option<Vec<String>>,
     /// `command` is a shell line, run as written.
     pub call: bool,
+    /// A runtime installed with the command and first on its PATH: `node@runtime:lts` (`--node`)
+    /// or `bun@runtime:latest` (`--bun`, which also answers to `node`).
+    pub runtime: Option<String>,
 }
+
+/// In an exec install with `--bun`: a `node` that is bun, first on the PATH, so a bin's
+/// `#!/usr/bin/env node` runs under bun as `bun --bun` has it.
+const BUN_AS_NODE: &str = ".bun-as-node";
 
 /// A package's bin, as npx runs one: a local bin when the name has one, else installed into a
 /// project of its own under the exec home, one per set of versions and registries.
@@ -3158,7 +3165,8 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
         .unwrap_or_default();
     // The `.bin` of the directory exec installed in (`installed`), if it did, then those above cwd.
     let bins = |installed: Option<&Path>| -> Vec<PathBuf> {
-        installed.map(|d| d.join("node_modules").join(".bin")).into_iter().chain(run::bin_dirs(&cwd)).collect()
+        let own = installed.into_iter().flat_map(|d| [d.join(BUN_AS_NODE), d.join("node_modules").join(".bin")]);
+        own.filter(|d| d.is_dir()).chain(run::bin_dirs(&cwd)).collect()
     };
     let run_line = |line: &str, installed: Option<&Path>| -> Result<i32> {
         let project = installed.map_or_else(|| project::find_root(&cwd).dir, Path::to_path_buf);
@@ -3178,21 +3186,31 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
         let batch = cfg!(windows) && !e.args.is_empty() && crate::shim::is_batch(&words[0], &cwd, &bins(installed));
         run_line(&run::shell_line(&head.join(" "), &e.args, batch), installed)
     };
-    if e.call && e.packages.is_none() {
+    let runtime = e.runtime.clone();
+    if e.call && e.packages.is_none() && runtime.is_none() {
         return run_line(command, None);
     }
-    if e.packages.is_none()
-        && let Some(local) = self_bin(&cwd, command).or_else(|| local_bin(&cwd, command))
-    {
-        return spawn(&local, None);
+    let local = if e.packages.is_none() && !e.call {
+        self_bin(&cwd, command).or_else(|| local_bin(&cwd, command))
+    } else {
+        None
+    };
+    if let (Some(local), None) = (&local, &runtime) {
+        return spawn(local, None);
     }
-    let own = if e.packages.is_none() { Some(spec::parse_spec(command)?) } else { None };
+    let own = if e.packages.is_none() && !e.call && local.is_none() { Some(spec::parse_spec(command)?) } else { None };
     if e.packages.as_ref().is_some_and(Vec::is_empty) {
         return Err(fail("EOPTION", "exec lists no package to install"));
     }
     let quiet = ui::quiet();
     let mut ctx = Ctx::open(e.opts.clone(), false)?;
-    let specs = e.packages.clone().unwrap_or_else(|| vec![command.to_string()]);
+    // With a runtime, what runs from where it is (a local bin, a call line) gets only that.
+    let mut specs = match (&e.packages, &own) {
+        (Some(p), _) => p.clone(),
+        (None, Some(_)) => vec![command.to_string()],
+        (None, None) => Vec::new(),
+    };
+    specs.extend(runtime.clone());
     ui::set_quiet(true); // the install's progress is about a directory nobody chose
     let installed = (|| {
         let (dir, names) = exec_project(&mut ctx, &specs)?;
@@ -3203,6 +3221,12 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     let (dir, names, result) = installed?;
     if !result.up_to_date {
         info(&format!("installed {}", names.join(", ")));
+    }
+    if runtime.as_deref().is_some_and(|r| r.starts_with("bun@")) {
+        bun_as_node(&dir)?;
+    }
+    if let Some(local) = &local {
+        return spawn(local, Some(&dir));
     }
     if e.call {
         return run_line(command, Some(&dir));
@@ -3218,6 +3242,15 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
                 info(&format!("node is not on PATH: running {from}'s {bin} itself, not {}'s node launcher", s.name));
                 return spawn(&[native.to_string_lossy().into_owned()], Some(&dir));
             }
+            if needs_node(&doc, &pkg_dir, &bin) && run::which_with(&bins(Some(&dir)), "node").is_none() {
+                return Err(fail(
+                    "ENONODE",
+                    format!(
+                        "{}'s {bin} runs on Node, which is not on PATH: add --node or --bun to install one",
+                        s.name
+                    ),
+                ));
+            }
             bin
         }
         None => command.to_string(),
@@ -3225,13 +3258,32 @@ pub fn exec(command: &str, e: ExecOpts) -> Result<i32> {
     spawn(&[bin], Some(&dir))
 }
 
+/// `node` beside the exec install's bun, as bun itself: bun runs as Node when called `node`.
+fn bun_as_node(dir: &Path) -> Result<()> {
+    let exe = if cfg!(windows) { "bun.exe" } else { "bun" };
+    let bun = std::fs::canonicalize(dir.join("node_modules").join("bun").join("bin").join(exe))
+        .or_else(|_| std::fs::canonicalize(dir.join("node_modules").join(".bin").join(exe)))
+        .map_err(|err| Error::io(&err, "cannot find the bun --bun installed"))?;
+    let at = dir.join(BUN_AS_NODE);
+    let node = at.join(if cfg!(windows) { "node.exe" } else { "node" });
+    if std::fs::canonicalize(&node).ok().as_deref() == Some(bun.as_path()) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&at).map_err(|err| Error::io(&err, format!("cannot create {}", at.display())))?;
+    let _ = std::fs::remove_file(&node);
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&bun, &node);
+    #[cfg(not(unix))]
+    let made = std::fs::hard_link(&bun, &node).or_else(|_| std::fs::copy(&bun, &node).map(|_| ()));
+    made.map_err(|err| Error::io(&err, format!("cannot link {}", node.display())))
+}
+
 /// The program a package's Node launcher starts, for a machine without Node. @sentry/cli, esbuild,
 /// biome and turbo ship a small Node script as their bin and the program itself in a package per
 /// platform, among their optionalDependencies; only this platform's is installed. Used only where
 /// Node is not on the PATH, and only an executable named as the bin in such a package.
 fn native_bin(doc: &Value, pkg_dir: &Path, bin: &str, dirs: &[PathBuf]) -> Option<(String, PathBuf)> {
-    let bins = crate::bin::normalize(doc.get("name").and_then(Value::as_str), doc.get("bin"));
-    if !node_script(&pkg_dir.join(bins.get(bin)?)) || run::which_with(dirs, "node").is_some() {
+    if !needs_node(doc, pkg_dir, bin) || run::which_with(dirs, "node").is_some() {
         return None;
     }
     let real = std::fs::canonicalize(pkg_dir).ok()?;
@@ -3242,6 +3294,12 @@ fn native_bin(doc: &Value, pkg_dir: &Path, bin: &str, dirs: &[PathBuf]) -> Optio
         let file = [dir.join("bin").join(&exe), dir.join(&exe)].into_iter().find(|f| native_executable(f))?;
         Some((dep.clone(), file))
     })
+}
+
+/// Whether the package's bin is a script Node runs.
+fn needs_node(doc: &Value, pkg_dir: &Path, bin: &str) -> bool {
+    let bins = crate::bin::normalize(doc.get("name").and_then(Value::as_str), doc.get("bin"));
+    bins.get(bin).is_some_and(|t| node_script(&pkg_dir.join(t)))
 }
 
 /// A script Node runs: a `#!` line naming node, or a JavaScript file.
@@ -3284,7 +3342,8 @@ fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>
         return Err(fail("EINVALIDSPEC", format!("exec installs registry packages, not {}", l.raw)));
     }
     let store = ctx.store(false);
-    let loose: Vec<String> = parsed.iter().filter(|s| s.kind != Kind::Version).map(|s| s.raw.clone()).collect();
+    let picks = |s: &&spec::Spec| !matches!(s.kind, Kind::Version | Kind::Runtime);
+    let loose: Vec<String> = parsed.iter().filter(picks).map(|s| s.raw.clone()).collect();
     let picked = if loose.is_empty() { Vec::new() } else { pick_all(ctx, &store, &loose)? };
     let mut deps: BTreeMap<String, String> = BTreeMap::new();
     let mut loose_i = 0;
@@ -3292,7 +3351,10 @@ fn exec_project(ctx: &mut Ctx, specs: &[String]) -> Result<(PathBuf, Vec<String>
         if deps.contains_key(&s.name) {
             return Err(fail("EINVALIDSPEC", format!("{} is given more than once", s.name)));
         }
-        let version = if s.kind == Kind::Version {
+        let version = if s.kind == Kind::Runtime {
+            deps.insert(s.name.clone(), format!("{}{}", crate::runtime::PROTOCOL, s.fetch_spec));
+            continue;
+        } else if s.kind == Kind::Version {
             semver::parse(&s.fetch_spec).map(|v| v.text).unwrap_or_default()
         } else {
             loose_i += 1;

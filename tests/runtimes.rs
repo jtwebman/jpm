@@ -610,3 +610,30 @@ fn refuses_a_pnpm_runtime_that_is_no_version() {
     }
     assert!(!r.hits.lock().unwrap().iter().any(|h| h.starts_with("/dist/")), "nothing fetched");
 }
+
+#[test]
+fn exec_installs_a_runtime_for_a_bin_that_needs_one() {
+    // A JavaScript CLI on a machine without Node: said so, and --node or -p node@runtime:<range>
+    // installs one for it, first on its PATH.
+    let (r, env) = setup(&RELEASES);
+    r.publish(common::pkg("js-cli", "1.0.0", json!({ "bin": { "js-cli": "cli.js" } })).file(
+        "cli.js",
+        0o755,
+        "#!/usr/bin/env node\nconsole.log('ran')\n",
+    ));
+    let exec = |args: &[&str]| {
+        let out = env.command(args).env("PATH", path_without_node()).output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr),
+        )
+    };
+    let (ok, text) = exec(&["exec", "js-cli"]);
+    assert!(!ok && text.contains("runs on Node, which is not on PATH: add --node or --bun"), "{text}");
+    // The fake node prints its version: the LTS line's newest, 22.12.0, is what the bin ran on.
+    let (ok, text) = exec(&["exec", "--node", "js-cli"]);
+    assert!(ok && text.contains("installed js-cli@1.0.0, node@runtime:lts") && text.contains("v22.12.0"), "{text}");
+    let (ok, text) = exec(&["exec", "-p", "node@runtime:20", "node"]);
+    assert!(ok && text.contains("v20.18.1"), "{text}");
+    assert!(fails(&env, &["install", "--node"]).contains("--node only applies to exec"));
+}
