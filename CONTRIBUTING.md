@@ -36,3 +36,8 @@ The same rules apply, and they matter more:
   it closed.
 - Leave out co-author trailers for AI tools. CI fails a pull request whose commits have a
   `Co-Authored-By` trailer for Claude or Anthropic.
+
+## Security issues
+
+Don't open a public issue or pull request for a security problem. Report it privately through
+[GitHub's security advisories](https://github.com/jtwebman/jpm/security/advisories/new).
